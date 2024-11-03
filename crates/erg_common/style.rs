@@ -375,6 +375,20 @@ impl<'a> StyledStr<'a> {
     }
 }
 
+#[cfg(not(feature = "unicode"))]
+pub const PS1: StyledStr<'static> =
+    StyledStr::new(">>> ", Some(Color::Magenta), Some(Attribute::Bold));
+#[cfg(not(feature = "unicode"))]
+pub const PS2: StyledStr<'static> =
+    StyledStr::new("... ", Some(Color::Magenta), Some(Attribute::Bold));
+
+#[cfg(feature = "unicode")]
+pub const PS1: StyledStr<'static> =
+    StyledStr::new("➤➤➤ ", Some(Color::Magenta), Some(Attribute::Bold));
+#[cfg(feature = "unicode")]
+pub const PS2: StyledStr<'static> =
+    StyledStr::new("··· ", Some(Color::Magenta), Some(Attribute::Bold));
+
 impl std::fmt::Display for StyledStr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (self.color, self.attribute) {
@@ -463,6 +477,10 @@ impl StyledString {
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.text
     }
 }
 

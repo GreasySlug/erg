@@ -14,6 +14,7 @@ use crate::levenshtein::get_similar_name;
 use crate::normalize_path;
 use crate::python_util::{detect_magic_number, get_python_version, PythonVersion};
 use crate::serialize::{get_magic_num_from_bytes, get_ver_from_magic_num};
+use crate::style::{Attribute, StyledStr, PS1, PS2};
 use crate::ArcArray;
 
 #[cfg(not(feature = "pylib"))]
@@ -173,8 +174,8 @@ pub struct ErgConfig {
     /// * 2: display errors, warnings, hints and progress
     pub verbose: u8,
     /// needed for `jupyter-erg`
-    pub ps1: &'static str,
-    pub ps2: &'static str,
+    pub ps1: StyledStr<'static>,
+    pub ps2: StyledStr<'static>,
     pub runtime_args: ArcArray<&'static str>,
     pub packages: ArcArray<Package>,
     pub effect_check: bool,
@@ -201,8 +202,8 @@ impl Default for ErgConfig {
             dist_dir: None,
             module: "<module>",
             verbose: 1,
-            ps1: ">>> ",
-            ps2: "... ",
+            ps1: PS1,
+            ps2: PS2,
             runtime_args: ArcArray::from([]),
             packages: ArcArray::from([]),
             effect_check: true,
@@ -378,14 +379,14 @@ impl ErgConfig {
                         .next()
                         .expect("the value of `--ps1` is not passed")
                         .into_boxed_str();
-                    cfg.ps1 = Box::leak(ps1);
+                    cfg.ps1 = StyledStr::new(Box::leak(ps1), None, Some(Attribute::Bold));
                 }
                 "--ps2" => {
                     let ps2 = args
                         .next()
                         .expect("the value of `--ps2` is not passed")
                         .into_boxed_str();
-                    cfg.ps2 = Box::leak(ps2);
+                    cfg.ps2 = StyledStr::new(Box::leak(ps2), None, Some(Attribute::Bold));
                 }
                 "-o" | "--opt-level" | "--optimization-level" => {
                     cfg.opt_level = args

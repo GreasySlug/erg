@@ -6,7 +6,7 @@ use std::io::{stdin, BufRead, BufReader};
 #[cfg(feature = "full-repl")]
 use crossterm::{
     cursor::MoveToColumn,
-    event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     style::Print,
     terminal::{disable_raw_mode, enable_raw_mode},
@@ -119,13 +119,18 @@ impl StdinReader {
         let mut consult_history = false;
         let mut stdout = std::io::stdout();
         while let Event::Key(KeyEvent {
-            code, modifiers, ..
+            code,
+            modifiers,
+            kind,
+            state: _,
         }) = read()?
         {
             consult_history = false;
+            if kind == KeyEventKind::Release {
+                continue;
+            }
             match (code, modifiers) {
-                (KeyCode::Char('z'), KeyModifiers::CONTROL)
-                | (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                (KeyCode::Char('z') | KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                     println!();
                     line.clear();
                     line.push_str(":exit");
@@ -148,7 +153,11 @@ impl StdinReader {
                     line.insert_str(position, &clipboard);
                     position += clipboard.len();
                 }
-                (_, KeyModifiers::CONTROL) => continue,
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                    line.clear();
+                    println!("\nKeyboardInterrupt");
+                    return Ok(());
+                }
                 (KeyCode::Tab, _) => {
                     line.insert_str(position, "    ");
                     position += 4;
@@ -199,7 +208,7 @@ impl StdinReader {
                             Clear(ClearType::UntilNewLine),
                             MoveToColumn(self.indent * 4),
                             Print(line.to_owned()),
-                            MoveToColumn(self.indent * 4 + position as u16)
+                            MoveToColumn(self.indent * 4 + position as u16),
                         )?;
                         continue;
                     }

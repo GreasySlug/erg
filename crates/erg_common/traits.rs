@@ -756,6 +756,21 @@ pub trait Runnable: Sized + Default + New {
         process::exit(0);
     }
 
+    fn write_prompt(
+        output: &mut BufWriter<std::io::StdoutLock>,
+        instance: &Self,
+        vm: &VirtualMachine,
+        indent: &str,
+    ) {
+        if vm.now_block.len() > 1 {
+            write!(output, "{}", instance.ps2()).unwrap();
+            output.write_all(indent.as_bytes()).unwrap();
+        } else {
+            write!(output, "{}", instance.ps1()).unwrap();
+        }
+        output.flush().unwrap();
+    }
+
     fn run(cfg: ErgConfig) -> ExitStatus {
         let quiet_repl = cfg.quiet_repl;
         let mut num_errors = 0;
@@ -775,15 +790,7 @@ pub trait Runnable: Sized + Default + New {
                 let mut vm = VirtualMachine::new();
                 loop {
                     let indent = vm.indent();
-                    if vm.now_block.len() > 1 {
-                        output.write_all(instance.ps2().as_bytes()).unwrap();
-                        output.write_all(indent.as_bytes()).unwrap();
-                        output.flush().unwrap();
-                    } else {
-                        output.write_all(instance.ps1().as_bytes()).unwrap();
-                        output.flush().unwrap();
-                    }
-                    instance.cfg().input.set_indent(vm.length);
+                    Self::write_prompt(&mut output, &instance, &vm, &indent);
                     let line = chomp(&instance.cfg_mut().input.read());
                     let line = line.trim_end();
                     match line {

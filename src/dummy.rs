@@ -13,6 +13,7 @@ use erg_common::traits::{BlockKind, ExitStatus, New, Runnable};
 use erg_compiler::hir::Expr;
 use erg_compiler::ty::HasType;
 
+use erg_compiler::context::ContextProvider;
 use erg_compiler::error::{CompileError, CompileErrors};
 use erg_compiler::Compiler;
 use erg_parser::ParserRunner;
@@ -182,6 +183,8 @@ fn find_available_port() -> u16 {
 pub struct DummyVM {
     compiler: Compiler,
     stream: Option<MessageStream<TcpStream>>,
+    #[cfg(feature = "els")]
+    els_integration: Option<std::sync::Arc<std::sync::Mutex<crate::ReplElsIntegration>>>,
 }
 
 impl Default for DummyVM {
@@ -232,10 +235,33 @@ impl New for DummyVM {
         } else {
             None
         };
-        Self {
-            compiler: Compiler::new(cfg),
+        let mut vm = Self {
+            compiler: Compiler::new(cfg.copy()),
             stream,
+            #[cfg(feature = "els")]
+            els_integration: None,
+        };
+
+        // Initialize ELS integration if enabled
+        #[cfg(feature = "els")]
+        {
+            if cfg.input.is_repl() {
+                use crate::repl::ElsCompletionProvider;
+                use erg_common::stdin::GLOBAL_STDIN;
+                use std::sync::{Arc, Mutex};
+
+                let integration = Arc::new(Mutex::new(crate::ReplElsIntegration::new(cfg)));
+
+                // Set the ELS completion provider for stdin
+                let provider = Box::new(ElsCompletionProvider::new(integration.clone()));
+                GLOBAL_STDIN.set_completion_provider(provider);
+
+                // Store the integration in DummyVM
+                vm.els_integration = Some(integration);
+            }
         }
+
+        vm
     }
 }
 
@@ -379,6 +405,29 @@ impl Runnable for DummyVM {
                 res.push_str(&format!(" ({})", def.sig.ident()));
             }
         }
+
+        // Update ELS integration with the evaluated variables
+        #[cfg(feature = "els")]
+        {
+            if let Some(els) = &mut self.els_integration {
+                // Get variables from compiler context
+                let variables = self.compiler.dir();
+                let var_list: Vec<(String, String)> = variables
+                    .into_iter()
+                    .map(|(name, info)| {
+                        let name_str = name.inspect().to_string();
+                        let type_str = info.t.to_string();
+                        (name_str, type_str)
+                    })
+                    .collect();
+                
+                // Update the ELS integration with evaluated variables
+                if let Ok(mut integration) = els.lock() {
+                    integration.update_evaluated_variables(var_list);
+                }
+            }
+        }
+
         Ok(res)
     }
 
@@ -429,6 +478,11 @@ impl DummyVM {
     /// Evaluates code passed as a string.
     pub fn eval(&mut self, src: String) -> Result<String, EvalErrors> {
         Runnable::eval(self, src)
+    }
+
+    /// Get a reference to the compiler for accessing context information
+    pub fn get_compiler(&self) -> &Compiler {
+        &self.compiler
     }
 }
 

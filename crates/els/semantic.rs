@@ -3,6 +3,7 @@ use erg_common::error::Location;
 use erg_common::traits::Locational;
 
 use erg_compiler::artifact::BuildRunnable;
+use erg_compiler::context::ControlKind;
 use erg_compiler::erg_parser::ast::{
     Accessor, Args, BinOp, Block, Call, ClassAttr, Def, DefKind, Expr, Identifier, Methods, Params,
     PolyTypeSpec, PreDeclTypeSpec, TypeSpec, UnaryOp, AST,
@@ -205,8 +206,32 @@ impl ASTSemanticState {
         tokens
     }
 
+    fn classify_identifier(&self, name: &str) -> SemanticTokenType {
+        if ControlKind::try_from(name).is_ok() {
+            return SemanticTokenType::KEYWORD;
+        }
+
+        match name {
+            "and" | "or" | "in" | "notin" | "contains" | "is!" | "isnot!" | "ref" | "ref!"
+            | "as" => SemanticTokenType::OPERATOR,
+            "True" | "False" | "None" | "Ellipsis" | "Inf" => SemanticTokenType::KEYWORD,
+            name if name.ends_with('!') => match name {
+                "print!" | "input!" | "assert!" | "panic!" | "todo!" | "unreachable!"
+                | "type_of!" | "isinstance!" | "issubclass!" | "hasattr!" | "getattr!"
+                | "setattr!" | "delattr!" | "dir!" | "vars!" | "globals!" | "locals!"
+                | "callable!" | "compile!" | "eval!" | "exec!" | "exit!" | "quit!" | "open!"
+                | "import!" | "reload!" => SemanticTokenType::KEYWORD,
+                _ => self.get_variable_type(name),
+            },
+            "class" | "trait" | "import" | "from" | "def" | "lambda" | "return" | "yield"
+            | "break" | "continue" | "pass" | "del" | "global" | "nonlocal" | "async" | "await"
+            | "with" | "except" | "finally" | "raise" | "try" => SemanticTokenType::KEYWORD,
+            _ => self.get_variable_type(name),
+        }
+    }
+
     fn gen_from_ident(&mut self, ident: Identifier) -> Vec<SemanticToken> {
-        let typ = self.get_variable_type(ident.inspect());
+        let typ = self.classify_identifier(ident.inspect());
         vec![self.gen_token(ident.name.loc(), typ)]
     }
 

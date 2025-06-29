@@ -1,7 +1,7 @@
-use std::sync::OnceLock;
-
+use std::fmt;
 #[cfg(not(feature = "full-repl"))]
 use std::io::{stdin, BufRead, BufReader};
+use std::sync::OnceLock;
 
 #[cfg(feature = "full-repl")]
 use crossterm::{
@@ -9,15 +9,15 @@ use crossterm::{
     event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode},
-    terminal::{Clear, ClearType},
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 #[cfg(feature = "full-repl")]
-use std::process::Command;
-#[cfg(feature = "full-repl")]
-use std::process::Output;
+use std::process::{Command, Output};
 
 use crate::shared::Shared;
+
+use crate::completion_provider::CompletionProvider;
+use crate::repl::highlighter::ReplHighlighter;
 
 /// e.g.
 /// ```erg
@@ -30,7 +30,6 @@ use crate::shared::Shared;
 /// ↓
 ///
 /// `{ lineno: 5, buf: ["print! 1\n", "\n", "while! False, do!:\n", "print! \"\"\n", "\n"] }`
-#[derive(Debug)]
 pub struct StdinReader {
     block_begin: usize,
     lineno: usize,
@@ -38,13 +37,42 @@ pub struct StdinReader {
     #[cfg(feature = "full-repl")]
     history_input_position: usize,
     indent: u16,
+    highlighter: ReplHighlighter,
+    #[cfg(feature = "full-repl")]
+    dropdown: Option<crate::dropdown_ui::DropdownUI>,
+    completion_provider: Option<Box<dyn CompletionProvider>>,
+}
+
+impl fmt::Debug for StdinReader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug_struct = f.debug_struct("StdinReader");
+        debug_struct
+            .field("block_begin", &self.block_begin)
+            .field("lineno", &self.lineno)
+            .field("buf", &self.buf);
+        #[cfg(feature = "full-repl")]
+        debug_struct.field("history_input_position", &self.history_input_position);
+        debug_struct
+            .field("indent", &self.indent)
+            .field("highlighter", &self.highlighter);
+        #[cfg(feature = "full-repl")]
+        debug_struct.field("dropdown", &self.dropdown);
+        debug_struct
+            .field("completion_provider", &"<CompletionProvider>")
+            .finish()
+    }
 }
 
 impl StdinReader {
+    /// Set a custom completion provider
+    pub fn set_completion_provider(&mut self, provider: Box<dyn CompletionProvider>) {
+        self.completion_provider = Some(provider);
+    }
+
     #[cfg(all(feature = "full-repl", target_os = "linux"))]
     fn access_clipboard() -> Option<Output> {
-        if let Ok(str) = std::fs::read("/proc/sys/kernel/osrelease") {
-            if let Ok(str) = std::str::from_utf8(&str) {
+        if let Ok(str) = fs::read("/proc/sys/kernel/osrelease") {
+            if let Ok(str) = str::from_utf8(&str) {
                 if str.to_ascii_lowercase().contains("microsoft") {
                     return Some(
                         Command::new("powershell")
@@ -100,6 +128,20 @@ impl StdinReader {
         self.buf.last().cloned().unwrap_or_default()
     }
 
+    /// Get highlighted version of the last read line
+    pub fn read_highlighted(&self) -> String {
+        if let Some(last_line) = self.buf.last() {
+            self.highlighter.highlight_line(last_line)
+        } else {
+            String::new()
+        }
+    }
+
+    /// Highlight any given line using the same highlighter
+    pub fn highlight_line(&self, line: &str) -> String {
+        self.highlighter.highlight_line(line)
+    }
+
     #[cfg(feature = "full-repl")]
     pub fn read(&mut self) -> String {
         enable_raw_mode().unwrap();
@@ -122,6 +164,70 @@ impl StdinReader {
             code, modifiers, ..
         }) = read()?
         {
+            // Handle dropdown navigation if active
+            if let Some(dropdown) = self.dropdown.take() {
+                if dropdown.is_active() {
+                    match code {
+                        KeyCode::Down => {
+                            dropdown.clear(&mut stdout)?;
+                            let new_dropdown = dropdown.with_selection_down();
+                            new_dropdown.display(&mut stdout)?;
+                            self.dropdown = Some(new_dropdown);
+                            continue;
+                        }
+                        KeyCode::Up => {
+                            dropdown.clear(&mut stdout)?;
+                            let new_dropdown = dropdown.with_selection_up();
+                            new_dropdown.display(&mut stdout)?;
+                            self.dropdown = Some(new_dropdown);
+                            continue;
+                        }
+                        KeyCode::Tab => {
+                            dropdown.clear(&mut stdout)?;
+                            let new_dropdown = dropdown.with_selection_down();
+                            new_dropdown.display(&mut stdout)?;
+                            self.dropdown = Some(new_dropdown);
+                            continue;
+                        }
+                        KeyCode::Enter => {
+                            if let Some(selected) = dropdown.selected_candidate() {
+                                dropdown.clear(&mut stdout)?;
+                                let (word, start) = completion::get_word_at_cursor(&line, position);
+                                line.replace_range(start..start + word.len(), selected);
+                                position = start + selected.len();
+                                self.dropdown = None;
+
+                                // Redraw the line with the completion
+                                let highlighted_line = self.highlighter.highlight_line(&line);
+                                execute!(
+                                    stdout,
+                                    MoveToColumn(4),
+                                    Clear(ClearType::UntilNewLine),
+                                    MoveToColumn(self.indent * 4),
+                                    Print(highlighted_line),
+                                    MoveToColumn(self.indent * 4 + position as u16)
+                                )?;
+                                continue;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            dropdown.clear(&mut stdout)?;
+                            self.dropdown = None;
+                            continue;
+                        }
+                        _ => {
+                            // Any other key closes the dropdown
+                            dropdown.clear(&mut stdout)?;
+                            self.dropdown = None;
+                            // Continue to process the key normally
+                        }
+                    }
+                } else {
+                    // Dropdown is not active, put it back
+                    self.dropdown = Some(dropdown);
+                }
+            }
+
             consult_history = false;
             match (code, modifiers) {
                 (KeyCode::Char('z'), KeyModifiers::CONTROL)
@@ -150,8 +256,66 @@ impl StdinReader {
                 }
                 (_, KeyModifiers::CONTROL) => continue,
                 (KeyCode::Tab, _) => {
-                    line.insert_str(position, "    ");
-                    position += 4;
+                    // Use completion provider if available, otherwise use basic completion
+                    let candidates = if let Some(provider) = &self.completion_provider {
+                        provider.get_completions(&line, position)
+                    } else {
+                        // Use basic completion
+                        let context =
+                            crate::completion::CompletionContext::new(line.clone(), position);
+                        match context.get_completion_action() {
+                            crate::completion::CompletionAction::CompleteUnique(completion) => {
+                                vec![completion]
+                            }
+                            crate::completion::CompletionAction::CompleteCommon(common) => {
+                                vec![common]
+                            }
+                            crate::completion::CompletionAction::ShowCandidates(candidates) => {
+                                candidates
+                            }
+                            crate::completion::CompletionAction::None => vec![],
+                        }
+                    };
+
+                    // Process completion results
+                    if candidates.is_empty() {
+                        // No completion available, insert 4 spaces as before
+                        line.insert_str(position, "    ");
+                        position += 4;
+                    } else if candidates.len() == 1 {
+                        // Single candidate - complete immediately
+                        let (word, start) = crate::completion::get_word_at_cursor(&line, position);
+                        let completion = &candidates[0];
+                        line.replace_range(start..start + word.len(), completion);
+                        position = start + completion.len();
+                    } else {
+                        // Multiple candidates - show dropdown
+                        let terminal_width = terminal::size().unwrap_or((80, 24)).0;
+                        let dropdown = crate::dropdown_ui::DropdownUI::new(
+                            candidates,
+                            self.indent * 4 + position as u16,
+                            terminal_width,
+                        )
+                        .with_active(true);
+
+                        // First, make sure the current line is rendered properly
+                        let highlighted_line = self.highlighter.highlight_line(&line);
+                        execute!(
+                            stdout,
+                            MoveToColumn(4),
+                            Clear(ClearType::UntilNewLine),
+                            MoveToColumn(self.indent * 4),
+                            Print(&highlighted_line),
+                            MoveToColumn(self.indent * 4 + position as u16)
+                        )?;
+
+                        // Now display the dropdown below the current line
+                        dropdown.display(&mut stdout)?;
+                        self.dropdown = Some(dropdown);
+
+                        // Skip the normal line redraw since we already did it
+                        continue;
+                    }
                 }
                 (KeyCode::Home, _) => {
                     position = 0;
@@ -234,12 +398,13 @@ impl StdinReader {
                 }
                 _ => {}
             }
+            let highlighted_line = self.highlighter.highlight_line(&line);
             execute!(
                 stdout,
                 MoveToColumn(4),
                 Clear(ClearType::UntilNewLine),
                 MoveToColumn(self.indent * 4),
-                Print(line.to_owned()),
+                Print(highlighted_line),
                 MoveToColumn(self.indent * 4 + position as u16)
             )?;
         }
@@ -281,12 +446,21 @@ impl GlobalStdin {
                 #[cfg(feature = "full-repl")]
                 history_input_position: 1,
                 indent: 1,
+                highlighter: ReplHighlighter::new(),
+                #[cfg(feature = "full-repl")]
+                dropdown: None,
+                completion_provider: None,
             })
         })
     }
 
     pub fn read(&'static self) -> String {
         self.get().borrow_mut().read()
+    }
+
+    /// Set a custom completion provider for the global stdin reader
+    pub fn set_completion_provider(&'static self, provider: Box<dyn CompletionProvider>) {
+        self.get().borrow_mut().set_completion_provider(provider);
     }
 
     pub fn reread(&'static self) -> String {
@@ -317,5 +491,13 @@ impl GlobalStdin {
         if let Some(line) = self.get().borrow_mut().last_line() {
             line.insert_str(0, whitespace);
         }
+    }
+
+    pub fn read_highlighted(&'static self) -> String {
+        self.get().borrow().read_highlighted()
+    }
+
+    pub fn highlight_line(&'static self, line: &str) -> String {
+        self.get().borrow().highlight_line(line)
     }
 }

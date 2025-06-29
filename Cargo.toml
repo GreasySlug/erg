@@ -67,7 +67,7 @@ large_thread = [
 ]
 py_compat = ["erg_compiler/py_compat", "els/py_compat"]
 gal = ["erg_common/gal", "erg_compiler/gal"]
-els = ["erg_common/els", "erg_compiler/els", "dep:els"]
+els = ["erg_common/els", "erg_compiler/els", "dep:els", "dep:lsp-types"]
 full-repl = ["erg_common/full-repl"]
 full = ["els", "full-repl", "unicode", "pretty"]
 experimental = ["erg_common/experimental", "erg_parser/experimental", "erg_compiler/experimental", "erg_linter/experimental"]
@@ -89,6 +89,7 @@ erg_parser = { workspace = true }
 erg_compiler = { workspace = true }
 erg_linter = { workspace = true }
 els = { workspace = true, optional = true, features = ["lint"] }
+lsp-types = { version = "0.93.2", optional = true }
 
 [build-dependencies]
 erg_common = { workspace = true }

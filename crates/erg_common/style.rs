@@ -215,6 +215,18 @@ pub struct ThemeColors {
     pub accent: Color,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SyntaxColors {
+    pub keyword: Color,
+    pub function: Color,
+    pub string: Color,
+    pub number: Color,
+    pub operator: Color,
+    pub class: Color,
+    pub parameter: Color,
+    pub comment: Color,
+}
+
 pub const COLORS: ThemeColors = ThemeColors {
     error: Color::Red,
     warning: Color::Yellow,
@@ -222,6 +234,17 @@ pub const COLORS: ThemeColors = ThemeColors {
     gutter: Color::Cyan,
     hint: Color::Green,
     accent: Color::White,
+};
+
+pub const SYNTAX_COLORS: SyntaxColors = SyntaxColors {
+    keyword: Color::Magenta,
+    function: Color::Blue,
+    string: Color::Green,
+    number: Color::Yellow,
+    operator: Color::Cyan,
+    class: Color::Blue,
+    parameter: Color::Gray,
+    comment: Color::White,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -288,6 +311,7 @@ impl Characters {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Theme {
     pub colors: ThemeColors,
+    pub syntax: SyntaxColors,
     pub characters: Characters,
 }
 
@@ -315,6 +339,7 @@ impl Theme {
 
 pub const THEME: Theme = Theme {
     colors: COLORS,
+    syntax: SYNTAX_COLORS,
     characters: CHARS,
 };
 

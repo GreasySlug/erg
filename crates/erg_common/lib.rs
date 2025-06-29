@@ -3,10 +3,13 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 pub mod cache;
+pub mod completion;
+pub mod completion_provider;
 pub mod config;
 pub mod consts;
 pub mod datetime;
 pub mod dict;
+pub mod dropdown_ui;
 pub mod env;
 pub mod erg_util;
 pub mod error;
@@ -25,6 +28,7 @@ pub mod opcode311;
 pub mod pathutil;
 pub mod python_util;
 pub mod random;
+pub mod repl;
 pub mod serialize;
 pub mod set;
 pub mod shared;
@@ -262,3 +266,7 @@ pub fn deepen_indent(code: String) -> String {
     }
     result
 }
+
+// Re-export for backward compatibility
+pub use repl::completion as repl_completion;
+pub use repl::highlighter as repl_highlighter;

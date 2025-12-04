@@ -1862,8 +1862,7 @@ impl Context {
                 };
                 self.eval_bin_tp(op, lhs, rhs)
             }
-            (l, r) => feature_error!(self, Location::Unknown, &format!("{l} {op} {r}"))
-                .map_err(Into::into),
+            (l, r) => feature_error!(self, Location::Unknown, &format!("{l} {op} {r}")),
         }
     }
 

@@ -178,6 +178,7 @@ impl SendChannels {
         let _ = self.folding_range.send(WorkerMessage::Kill);
         let _ = self.selection_range.send(WorkerMessage::Kill);
         let _ = self.document_highlight.send(WorkerMessage::Kill);
+        let _ = self.document_link.send(WorkerMessage::Kill);
         let _ = self.health_check.send(WorkerMessage::Kill);
     }
 }

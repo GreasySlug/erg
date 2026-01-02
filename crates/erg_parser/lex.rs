@@ -9,7 +9,7 @@ use erg_common::config::ErgConfig;
 use erg_common::io::Input;
 use erg_common::traits::DequeStream;
 use erg_common::traits::{Runnable, Stream};
-use erg_common::{debug_power_assert, fn_name_full, normalize_newline, switch_lang};
+use erg_common::{fn_name_full, normalize_newline, switch_lang};
 
 use crate::error::{LexError, LexErrors, LexResult, LexerRunnerError, LexerRunnerErrors};
 use crate::token::{Token, TokenCategory, TokenKind, TokenStream};
@@ -575,10 +575,12 @@ impl Lexer /*<'a>*/ {
 
     fn lex_exponent(&mut self, mantissa: String) -> LexResult<Token> {
         let mut num = mantissa;
-        debug_power_assert!(self.peek_cur_ch(), ==, Some('e'));
-        num.push(self.consume().unwrap()); // e
-        if self.peek_cur_ch().is_some() {
-            num.push(self.consume().unwrap()); // + | -
+        debug_assert!(matches!(self.peek_cur_ch(), Some('e') | Some('E')));
+        num.push(self.consume().unwrap());
+        if matches!(self.peek_cur_ch(), Some('+') | Some('-')) {
+            num.push(self.consume().unwrap());
+        }
+        if self.peek_cur_ch().is_some_and(|c| c.is_ascii_digit()) {
             while let Some(cur) = self.peek_cur_ch() {
                 if cur.is_ascii_digit() || cur == '_' {
                     num.push(self.consume().unwrap());
@@ -640,9 +642,10 @@ impl Lexer /*<'a>*/ {
                     }
                 }
                 c if Self::is_valid_continue_symbol_ch(c) => {
-                    // exponent (e.g. 10e+3)
-                    if c == 'e'
-                        && (self.peek_next_ch() == Some('+') || self.peek_next_ch() == Some('-'))
+                    if (c == 'e' || c == 'E')
+                        && (self.peek_next_ch().is_some_and(|c| c.is_ascii_digit())
+                            || self.peek_next_ch() == Some('+')
+                            || self.peek_next_ch() == Some('-'))
                     {
                         return self.lex_exponent(num);
                     } else {
@@ -734,7 +737,7 @@ impl Lexer /*<'a>*/ {
         while let Some(cur) = self.peek_cur_ch() {
             if cur.is_ascii_digit() || cur == '_' {
                 num.push(self.consume().unwrap());
-            } else if cur == 'e' {
+            } else if cur == 'e' || cur == 'E' {
                 return self.lex_exponent(num);
             } else {
                 break;

@@ -1445,7 +1445,8 @@ impl ValueObj {
                     }
                 } else {
                     let s = content.replace('_', "");
-                    if s.contains('.') {
+                    // exponential notation (e.g. 1e5, 1E-3) or decimal (e.g. 0.5)
+                    if s.contains('.') || s.contains('e') || s.contains('E') {
                         s.parse::<f64>()
                             .ok()
                             .map(|f| Self::Ratio(Ratio::float_new(f)))

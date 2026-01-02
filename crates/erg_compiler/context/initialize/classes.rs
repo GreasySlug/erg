@@ -220,9 +220,21 @@ impl Context {
         let t_call = func1(Obj, Float);
         float.register_builtin_erg_impl(
             FUNDAMENTAL_CALL,
-            t_call,
+            t_call.clone(),
             Immutable,
             Visibility::BUILTIN_PUBLIC,
+        );
+        let float_call = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNDAMENTAL_CALL,
+            float_constructor,
+            t_call,
+            None,
+        )));
+        float.register_builtin_const(
+            FUNDAMENTAL_CALL,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            float_call,
         );
         float.register_trait(self, mono(NUM)).unwrap();
         let mut float_partial_ord = Self::builtin_methods(Some(mono(PARTIAL_ORD)), 2);

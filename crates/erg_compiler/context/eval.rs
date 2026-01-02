@@ -3090,6 +3090,7 @@ impl Context {
             | ValueObj::Nat(_)
             | ValueObj::Bool(_)
             | ValueObj::Float(_)
+            | ValueObj::Ratio(_)
             | ValueObj::Code(_)
             | ValueObj::Str(_)
             | ValueObj::None => Err(val),

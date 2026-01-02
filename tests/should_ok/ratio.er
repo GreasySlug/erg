@@ -1,0 +1,33 @@
+
+r: Ratio = 7.5 # 15/2
+# basic operations
+assert r == 15/2
+assert r + 1 == 17/2
+assert r - 1 == 13/2
+assert r * 2 == 15
+assert r / 2 == 15/4
+assert r // 2 == 3
+assert r % 2 == 3/2
+
+r_zero: Ratio = 0.0 # 0/1
+# zero operations
+assert r_zero + 1 == 1
+assert r_zero - 1 == -1
+assert r_zero * 2 == 0
+assert r_zero / 1 == 0
+
+
+# comparison
+assert r < 7.5001
+assert r <= 7.5
+assert r >= 7.5
+assert r > 7.49999
+r_small1: Ratio = 1/100000000
+r_small2: Ratio = 1/1000000001
+assert r_small1 > r_small2
+
+# methods
+assert r.numer() == 15
+assert r.denom() == 2
+assert r.to_float().nearly_eq 7.5
+assert r.to_int() == 7

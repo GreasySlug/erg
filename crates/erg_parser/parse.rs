@@ -1261,6 +1261,17 @@ impl Parser {
                         }
                     }
                 }
+                None | Some(EOF) if lp.is_some() => {
+                    let err = self.skip_and_throw_invalid_seq_err(
+                        caused_by!(),
+                        line!() as usize,
+                        &[")"],
+                        EOF,
+                    );
+                    self.errs.push(err);
+                    debug_exit_info!(self);
+                    return Err(());
+                }
                 None => {
                     self.errs.push(self.unexpected_none(line!(), caused_by!()));
                     debug_exit_info!(self);

@@ -2,6 +2,7 @@
 //!
 //! エラー処理に関する汎用的なコンポーネントを提供する
 use std::cmp::{self, Ordering};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{stderr, BufWriter, Write as _};
 
@@ -640,6 +641,101 @@ fn format_context<E: ErrorDisplay + ?Sized>(
     context.to_string() + "\n"
 }
 
+/// Represents a marker position and its associated messages for multi-marker display
+#[derive(Debug, Clone)]
+struct MarkerInfo {
+    col_begin: usize,
+    col_end: usize,
+    messages: Vec<String>,
+    hint: Option<String>,
+}
+
+/// Format multiple markers on the same line with their messages
+/// This displays the code line once and shows all error positions with branching messages
+fn format_context_multi_marker<E: ErrorDisplay + ?Sized>(
+    e: &E,
+    lineno: usize,
+    markers: &[MarkerInfo],
+    err_color: Color,
+    gutter_color: Color,
+    chars: &Characters,
+    mark: char,
+) -> String {
+    let codes = e.input().reread_lines(lineno, lineno);
+    let mut context = StyledStrings::default();
+    let max_digit = lineno.to_string().len();
+    let (vbreak, vbar) = chars.gutters();
+    let offset = format!("{} {} ", &" ".repeat(max_digit), vbreak);
+
+    context.push_str_with_color(format!("{lineno:<max_digit$} {vbar} "), gutter_color);
+    let not_found = "???".to_string();
+    let code = codes.first().unwrap_or(&not_found);
+    context.push_str(code);
+    context.push_str("\n");
+
+    context.push_str_with_color(&offset, gutter_color);
+    let code_len = code.len();
+    let mut marker_line = vec![' '; code_len + 1];
+    for marker in markers {
+        let start = marker.col_begin.min(code_len);
+        let end = marker.col_end.min(code_len + 1).max(start + 1);
+        for c in marker_line.iter_mut().take(end).skip(start) {
+            *c = mark;
+        }
+    }
+    let marker_str: String = marker_line.into_iter().collect();
+    context.push_str_with_color(marker_str.trim_end(), err_color);
+    context.push_str("\n");
+
+    let mut sorted_markers: Vec<_> = markers.iter().enumerate().collect();
+    sorted_markers.sort_by(|a, b| b.1.col_begin.cmp(&a.1.col_begin));
+
+    let total_markers = sorted_markers.len();
+    for (display_idx, (_, marker)) in sorted_markers.iter().enumerate() {
+        let is_last = display_idx == total_markers - 1;
+        let col_pos = marker.col_end.saturating_sub(1);
+
+        let mut all_msgs: Vec<&str> = marker.messages.iter().map(|s| s.as_str()).collect();
+        if let Some(hint) = &marker.hint {
+            all_msgs.push(hint);
+        }
+
+        for (msg_idx, msg) in all_msgs.iter().enumerate() {
+            let is_last_msg = msg_idx == all_msgs.len() - 1;
+            context.push_str_with_color(&offset, gutter_color);
+
+            let mut line = String::new();
+            for i in 0..=col_pos {
+                if i == col_pos {
+                    if is_last_msg {
+                        line.push_str(&chars.left_bottom_line());
+                    } else {
+                        line.push_str(&chars.left_cross());
+                    }
+                } else {
+                    let need_vertical = sorted_markers
+                        .iter()
+                        .skip(display_idx + 1)
+                        .any(|(_, m)| m.col_end.saturating_sub(1) == i);
+                    if need_vertical {
+                        line.push('|');
+                    } else {
+                        line.push(' ');
+                    }
+                }
+            }
+            context.push_str_with_color(&line, err_color);
+            context.push_str(" ");
+            context.push_str(msg);
+            context.push_str("\n");
+        }
+
+        if !is_last && !marker.messages.is_empty() {}
+    }
+
+    context.to_string() + "\n"
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SubMessage {
     pub loc: Location,
@@ -1041,13 +1137,81 @@ pub trait ErrorDisplay {
         let mut msg = String::new();
         msg += &core.fmt_header(color, self.caused_by(), self.input().kind.as_str());
         msg += "\n\n";
-        for sub_msg in &core.sub_messages {
-            msg += &sub_msg.format_code_and_pointer(self, color, gutter_color, mark, chars);
-        }
+
         if core.sub_messages.is_empty() {
             let sub_msg = SubMessage::ambiguous_new(self.core().loc, vec![], None);
             msg += &sub_msg.format_code_and_pointer(self, color, gutter_color, mark, chars);
+        } else {
+            let mut by_line: BTreeMap<Option<u32>, Vec<&SubMessage>> = BTreeMap::new();
+            for sub_msg in &core.sub_messages {
+                let line = sub_msg.loc.ln_begin();
+                by_line.entry(line).or_default().push(sub_msg);
+            }
+
+            for (line, sub_msgs) in by_line {
+                if sub_msgs.len() == 1 {
+                    msg += &sub_msgs[0].format_code_and_pointer(
+                        self,
+                        color,
+                        gutter_color,
+                        mark,
+                        chars,
+                    );
+                } else if let Some(lineno) = line {
+                    let markers: Vec<MarkerInfo> = sub_msgs
+                        .iter()
+                        .filter_map(|sm| {
+                            if let Location::Range {
+                                col_begin, col_end, ..
+                            } = sm.loc
+                            {
+                                Some(MarkerInfo {
+                                    col_begin: col_begin as usize,
+                                    col_end: col_end as usize,
+                                    messages: sm.msg.clone(),
+                                    hint: sm.hint.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if markers.len() == sub_msgs.len() {
+                        msg += &format_context_multi_marker(
+                            self,
+                            lineno as usize,
+                            &markers,
+                            color,
+                            gutter_color,
+                            chars,
+                            mark,
+                        );
+                    } else {
+                        for sub_msg in sub_msgs {
+                            msg += &sub_msg.format_code_and_pointer(
+                                self,
+                                color,
+                                gutter_color,
+                                mark,
+                                chars,
+                            );
+                        }
+                    }
+                } else {
+                    for sub_msg in sub_msgs {
+                        msg += &sub_msg.format_code_and_pointer(
+                            self,
+                            color,
+                            gutter_color,
+                            mark,
+                            chars,
+                        );
+                    }
+                }
+            }
         }
+
         msg += &core.kind.to_string();
         msg += ": ";
         msg += &core.main_message;

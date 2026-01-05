@@ -630,7 +630,29 @@ impl std::convert::From<CompileErrors> for pyo3::PyErr {
     }
 }
 
-impl MultiErrorDisplay<CompileError> for CompileErrors {}
+impl MultiErrorDisplay<CompileError> for CompileErrors {
+    fn write_all_stderr(&self) {
+        let merged = self.clone().merge_similar();
+        for err in merged.iter() {
+            err.write_to_stderr();
+        }
+    }
+
+    fn write_all_to(&self, w: &mut impl std::io::Write) {
+        let merged = self.clone().merge_similar();
+        for err in merged.iter() {
+            err.write_to(w);
+        }
+    }
+
+    fn fmt_all(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let merged = self.clone().merge_similar();
+        for err in merged.iter() {
+            err.format(f)?;
+        }
+        write!(f, "")
+    }
+}
 
 impl fmt::Display for CompileErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -653,6 +675,80 @@ impl CompileErrors {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Merge errors that occur on the same line into a single error with multiple sub-messages.
+    /// This reduces redundant error output when multiple errors point to the same location.
+    pub fn merge_similar(self) -> Self {
+        use std::collections::HashMap;
+
+        if self.0.len() <= 1 {
+            return self;
+        }
+
+        let mut grouped: HashMap<(Input, Option<u32>), usize> = HashMap::new();
+        let mut groups: Vec<Vec<CompileError>> = Vec::new();
+
+        for err in self.0 {
+            let line = err.core.loc.ln_begin();
+            let key = (err.input.clone(), line);
+            if let Some(&idx) = grouped.get(&key) {
+                groups[idx].push(err);
+            } else {
+                grouped.insert(key, groups.len());
+                groups.push(vec![err]);
+            }
+        }
+
+        let mut merged_errors = Vec::new();
+
+        for errors in groups {
+            if errors.len() == 1 {
+                merged_errors.extend(errors);
+            } else {
+                // Merge multiple errors into one
+                let mut errors_iter = errors.into_iter();
+                let mut base_error = errors_iter.next().unwrap();
+
+                // Add message to base error's sub_messages for consistent display
+                let base_msg =
+                    format!("{}: {}", base_error.core.kind, base_error.core.main_message);
+                // Update existing sub_messages to include the error message
+                if let Some(first_sub) = base_error.core.sub_messages.first_mut() {
+                    if first_sub.msg.is_empty() {
+                        first_sub.msg.push(base_msg.clone());
+                    }
+                }
+
+                // Collect all error messages for the combined main message
+                let mut all_messages = vec![base_error.core.main_message.clone()];
+
+                for other_error in errors_iter {
+                    let other_core = *other_error.core;
+                    let sub_msg = format!("{}: {}", other_core.kind, other_core.main_message);
+                    let hint = other_core.get_hint().map(|s| s.to_string());
+                    // Include kind in all_messages so each line has the error type
+                    all_messages.push(format!("{}: {}", other_core.kind, other_core.main_message));
+                    base_error.core.sub_messages.push(SubMessage::ambiguous_new(
+                        other_core.loc,
+                        vec![sub_msg],
+                        hint,
+                    ));
+                    for sub in other_core.sub_messages {
+                        if !sub.msg.is_empty() || sub.hint.is_some() {
+                            base_error.core.sub_messages.push(sub);
+                        }
+                    }
+                }
+
+                // Update main_message to list all errors
+                base_error.core.main_message = all_messages.join("\n");
+
+                merged_errors.push(base_error);
+            }
+        }
+
+        Self(merged_errors)
     }
 }
 

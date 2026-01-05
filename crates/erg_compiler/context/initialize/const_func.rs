@@ -1200,6 +1200,22 @@ pub(crate) fn str_startswith(mut args: ValueArgs, _ctx: &Context) -> EvalValueRe
     Ok(ValueObj::Bool(slf.starts_with(&prefix[..])).into())
 }
 
+pub(crate) fn float_constructor(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let val = args
+        .remove_left_or_key("x")
+        .ok_or_else(|| not_passed("x"))?;
+    match val {
+        ValueObj::Float(f) => Ok(ValueObj::Float(f).into()),
+        ValueObj::Nat(n) => Ok(ValueObj::from(n as f64).into()),
+        ValueObj::Int(n) => Ok(ValueObj::from(n as f64).into()),
+        ValueObj::Bool(b) => Ok(ValueObj::from(if b { 1.0 } else { 0.0 }).into()),
+        ValueObj::Inf => Ok(ValueObj::from(f64::INFINITY).into()),
+        ValueObj::NegInf => Ok(ValueObj::from(f64::NEG_INFINITY).into()),
+        ValueObj::Ratio(r) => Ok(ValueObj::from(r.to_float()).into()),
+        _ => Err(type_mismatch("Num", val, "x")),
+    }
+}
+
 pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let num = args
         .remove_left_or_key("num")

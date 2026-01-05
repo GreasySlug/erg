@@ -834,24 +834,70 @@ impl Context {
                     )),
                 )),
             }?;
-            // TODO: __call__
-            let ValueObj::Subr(subr) = callee else {
-                return Err((
-                    TyParam::Failure,
-                    EvalError::type_mismatch_error(
-                        self.cfg.input.clone(),
-                        line!() as usize,
-                        call.obj.loc(),
-                        self.caused_by(),
-                        &call.obj.full_name().unwrap_or("_".into()),
-                        None,
-                        &mono("Subroutine"),
-                        &callee.t(),
-                        self.get_candidates(&callee.t()),
-                        None,
-                    )
-                    .into(),
-                ));
+            // Handle __call__ for type objects
+            let subr = match callee {
+                ValueObj::Subr(subr) => subr,
+                ValueObj::Type(ref type_obj) => {
+                    let typ = type_obj.typ();
+                    if let Some(ty_ctx) = self.get_nominal_type_ctx(typ) {
+                        if let Some(ValueObj::Subr(subr)) = ty_ctx.ctx.rec_get_const_obj("__call__")
+                        {
+                            subr.clone()
+                        } else {
+                            return Err((
+                                TyParam::Failure,
+                                EvalError::type_mismatch_error(
+                                    self.cfg.input.clone(),
+                                    line!() as usize,
+                                    call.obj.loc(),
+                                    self.caused_by(),
+                                    &call.obj.full_name().unwrap_or("_".into()),
+                                    None,
+                                    &mono("Subroutine"),
+                                    &callee.t(),
+                                    self.get_candidates(&callee.t()),
+                                    None,
+                                )
+                                .into(),
+                            ));
+                        }
+                    } else {
+                        return Err((
+                            TyParam::Failure,
+                            EvalError::type_mismatch_error(
+                                self.cfg.input.clone(),
+                                line!() as usize,
+                                call.obj.loc(),
+                                self.caused_by(),
+                                &call.obj.full_name().unwrap_or("_".into()),
+                                None,
+                                &mono("Subroutine"),
+                                &callee.t(),
+                                self.get_candidates(&callee.t()),
+                                None,
+                            )
+                            .into(),
+                        ));
+                    }
+                }
+                _ => {
+                    return Err((
+                        TyParam::Failure,
+                        EvalError::type_mismatch_error(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            call.obj.loc(),
+                            self.caused_by(),
+                            &call.obj.full_name().unwrap_or("_".into()),
+                            None,
+                            &mono("Subroutine"),
+                            &callee.t(),
+                            self.get_candidates(&callee.t()),
+                            None,
+                        )
+                        .into(),
+                    ));
+                }
             };
             let (args, mut errs) = match self.eval_args(&call.args) {
                 Ok(args) => (args, EvalErrors::empty()),
@@ -3084,6 +3130,7 @@ impl Context {
             | ValueObj::Nat(_)
             | ValueObj::Bool(_)
             | ValueObj::Float(_)
+            | ValueObj::Ratio(_)
             | ValueObj::Code(_)
             | ValueObj::Str(_)
             | ValueObj::None => Err(val),

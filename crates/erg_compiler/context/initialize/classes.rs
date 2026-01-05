@@ -220,9 +220,21 @@ impl Context {
         let t_call = func1(Obj, Float);
         float.register_builtin_erg_impl(
             FUNDAMENTAL_CALL,
-            t_call,
+            t_call.clone(),
             Immutable,
             Visibility::BUILTIN_PUBLIC,
+        );
+        let float_call = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNDAMENTAL_CALL,
+            float_constructor,
+            t_call,
+            None,
+        )));
+        float.register_builtin_const(
+            FUNDAMENTAL_CALL,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            float_call,
         );
         float.register_trait(self, mono(NUM)).unwrap();
         let mut float_partial_ord = Self::builtin_methods(Some(mono(PARTIAL_ORD)), 2);
@@ -366,11 +378,24 @@ impl Context {
         float.register_trait_methods(Float, float_show);
 
         /* Ratio */
-        // TODO: Int, Nat, Boolの継承元をRatioにする(今はFloat)
         let mut ratio = Self::builtin_mono_class(RATIO, 2);
         ratio.register_superclass(Obj, &obj);
         ratio.register_builtin_py_impl(REAL, Ratio, Const, Visibility::BUILTIN_PUBLIC, Some(REAL));
         ratio.register_builtin_py_impl(IMAG, Ratio, Const, Visibility::BUILTIN_PUBLIC, Some(IMAG));
+        ratio.register_builtin_py_impl(
+            NUMERATOR,
+            Int,
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+            Some(NUMERATOR),
+        );
+        ratio.register_builtin_py_impl(
+            DENOMINATOR,
+            Int,
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+            Some(DENOMINATOR),
+        );
         ratio.register_trait(self, mono(NUM)).unwrap();
         ratio.register_trait(self, mono(ORD)).unwrap();
         let mut ratio_ord = Self::builtin_methods(Some(mono(ORD)), 2);
@@ -381,6 +406,10 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         ratio.register_trait_methods(Ratio, ratio_ord);
+        ratio.register_py_builtin(OP_GT, fn1_met(Ratio, Ratio, Bool), Some(OP_GT), 0);
+        ratio.register_py_builtin(OP_GE, fn1_met(Ratio, Ratio, Bool), Some(OP_GE), 0);
+        ratio.register_py_builtin(OP_LT, fn1_met(Ratio, Ratio, Bool), Some(OP_LT), 0);
+        ratio.register_py_builtin(OP_LE, fn1_met(Ratio, Ratio, Bool), Some(OP_LE), 0);
         let mut ratio_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         ratio_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -398,6 +427,14 @@ impl Context {
         );
         ratio.register_trait_methods(Ratio, ratio_hash);
         ratio.register_trait(self, mono(EQ_HASH)).unwrap();
+        let mut ratio_to_float = Self::builtin_methods(Some(mono(TO_FLOAT)), 1);
+        ratio_to_float.register_builtin_erg_impl(
+            FUNDAMENTAL_FLOAT,
+            fn0_met(Ratio, Float),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_to_float);
         let op_t = fn1_met(Ratio, Ratio, Ratio);
         let mut ratio_add = Self::builtin_methods(Some(poly(ADD, vec![ty_tp(Ratio)])), 2);
         ratio_add.register_builtin_erg_impl(
@@ -440,11 +477,12 @@ impl Context {
             None,
             ValueObj::builtin_class(Ratio),
         );
+        // power is not closed operation on Ratio (cast to Float)
         ratio_mul.register_builtin_const(
             POW_OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Ratio),
+            ValueObj::builtin_class(Float),
         );
         ratio.register_trait_methods(Ratio, ratio_mul);
         let mut ratio_div = Self::builtin_methods(Some(poly(DIV, vec![ty_tp(Ratio)])), 2);
@@ -499,10 +537,66 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         ratio.register_trait_methods(Ratio, ratio_show);
+        let mut ratio_to_int = Self::builtin_methods(Some(mono(TO_INT)), 1);
+        ratio_to_int.register_builtin_erg_impl(
+            FUNDAMENTAL_INT,
+            fn0_met(Ratio, Int),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_to_int);
+        let mut ratio_to_bool = Self::builtin_methods(Some(mono(TO_BOOL)), 1);
+        ratio_to_bool.register_builtin_erg_impl(
+            FUNDAMENTAL_BOOL,
+            fn0_met(Ratio, Bool),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_to_bool);
+        let mut ratio_pos = Self::builtin_methods(Some(mono(POS)), 2);
+        ratio_pos.register_builtin_const(
+            OUTPUT,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            ValueObj::builtin_class(Ratio),
+        );
+        ratio_pos.register_builtin_erg_impl(
+            OP_POS,
+            fn0_met(Ratio, Ratio),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_pos);
+        let mut ratio_neg = Self::builtin_methods(Some(mono(NEG)), 2);
+        ratio_neg.register_builtin_const(
+            OUTPUT,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            ValueObj::builtin_class(Ratio),
+        );
+        ratio_neg.register_builtin_erg_impl(
+            OP_NEG,
+            fn0_met(Ratio, Ratio),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_neg);
+        let t_call = no_var_func(vec![kw(NUMERATOR, Int), kw(DENOMINATOR, Int)], vec![], Ratio)
+            & func1(Obj, Ratio);
+        ratio.register_builtin_erg_impl(
+            FUNDAMENTAL_CALL,
+            t_call,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_py_builtin(FUNC_NUMER, fn0_met(Ratio, Int), Some(FUNC_NUMER), 89);
+        ratio.register_py_builtin(FUNC_DENOM, fn0_met(Ratio, Int), Some(FUNC_DENOM), 92);
+        ratio.register_py_builtin(FUNC_TO_FLOAT, fn0_met(Ratio, Float), Some(FUNC_TO_FLOAT), 95);
+        ratio.register_py_builtin(FUNC_TO_INT, fn0_met(Ratio, Int), Some(FUNC_TO_INT), 98);
 
         /* Int */
         let mut int = Self::builtin_mono_class(INT, 2);
-        int.register_superclass(Float, &float); // TODO: Float -> Ratio
+        int.register_superclass(Ratio, &ratio);
         int.register_trait(self, mono(NUM)).unwrap();
         // class("Rational"),
         // class("Integral"),
@@ -653,7 +747,7 @@ impl Context {
         let mut int_div = Self::builtin_methods(Some(poly(DIV, vec![ty_tp(Int)])), 2);
         int_div.register_builtin_erg_impl(
             OP_DIV,
-            fn1_met(Int, Int, Float),
+            fn1_met(Int, Int, Ratio),
             Const,
             Visibility::BUILTIN_PUBLIC,
         );
@@ -661,7 +755,7 @@ impl Context {
             OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Float),
+            ValueObj::builtin_class(Ratio),
         );
         int_div.register_builtin_const(
             MOD_OUTPUT,
@@ -813,7 +907,7 @@ impl Context {
         let mut nat_div = Self::builtin_methods(Some(poly(DIV, vec![ty_tp(Nat)])), 2);
         nat_div.register_builtin_erg_impl(
             OP_DIV,
-            fn1_met(Nat, Nat, Float),
+            fn1_met(Nat, Nat, Ratio),
             Const,
             Visibility::BUILTIN_PUBLIC,
         );
@@ -821,7 +915,7 @@ impl Context {
             OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Float),
+            ValueObj::builtin_class(Ratio),
         );
         nat_div.register_builtin_const(
             MOD_OUTPUT,
@@ -3512,7 +3606,7 @@ impl Context {
         /* Int! */
         let mut int_mut = Self::builtin_mono_class(MUT_INT, 2);
         int_mut.register_superclass(Int, &int);
-        int_mut.register_superclass(mono(MUT_FLOAT), &float_mut);
+        int_mut.register_superclass(mono(MUT_RATIO), &ratio_mut);
         let t = pr_met(mono(MUT_INT), vec![], None, vec![kw(KW_I, Int)], NoneType);
         int_mut.register_builtin_py_impl(
             PROC_INC,

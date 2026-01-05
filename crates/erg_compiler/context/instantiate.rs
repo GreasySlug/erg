@@ -788,6 +788,7 @@ impl Context {
             ValueObj::Int(_)
             | ValueObj::Nat(_)
             | ValueObj::Float(_)
+            | ValueObj::Ratio(_)
             | ValueObj::Str(_)
             | ValueObj::Bool(_)
             | ValueObj::Code(_)

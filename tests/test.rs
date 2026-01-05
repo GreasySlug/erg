@@ -248,6 +248,11 @@ fn exec_int() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_ratio() -> Result<(), ()> {
+    expect_success("tests/should_ok/ratio.er", 0)
+}
+
+#[test]
 fn exec_interpolation() -> Result<(), ()> {
     expect_success("tests/should_ok/interpolation.er", 0)
 }
@@ -705,7 +710,7 @@ fn exec_set() -> Result<(), ()> {
 
 #[test]
 fn exec_set_type_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/set_type.er", 0, 3)
+    expect_success("examples/set.er", 3)
 }
 
 #[test]

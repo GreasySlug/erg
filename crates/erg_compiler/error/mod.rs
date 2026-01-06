@@ -543,9 +543,22 @@ impl OwnershipError {
         caused_by: String,
     ) -> Self {
         let found = StyledString::new(name, Some(ERR), Some(ATTR));
+        let moved_msg = switch_lang!(
+            "japanese" => "ここで値が移動されました",
+            "simplified_chinese" => "值已在此处移动",
+            "traditional_chinese" => "值已在此處移動",
+            "english" => "value moved here",
+        );
         Self::new(
             ErrorCore::new(
-                vec![SubMessage::only_loc(name_loc)],
+                vec![
+                    SubMessage::ambiguous_new(
+                        moved_loc,
+                        vec![moved_msg.to_string()],
+                        None,
+                    ),
+                    SubMessage::only_loc(name_loc),
+                ],
                 switch_lang!(
                     "japanese" => format!(
                         "{found}は{}行目ですでに移動されています",

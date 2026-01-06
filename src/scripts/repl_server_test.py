@@ -26,6 +26,7 @@ class MockSocket:
         self.cursor += bufsize
         return data
 
+
 corr_data = "".join(random.choices(string.ascii_uppercase + string.digits, k=2048))
 s = MessageStream(MockSocket())
 

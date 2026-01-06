@@ -19,6 +19,7 @@ def with__(obj, body):
     with obj as o:
         body(o)
 
+
 def discard__(obj):
     pass
 

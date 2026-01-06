@@ -40,6 +40,6 @@ if __name__ == "__main__":
             raise ValueError("More than one file with the same number")
         else:
             target = nxt[0]
-            replace_to = "_".join([f"{file_no+1:02d}", *target.split("_")[2:]])
+            replace_to = "_".join([f"{file_no + 1:02d}", *target.split("_")[2:]])
             os.rename(target, replace_to)
         file_no += 1

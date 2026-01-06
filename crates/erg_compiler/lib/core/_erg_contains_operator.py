@@ -6,6 +6,7 @@ from _erg_type import UnionType
 from _erg_type import _isinstance
 from _erg_type import is_type
 
+
 # (elem in y) == contains_operator(y, elem)
 def contains_operator(y, elem) -> bool:
     if hasattr(elem, "type_check"):

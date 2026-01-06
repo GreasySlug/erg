@@ -68,7 +68,7 @@ def get_summary(
     ]
     dir_names = [f for f in dir_list if os.path.isdir(os.path.join(path, f))]
     for file_name in file_names:
-        current_text += f"{'  '*depth}- [{get_title(os.path.join(path, file_name))}]({'./' if dir_relative_path=='' else f'./{dir_relative_path}/'}{file_name})\n"
+        current_text += f"{'  ' * depth}- [{get_title(os.path.join(path, file_name))}]({'./' if dir_relative_path == '' else f'./{dir_relative_path}/'}{file_name})\n"
         dir_file_name_match = dir_file_name_pattern.match(file_name)
         matched_dir_name = None
         if dir_file_name_match is not None:

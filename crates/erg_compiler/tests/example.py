@@ -1,4 +1,5 @@
 import erg_compiler
+
 erg_parser = erg_compiler.erg_parser
 erg_ast = erg_compiler.erg_parser.ast
 

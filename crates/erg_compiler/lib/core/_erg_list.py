@@ -56,9 +56,7 @@ class List(list):
         return self
 
     def partition(self, f):
-        return List(list(filter(f, self))), List(
-            list(filter(lambda x: not f(x), self))
-        )
+        return List(list(filter(f, self))), List(list(filter(lambda x: not f(x), self)))
 
     def __mul__(self, n):
         return then__(list.__mul__(self, n), List)
@@ -139,6 +137,7 @@ class List(list):
 
     def from_(self, nth: int):
         return self[nth:]
+
 
 class UnsizedList:
     elem: object

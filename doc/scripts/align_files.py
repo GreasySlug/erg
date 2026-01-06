@@ -14,7 +14,9 @@ if __name__ == "__main__":
             now_file_no = int(f.split("_")[0])
             diff = now_file_no - prev
             if diff != 1:
-                replace_to = "_".join([f"{now_file_no-diff+1:02d}", *f.split("_")[1:]])
+                replace_to = "_".join(
+                    [f"{now_file_no - diff + 1:02d}", *f.split("_")[1:]]
+                )
                 os.rename(f, replace_to)
                 prev = now_file_no - diff + 1
             else:

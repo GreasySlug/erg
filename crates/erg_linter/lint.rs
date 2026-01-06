@@ -17,7 +17,10 @@ use erg_compiler::ty::{value::TypeObj, Type, ValueObj};
 use erg_parser::token::TokenKind;
 use erg_parser::ParserRunner;
 
-use crate::warn::*;
+use crate::warn::{
+    false_comparison, hardcoded_constant, tautology, too_many_instance_attributes,
+    too_many_params, true_comparison, KNOWN_CONSTANTS,
+};
 
 #[derive(Debug)]
 pub struct Linter {
@@ -159,6 +162,7 @@ impl Linter {
             self.lint_bool_comparison(chunk);
             self.lint_too_many_instance_attributes(chunk);
             self.lint_tautology(chunk);
+            self.lint_hardcoded_constant(chunk);
         }
         log!(info "Finished linting");
         self.warns.take()
@@ -259,6 +263,31 @@ impl Linter {
         } else {
             self.check_recursively(&Self::lint_too_many_instance_attributes, expr);
         }
+    }
+
+    fn lint_hardcoded_constant(&mut self, expr: &Expr) {
+        if let Expr::Literal(lit) = expr {
+            let value = match &lit.value {
+                ValueObj::Float(f) => Some(**f),
+                ValueObj::Ratio(r) => Some(r.to_float()),
+                _ => None,
+            };
+            if let Some(value) = value {
+                for known in KNOWN_CONSTANTS {
+                    if known.matches(value) {
+                        self.warns.push(hardcoded_constant(
+                            self.input(),
+                            line!() as usize,
+                            self.caused_by(),
+                            lit.loc(),
+                            &known.suggestion(),
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
+        self.check_recursively(&Self::lint_hardcoded_constant, expr);
     }
 
     /* ↓ Helper methods ↓ */

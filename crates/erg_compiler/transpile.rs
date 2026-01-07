@@ -1,18 +1,18 @@
 use std::fs::File;
 use std::io::Write;
 
+use erg_common::Str;
 use erg_common::error::{ErrorDisplay, ErrorKind, MultiErrorDisplay};
 use erg_common::log;
 use erg_common::set::Set as HashSet;
 use erg_common::traits::BlockKind;
 use erg_common::traits::{ExitStatus, Locational, New, Runnable, Stream};
-use erg_common::Str;
 use erg_common::{config::ErgConfig, dict};
 use erg_common::{config::TranspileTarget, dict::Dict as HashMap};
 
-use erg_parser::ast::{ParamPattern, TypeSpec, VarName, AST};
-use erg_parser::token::TokenKind;
 use erg_parser::ParserRunner;
+use erg_parser::ast::{AST, ParamPattern, TypeSpec, VarName};
+use erg_parser::token::TokenKind;
 
 use crate::artifact::{
     BuildRunnable, Buildable, CompleteArtifact, ErrorArtifact, IncompleteArtifact,
@@ -23,8 +23,8 @@ use crate::context::{Context, ContextProvider, ModuleContext};
 use crate::desugar_hir::HIRDesugarer;
 use crate::error::{CompileError, CompileErrors, CompileResult};
 use crate::hir::{
-    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, Identifier, Lambda, List,
-    Literal, Params, PatchDef, ReDef, Record, Set, Signature, Tuple, UnaryOp, HIR,
+    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, HIR, Identifier, Lambda, List,
+    Literal, Params, PatchDef, ReDef, Record, Set, Signature, Tuple, UnaryOp,
 };
 use crate::link_hir::HIRLinker;
 use crate::module::SharedCompilerResource;
@@ -57,17 +57,26 @@ fn demangle(name: &str) -> String {
         .replace('.', "_")
 }
 
-// TODO:
+/// Replace non-symbolic characters with Python-safe identifiers
 fn replace_non_symbolic(name: &str) -> String {
-    name.replace('\'', "__single_quote__")
-        .replace(' ', "__space__")
-        .replace('+', "__plus__")
-        .replace('-', "__minus__")
-        .replace('*', "__star__")
-        .replace('/', "__slash__")
-        .replace('%', "__percent__")
-        .replace('!', "__erg_proc__")
-        .replace('$', "erg_shared__")
+    const REPLACEMENTS: &[(char, &str)] = &[
+        ('\'', "__single_quote__"),
+        (' ', "__space__"),
+        ('+', "__plus__"),
+        ('-', "__minus__"),
+        ('*', "__star__"),
+        ('/', "__slash__"),
+        ('%', "__percent__"),
+        ('!', "__erg_proc__"),
+        ('$', "erg_shared__"),
+    ];
+    let mut result = name.to_string();
+    for (from, to) in REPLACEMENTS {
+        if result.contains(*from) {
+            result = result.replace(*from, to);
+        }
+    }
+    result
 }
 
 pub enum Enclosure {
@@ -467,30 +476,11 @@ impl PyScriptGenerator {
         }
     }
 
-    // TODO: more smart way
     fn replace_import(src: &str) -> String {
-        src.replace("from _erg_nat import NatMut", "")
-            .replace("from _erg_nat import Nat", "")
-            .replace("from _erg_int import IntMut", "")
-            .replace("from _erg_int import Int", "")
-            .replace("from _erg_ratio import RatioMut", "")
-            .replace("from _erg_ratio import Ratio", "")
-            .replace("from _erg_bool import BoolMut", "")
-            .replace("from _erg_bool import Bool", "")
-            .replace("from _erg_str import StrMut", "")
-            .replace("from _erg_str import Str", "")
-            .replace("from _erg_float import FloatMut", "")
-            .replace("from _erg_float import Float", "")
-            .replace("from _erg_list import List", "")
-            .replace("from _erg_range import Range", "")
-            .replace("from _erg_result import Error", "")
-            .replace("from _erg_result import is_ok", "")
-            .replace("from _erg_control import then__", "")
-            .replace("from _erg_contains_operator import contains_operator", "")
-            .replace("from _erg_type import is_type", "")
-            .replace("from _erg_type import _isinstance", "")
-            .replace("from _erg_type import UnionType", "")
-            .replace("from _erg_type import MutType", "")
+        src.lines()
+            .filter(|line| !line.starts_with("from _erg_"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn load_namedtuple_if_not(&mut self) {

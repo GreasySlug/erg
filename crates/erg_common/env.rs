@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::normalize_path;
+use crate::pyfinder::{local_venv_root, platform};
 use crate::python_util::{_opt_which_python, get_sys_path};
 use crate::style::colors::*;
 use crate::style::RESET;
@@ -81,20 +82,10 @@ fn _sys_path() -> impl Iterator<Item = PathBuf> {
     })
 }
 fn _python_site_packages() -> impl Iterator<Item = PathBuf> {
-    let paths = if Path::new("./.venv/lib").is_dir() {
-        let mut paths = vec![];
-        for entry in Path::new("./.venv/lib").read_dir().unwrap().flatten() {
-            if entry.file_type().unwrap().is_dir() {
-                let mut path = entry.path();
-                path.push("site-packages");
-                if path.is_dir() {
-                    paths.push(path);
-                }
-            }
-        }
-        paths
-    } else {
-        get_sys_path(None).unwrap_or_default()
+    // a project-local venv/conda env takes precedence over the global sys.path
+    let paths = match local_venv_root() {
+        Some(root) => platform::venv_site_packages(&root),
+        None => get_sys_path(None).unwrap_or_default(),
     };
     paths
         .into_iter()

@@ -211,11 +211,10 @@ pub(crate) fn expect_error_location_and_msg(
 }
 
 fn set_cfg(mut cfg: ErgConfig) -> ErgConfig {
-    cfg.py_command = if cfg!(windows) {
-        Some("python")
-    } else {
-        Some("python3")
-    };
+    // NOTE: don't set `cfg.py_command` here: the magic number/target version below are
+    // detected at build time via `which_python` (which prefers e.g. `.venv`), so the
+    // executing interpreter must be resolved the same way (a fixed "python3" can be
+    // a different version from the build-time one)
     let py_ver_minor = env!("PYTHON_VERSION_MINOR").parse::<u8>().unwrap();
     let py_ver_micro = env!("PYTHON_VERSION_MICRO").parse::<u8>().unwrap();
     let py_magic_num = env!("PYTHON_MAGIC_NUMBER").parse::<u32>().unwrap();

@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use crate::env::opt_which_python;
-use crate::fn_name_full;
 use crate::io::Output;
 use crate::pathutil::remove_verbatim;
 use crate::random::random;
@@ -564,86 +563,10 @@ fn escape_py_code(code: &str) -> String {
     code.replace('"', "\\\"").replace('`', "\\`")
 }
 
-/// ```toml
-/// [tool.pylyzer.python]
-/// path = "path/to/python"
-/// ```
-fn which_python_from_toml() -> Option<String> {
-    use std::io::BufRead;
-    let f = File::open("pyproject.toml").ok()?;
-    let mut reader = std::io::BufReader::new(f);
-    let mut line = String::new();
-    while reader.read_line(&mut line).is_ok_and(|i| i > 0) {
-        if line.starts_with("[tool.erg.python]") || line.starts_with("[tool.pylyzer.python]") {
-            line.clear();
-            reader.read_line(&mut line).ok()?;
-            let attr = line.split('#').next().unwrap();
-            if attr.starts_with("path =") {
-                return Some(
-                    attr.trim_start_matches("path =")
-                        .trim_matches('"')
-                        .trim()
-                        .to_string(),
-                );
-            }
-        }
-        line.clear();
-    }
-    None
-}
-
-fn get_poetry_virtualenv_path() -> Option<String> {
-    let out = if cfg!(windows) {
-        Command::new("cmd")
-            .arg("/C")
-            .arg("poetry env info -p")
-            .output()
-            .ok()?
-    } else {
-        Command::new("sh")
-            .arg("-c")
-            .arg("poetry env info -p")
-            .output()
-            .ok()?
-    };
-    let path = String::from_utf8(out.stdout).ok()?;
-    Path::new(path.trim())
-        .exists()
-        .then_some(path.trim().to_string())
-}
-
+/// Locate the Python interpreter to use. See [`crate::pyfinder`] for the
+/// discovery strategy (config / venv / conda / poetry / pyenv / PATH).
 pub fn _opt_which_python() -> Result<String, String> {
-    if let Some(path) = which_python_from_toml() {
-        return Ok(path);
-    }
-    if Path::new("./.venv/bin/python").is_file() {
-        let path = canonicalize("./.venv/bin/python").unwrap();
-        return Ok(path.to_string_lossy().to_string());
-    } else if let Some(path) = get_poetry_virtualenv_path() {
-        return Ok(format!("{path}/bin/python"));
-    }
-    let (cmd, python) = if cfg!(windows) {
-        ("where", "python")
-    } else {
-        ("which", "python3")
-    };
-    let Ok(out) = Command::new(cmd).arg(python).output() else {
-        return Err(format!("{}: {python} not found", fn_name_full!()));
-    };
-    let Ok(res) = String::from_utf8(out.stdout) else {
-        return Err(format!(
-            "{}: failed to commnunicate with Python",
-            fn_name_full!()
-        ));
-    };
-    let res = res.split('\n').next().unwrap_or("").replace('\r', "");
-    if res.is_empty() {
-        return Err(format!("{}: {python} not found", fn_name_full!()));
-    } else if res.contains("pyenv") && cfg!(windows) {
-        // because pyenv-win does not support `-c` option
-        return Err("cannot use pyenv-win".into());
-    }
-    Ok(res)
+    crate::pyfinder::find_python().map(|py| py.command())
 }
 
 fn which_python() -> &'static str {
@@ -983,11 +906,16 @@ pub fn spawn_py(py_command: Option<&str>, code: &str) -> Child {
     }
 }
 
-pub fn exec_pyc_code(code: &[u8], args: &[&str], output: Output) -> std::io::Result<ExitStatus> {
+pub fn exec_pyc_code(
+    code: &[u8],
+    py_command: Option<&str>,
+    args: &[&str],
+    output: Output,
+) -> std::io::Result<ExitStatus> {
     let tmp_dir = temp_dir();
     let tmp_file = tmp_dir.join(format!("{}.pyc", random()));
     File::create(&tmp_file).unwrap().write_all(code).unwrap();
-    let res = exec_pyc(&tmp_file, None, current_dir().ok(), args, output);
+    let res = exec_pyc(&tmp_file, py_command, current_dir().ok(), args, output);
     remove_file(tmp_file)?;
     res
 }

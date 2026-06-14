@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::remove_file;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
@@ -6,16 +7,18 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use erg_common::config::ErgConfig;
-use erg_common::error::{ErrorDisplay, ErrorKind, MultiErrorDisplay};
+use erg_common::error::MultiErrorDisplay;
 use erg_common::python_util::spawn_py;
-use erg_common::traits::{BlockKind, ExitStatus, New, Runnable};
+use erg_common::repl::{CompletionProvider, ReplCandidate, ReplCompletion};
+use erg_common::shared::Shared;
+use erg_common::traits::{ExitStatus, New, Runnable};
 
 use erg_compiler::hir::Expr;
 use erg_compiler::ty::HasType;
 
+use erg_compiler::context::ModuleContext;
 use erg_compiler::error::{CompileError, CompileErrors};
 use erg_compiler::Compiler;
-use erg_parser::ParserRunner;
 
 pub type EvalError = CompileError;
 pub type EvalErrors = CompileErrors;
@@ -182,6 +185,8 @@ fn find_available_port() -> u16 {
 pub struct DummyVM {
     compiler: Compiler,
     stream: Option<MessageStream<TcpStream>>,
+    /// snapshot of the REPL module context, shared with the completion provider
+    mod_ctx: Shared<Option<ModuleContext>>,
 }
 
 impl Default for DummyVM {
@@ -232,10 +237,14 @@ impl New for DummyVM {
         } else {
             None
         };
-        Self {
+        let vm = Self {
             compiler: Compiler::new(cfg),
             stream,
-        }
+            mod_ctx: Shared::new(None),
+        };
+        // prime the snapshot so that builtins can be completed before the first eval
+        vm.refresh_mod_ctx();
+        vm
     }
 }
 
@@ -254,7 +263,9 @@ impl Runnable for DummyVM {
     }
 
     fn finish(&mut self) {
-        if let Some(stream) = &mut self.stream {
+        // take() makes this idempotent: `finish` is called both by the REPL
+        // driver on exit and by `Drop`, but the server must be notified only once
+        if let Some(mut stream) = self.stream.take() {
             // send exit to server
             if let Err(err) = stream.send_msg(&Message::new(Inst::Exit, None)) {
                 eprintln!("Write error: {err}");
@@ -299,10 +310,10 @@ impl Runnable for DummyVM {
     }
 
     fn eval(&mut self, src: String) -> Result<String, EvalErrors> {
-        let arti = self
-            .compiler
-            .eval_compile(src, "eval")
-            .map_err(|eart| eart.errors)?;
+        let result = self.compiler.eval_compile(src, "eval");
+        // the context may have gained definitions even on failure
+        self.refresh_mod_ctx();
+        let arti = result.map_err(|eart| eart.errors)?;
         let ((code, last), warns) = (arti.object, arti.warns);
         let mut res = warns.to_string();
 
@@ -382,43 +393,52 @@ impl Runnable for DummyVM {
         Ok(res)
     }
 
-    fn expect_block(&self, src: &str) -> BlockKind {
-        let mut parser = ParserRunner::new(self.cfg().clone());
-        match parser.eval(src.to_string()) {
-            Err(errs) => {
-                let kind = errs
-                    .iter()
-                    .filter(|e| e.core().kind == ErrorKind::ExpectNextLine)
-                    .map(|e| {
-                        let msg = e.core().sub_messages.last().unwrap();
-                        // ExpectNextLine error must have msg otherwise it's a bug
-                        msg.get_msg().first().unwrap().to_owned()
-                    })
-                    .next();
-                if let Some(kind) = kind {
-                    return BlockKind::from(kind.as_str());
-                }
-                if errs
-                    .iter()
-                    .any(|err| err.core.main_message.contains("\"\"\""))
-                {
-                    return BlockKind::MultiLineStr;
-                }
-                BlockKind::Error
-            }
-            Ok(_) => {
-                if src.contains("Class") {
-                    return BlockKind::ClassDef;
-                }
-                BlockKind::None
-            }
+    fn completeness_checker(&self) -> Option<erg_common::stdin::CompletenessChecker> {
+        if env::var("ERG_BASIC_REPL").is_ok() {
+            return None;
         }
+        Some(Box::new(erg_parser::parse::check_code_completeness))
+    }
+
+    fn completion_provider(&self) -> Option<CompletionProvider> {
+        if env::var("ERG_BASIC_REPL").is_ok() {
+            return None;
+        }
+        let mod_ctx = self.mod_ctx.clone();
+        Some(Box::new(move |line, cursor| {
+            let guard = mod_ctx.borrow();
+            let Some(mc) = guard.as_ref() else {
+                return ReplCompletion {
+                    start: cursor,
+                    candidates: vec![],
+                };
+            };
+            let comp = erg_compiler::complete::complete(&mc.context, line, cursor);
+            ReplCompletion {
+                start: comp.start,
+                candidates: comp
+                    .candidates
+                    .into_iter()
+                    .map(|c| ReplCandidate {
+                        value: c.name,
+                        desc: Some(c.typ),
+                    })
+                    .collect(),
+            }
+        }))
     }
 }
 
 impl DummyVM {
     pub fn new(cfg: ErgConfig) -> Self {
         New::new(cfg)
+    }
+
+    /// Update the module context snapshot used by the completion provider.
+    fn refresh_mod_ctx(&self) {
+        if let Some(mc) = self.compiler.get_context() {
+            *self.mod_ctx.borrow_mut() = Some(mc.clone());
+        }
     }
 
     /// Execute the script specified in the configuration.

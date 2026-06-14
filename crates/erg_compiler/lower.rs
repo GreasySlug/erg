@@ -8,13 +8,11 @@ use erg_common::config::{ErgConfig, ErgMode};
 use erg_common::consts::{ELS, ERG_MODE, PYTHON_MODE};
 use erg_common::dict;
 use erg_common::dict::Dict;
-use erg_common::error::{ErrorDisplay, ErrorKind};
 use erg_common::error::{Location, MultiErrorDisplay};
 use erg_common::fresh::FreshNameGenerator;
 use erg_common::pathutil::{mod_name, NormalizedPathBuf};
 use erg_common::set;
 use erg_common::set::Set;
-use erg_common::traits::BlockKind;
 use erg_common::traits::New;
 use erg_common::traits::OptionalTranspose;
 use erg_common::traits::{ExitStatus, Locational, NoTypeDisplay, Runnable, Stream};
@@ -27,7 +25,6 @@ use erg_parser::build_ast::{ASTBuildable, ASTBuilder as DefaultASTBuilder};
 use erg_parser::desugar::Desugarer;
 use erg_parser::token::{Token, TokenKind};
 use erg_parser::Parser;
-use erg_parser::ParserRunner;
 
 use crate::artifact::{BuildRunnable, Buildable, CompleteArtifact, IncompleteArtifact};
 use crate::build_package::CheckStatus;
@@ -154,37 +151,8 @@ impl<ASTBuilder: ASTBuildable> Runnable for GenericASTLowerer<ASTBuilder> {
         Ok(format!("{}", artifact.object))
     }
 
-    fn expect_block(&self, src: &str) -> BlockKind {
-        let mut parser = ParserRunner::new(self.cfg().clone());
-        match parser.eval(src.to_string()) {
-            Err(errs) => {
-                let kind = errs
-                    .iter()
-                    .filter(|e| e.core().kind == ErrorKind::ExpectNextLine)
-                    .map(|e| {
-                        let msg = e.core().sub_messages.last().unwrap();
-                        // ExpectNextLine error must have msg otherwise it's a bug
-                        msg.get_msg().first().unwrap().to_owned()
-                    })
-                    .next();
-                if let Some(kind) = kind {
-                    return BlockKind::from(kind.as_str());
-                }
-                if errs
-                    .iter()
-                    .any(|err| err.core.main_message.contains("\"\"\""))
-                {
-                    return BlockKind::MultiLineStr;
-                }
-                BlockKind::Error
-            }
-            Ok(_) => {
-                if src.contains("Class") {
-                    return BlockKind::ClassDef;
-                }
-                BlockKind::None
-            }
-        }
+    fn completeness_checker(&self) -> Option<erg_common::stdin::CompletenessChecker> {
+        Some(Box::new(erg_parser::parse::check_code_completeness))
     }
 }
 
@@ -540,6 +508,19 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 self.lower_normal_tuple(tup, expect)
                     .map_err(|(tup, errs)| (hir::Tuple::Normal(tup), errs))?,
             )),
+            other => feature_error!(
+                LowerErrors,
+                LowerError,
+                self.module.context,
+                other.loc(),
+                "tuple comprehension"
+            )
+            .map_err(|errs| {
+                (
+                    hir::Tuple::Normal(hir::NormalTuple::new(hir::Args::empty())),
+                    errs,
+                )
+            }),
         }
     }
 
@@ -1301,6 +1282,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         let lhs = *args.next().unwrap();
         let rhs = *args.next().unwrap();
         let guard = self.get_bin_guard_type(&bin.op, &lhs, &rhs);
+        let has_guard = guard.is_some();
         let lhs = self.lower_expr(lhs, None).unwrap_or_else(|(expr, errs)| {
             errors.extend(errs);
             expr.unwrap_or(hir::Expr::Dummy(hir::Dummy::new(vec![])))
@@ -1333,6 +1315,20 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     "{return_t} is not a subtype of Bool"
                 );
                 *return_t = guard;
+            }
+        }
+        // Refine the result type of integer arithmetic from the concrete operand bounds,
+        // e.g. `{I: Nat | I >= 1} - 1 : Nat` instead of `Int`. Only narrows (never widens),
+        // so it is sound and leaves non-integer / unbounded cases unchanged.
+        if !has_guard {
+            let l_t = args[0].expr.ref_t().clone();
+            let r_t = args[1].expr.ref_t().clone();
+            if let Some(refined) = self.module.context.refine_num_binop(bin.op.kind, &l_t, &r_t) {
+                if let Some(return_t) = vi.t.mut_return_t() {
+                    if self.module.context.subtype_of(&refined, return_t) {
+                        *return_t = refined;
+                    }
+                }
             }
         }
         if let Some(expect) = expect {
@@ -1430,8 +1426,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             .is_none_or(|kind| !kind.is_if())
             && expect.is_some_and(|subr| !subr.essential_qnames().is_empty())
         {
-            pos_args
-                .sort_by(|(_, (l, _)), (_, (r, _))| l.expr.complexity().cmp(&r.expr.complexity()));
+            pos_args.sort_by_key(|(_, (l, _))| l.expr.complexity());
         }
         let mut hir_pos_args =
             vec![hir::PosArg::new(hir::Expr::Dummy(hir::Dummy::empty())); pos_args.len()];
@@ -3018,7 +3013,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             Ok(attr) => attr,
             Err((hir::Accessor::Ident(ident), _errs)) => {
                 let pat = ast::VarPattern::Ident(ident.raw);
-                let sig = ast::Signature::Var(ast::VarSignature::new(pat, None));
+                let sig = ast::Signature::Var(ast::VarSignature::new(pat, None, None));
                 let body = ast::DefBody::new_single(*redef.expr);
                 let def = ast::Def::new(sig, body);
                 return self
@@ -3577,17 +3572,15 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     Some(ident.inspect()),
                 )?;
             }
-            AscriptionKind::SubtypeOf => {
-                if self.module.context.subtype_of(&ident_vi.t, &spec_t) {
-                    return Err(LowerErrors::from(LowerError::subtyping_error(
-                        self.cfg.input.clone(),
-                        line!() as usize,
-                        &ident_vi.t,
-                        &spec_t,
-                        ident.loc(),
-                        self.module.context.caused_by(),
-                    )));
-                }
+            AscriptionKind::SubtypeOf if self.module.context.subtype_of(&ident_vi.t, &spec_t) => {
+                return Err(LowerErrors::from(LowerError::subtyping_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    &ident_vi.t,
+                    &spec_t,
+                    ident.loc(),
+                    self.module.context.caused_by(),
+                )));
             }
             _ => {}
         }

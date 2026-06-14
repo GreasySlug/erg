@@ -178,3 +178,138 @@ fn expect_failure(file_path: &'static str, num_warns: usize, num_errs: usize) ->
         },
     }
 }
+
+#[cfg(test)]
+mod code_completeness_tests {
+    use erg_common::stdin::CodeCompleteness;
+    use erg_parser::parse::check_code_completeness;
+
+    #[test]
+    fn test_complete_code() {
+        // Simple expressions should be complete
+        assert_eq!(check_code_completeness("x = 1"), CodeCompleteness::Complete);
+        assert_eq!(check_code_completeness("1 + 2"), CodeCompleteness::Complete);
+        assert_eq!(
+            check_code_completeness("print! \"hello\""),
+            CodeCompleteness::Complete
+        );
+
+        // Empty or whitespace-only code is complete
+        assert_eq!(check_code_completeness(""), CodeCompleteness::Complete);
+        assert_eq!(check_code_completeness("   "), CodeCompleteness::Complete);
+    }
+
+    #[test]
+    fn test_unclosed_delimiters() {
+        // Unclosed brackets
+        for src in ["[1, 2,", "(1 + 2", "{a: 1,"] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::Unclosed,
+                "{src:?}"
+            );
+        }
+        // Unclosed multi-line strings
+        for src in ["s = \"\"\"", "s = \"\"\"\nabc"] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::Unclosed,
+                "{src:?}"
+            );
+        }
+        // Unclosed (nested) multi-line comments
+        for src in ["#[ comment", "#[ a #[ b ]# c"] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::Unclosed,
+                "{src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_expects_block() {
+        // Block-starting constructs: an indented body is expected on the next line
+        for src in ["f x =", "if True:", "for! 0..1, i =>", "@Inheritable"] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::ExpectsBlock,
+                "{src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multiline_buffers() {
+        // Buffers that became complete after more lines were added
+        for src in [
+            "f x =\n    x + 1",
+            "s = \"\"\"\nabc\n\"\"\"",
+            "#[ a ]#\n1 + 1",
+        ] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::Complete,
+                "{src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_brackets_in_comments_and_strings() {
+        // brackets in comments must not be counted
+        assert_eq!(
+            check_code_completeness("x = 1 # ("),
+            CodeCompleteness::Complete
+        );
+        // brackets in strings must not be counted
+        assert_eq!(
+            check_code_completeness("s = \"(\""),
+            CodeCompleteness::Complete
+        );
+        // an escaped backslash must not escape the closing quote
+        assert_eq!(
+            check_code_completeness("s = \"a\\\\\""),
+            CodeCompleteness::Complete
+        );
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use erg_common::spawn::exec_new_thread;
+    use erg_common::traits::Stream;
+    use erg_parser::parse::SimpleParser;
+
+    fn parse_str(code: &'static str) -> Result<String, usize> {
+        exec_new_thread(
+            move || match SimpleParser::parse(code.to_string()) {
+                Ok(artifact) => Ok(artifact.ast.to_string()),
+                Err(iart) => Err(iart.errors.len()),
+            },
+            code,
+        )
+    }
+
+    /// these inputs used to panic the parser
+    #[test]
+    fn parse_panic_repros() {
+        assert!(parse_str("(f|)").is_err());
+        assert!(parse_str("1 + C::\n    x = 1\n").is_err());
+    }
+
+    /// these inputs used to be accepted while silently dropping tokens
+    #[test]
+    fn parse_silently_dropped_exprs() {
+        assert!(parse_str("a + b = 1").is_err());
+        assert!(parse_str("1 + C.\n    x = 1\n").is_err());
+        assert!(parse_str("[1 2]").is_err());
+    }
+
+    /// a literal `}` right after an interpolation used to be dropped
+    #[test]
+    fn parse_str_interp_literal_brace() {
+        let ast = parse_str("s = \"\\{1}}\"").unwrap();
+        assert!(ast.contains("\"}\""), "AST: {ast}");
+    }
+}

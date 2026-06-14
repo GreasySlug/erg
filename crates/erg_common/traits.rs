@@ -4,16 +4,15 @@
 use std::collections::vec_deque;
 use std::collections::VecDeque;
 use std::env::consts::{ARCH, OS};
-use std::io::{stdout, BufWriter, Write};
-use std::mem;
+use std::io::{BufWriter, Write};
 use std::process;
 use std::slice::{Iter, IterMut};
 
 use crate::config::ErgConfig;
 use crate::consts::{BUILD_DATE, GIT_HASH_SHORT, SEMVER};
-use crate::error::{ErrorDisplay, ErrorKind, Location, MultiErrorDisplay};
-use crate::io::{Input, InputKind};
-use crate::{addr_eq, chomp, log, switch_unreachable};
+use crate::error::{ErrorDisplay, Location, MultiErrorDisplay};
+use crate::io::Input;
+use crate::{addr_eq, log};
 
 pub trait DequeStream<T>: Sized {
     fn payload(self) -> VecDeque<T>;
@@ -520,123 +519,6 @@ pub trait LimitedDisplay {
     const DEFAULT_LIMIT: isize = 10;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BlockKind {
-    Main,       // now_block Vec must contain this
-    Assignment, // =
-    ClassPriv,  // ::
-    ClassPub,   // .
-    ColonCall,  // :
-    Error,      // parser error
-    Lambda,     // =>, ->, do, do!
-    // not block
-    AtMark,       // @
-    MultiLineStr, // """
-    ClassDef,     // class definition
-    Collections,  // {}, () and []
-    None,         // one line
-}
-
-impl From<&str> for BlockKind {
-    fn from(value: &str) -> Self {
-        match value {
-            "Assignment" => BlockKind::Assignment,
-            "AtMark" => BlockKind::AtMark,
-            "ClassPriv" => BlockKind::ClassPriv,
-            "ClassPub" => BlockKind::ClassPub,
-            "ColonCall" => BlockKind::ColonCall,
-            "Error" => BlockKind::Error,
-            "Lambda" => BlockKind::Lambda,
-            "MultiLineStr" => BlockKind::MultiLineStr,
-            "ClassDef" => BlockKind::ClassDef,
-            "Collections" => BlockKind::Collections,
-            "None" => BlockKind::None,
-            _ => unimplemented!("Failed to convert to BlockKind"),
-        }
-    }
-}
-
-pub struct VirtualMachine {
-    pub codes: String,
-    pub now_block: Vec<BlockKind>,
-    pub now: BlockKind,
-    pub length: usize,
-}
-
-impl Default for VirtualMachine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl VirtualMachine {
-    pub fn new() -> Self {
-        Self {
-            codes: String::new(),
-            now_block: vec![BlockKind::Main],
-            now: BlockKind::Main,
-            length: 1,
-        }
-    }
-
-    pub fn push_block_kind(&mut self, bk: BlockKind) {
-        // Don't add block to @ after @
-        if self.now == BlockKind::AtMark && bk == BlockKind::AtMark {
-            return;
-        }
-        // Change from AtMark to ClassDef or Assignment
-        if (bk == BlockKind::ClassDef || bk == BlockKind::Assignment)
-            && self.now == BlockKind::AtMark
-        {
-            self.now_block.pop();
-        }
-        // Change from ClassDef to ClassPriv or ClassPub
-        if (bk == BlockKind::ClassPriv || bk == BlockKind::ClassPub)
-            && self.now == BlockKind::ClassDef
-        {
-            self.now_block.pop();
-        }
-        self.now = bk;
-        self.now_block.push(bk);
-        if bk == BlockKind::AtMark || bk == BlockKind::ClassDef {
-            return;
-        }
-        if bk == BlockKind::MultiLineStr || bk == BlockKind::Collections {
-            self.length = 1;
-            return;
-        }
-        self.length += 1;
-    }
-
-    pub fn remove_block_kind(&mut self) {
-        self.now_block.pop().unwrap();
-        self.now = *self.now_block.last().unwrap();
-        self.length -= 1;
-    }
-
-    pub fn push_code(&mut self, src: &str) {
-        self.codes.push_str(src)
-    }
-
-    pub fn clear(&mut self) {
-        self.codes = String::new();
-        self.now_block = vec![BlockKind::Main];
-        self.now = BlockKind::Main;
-        self.length = 1;
-    }
-
-    pub fn indent(&mut self) -> String {
-        if self.now == BlockKind::MultiLineStr || self.now == BlockKind::Collections {
-            String::new()
-        } else if self.length == 0 {
-            self.length = 1;
-            "    ".repeat(0)
-        } else {
-            "    ".repeat(self.length - 1) // Except MainBlock
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ExitStatus {
     pub code: i32,
@@ -679,46 +561,6 @@ pub trait Runnable: Sized + Default + New {
     fn clear(&mut self);
     fn eval(&mut self, src: String) -> Result<String, Self::Errs>;
     fn exec(&mut self) -> Result<ExitStatus, Self::Errs>;
-    fn expect_block(&self, src: &str) -> BlockKind {
-        let multi_line_str = "\"\"\"";
-        if src.contains(multi_line_str) && src.rfind(multi_line_str) == src.find(multi_line_str) {
-            return BlockKind::MultiLineStr;
-        }
-        if src.trim_start().starts_with('@') {
-            return BlockKind::AtMark;
-        }
-        if src.ends_with("do!:") && !src.starts_with("do!:") {
-            return BlockKind::Lambda;
-        }
-        if src.ends_with("do:") && !src.starts_with("do:") {
-            return BlockKind::Lambda;
-        }
-        if src.ends_with(':') && !src.starts_with(':') {
-            return BlockKind::Lambda;
-        }
-        if src.ends_with('=') && !src.starts_with('=') {
-            return BlockKind::Assignment;
-        }
-        if src.ends_with('.') && !src.starts_with('.') {
-            return BlockKind::ClassPub;
-        }
-        if src.ends_with("::") && !src.starts_with("::") {
-            return BlockKind::ClassPriv;
-        }
-        if src.ends_with("=>") && !src.starts_with("=>") {
-            return BlockKind::Lambda;
-        }
-        if src.ends_with("->") && !src.starts_with("->") {
-            return BlockKind::Lambda;
-        }
-        if src.contains("Class") || src.contains("Inherit") {
-            return BlockKind::ClassDef;
-        }
-        if src.ends_with(['(', '{', '[']) {
-            return BlockKind::Collections;
-        }
-        BlockKind::None
-    }
     fn input(&self) -> &Input {
         &self.cfg().input
     }
@@ -757,257 +599,21 @@ pub trait Runnable: Sized + Default + New {
         process::exit(0);
     }
 
+    /// Returns an optional completeness checker for smart Enter behavior in REPL.
+    /// Override this method to provide parser-based completeness detection.
+    fn completeness_checker(&self) -> Option<crate::stdin::CompletenessChecker> {
+        None
+    }
+
+    /// Returns an optional completion provider for Tab completion in the REPL.
+    fn completion_provider(&self) -> Option<crate::repl::CompletionProvider> {
+        None
+    }
+
+    /// Standard execution entry point: executes files/pipes/strings via
+    /// `exec`, or drives the REPL (see [`crate::repl`]) for interactive input.
     fn run(cfg: ErgConfig) -> ExitStatus {
-        let quiet_repl = cfg.quiet_repl;
-        let mut num_errors = 0;
-        let mut instance = Self::new(cfg);
-        let res = match &instance.input().kind {
-            InputKind::File { .. } | InputKind::Pipe(_) | InputKind::Str(_) => instance.exec(),
-            InputKind::REPL | InputKind::DummyREPL(_) => {
-                let output = stdout();
-                let mut output = BufWriter::new(output.lock());
-                if !quiet_repl {
-                    log!(info_f output, "The REPL has started.\n");
-                    output
-                        .write_all(instance.start_message().as_bytes())
-                        .unwrap();
-                }
-                output.flush().unwrap();
-                let mut vm = VirtualMachine::new();
-                loop {
-                    let indent = vm.indent();
-                    if vm.now_block.len() > 1 {
-                        output.write_all(instance.ps2().as_bytes()).unwrap();
-                        output.write_all(indent.as_bytes()).unwrap();
-                        output.flush().unwrap();
-                    } else {
-                        output.write_all(instance.ps1().as_bytes()).unwrap();
-                        output.flush().unwrap();
-                    }
-                    instance.cfg().input.set_indent(vm.length);
-                    let line = chomp(&instance.cfg_mut().input.read());
-                    let line = line.trim_end();
-                    match line {
-                        ":quit" | ":exit" => {
-                            instance.quit_successfully(output);
-                        }
-                        ":clear" | ":cln" => {
-                            output.write_all("\x1b[2J\x1b[1;1H".as_bytes()).unwrap();
-                            output.flush().unwrap();
-                            instance.input().set_block_begin();
-                            vm.clear();
-                            instance.clear();
-                            continue;
-                        }
-                        "" | "}" | ")" | "]" => {
-                            // eval after the end of the block
-                            if vm.now == BlockKind::Collections && line == "}" {
-                                vm.push_code("}");
-                                vm.push_code("\n");
-                            } else if vm.now == BlockKind::Collections && line == ")" {
-                                vm.push_code(")");
-                                vm.push_code("\n");
-                            } else if vm.now == BlockKind::Collections && line == "]" {
-                                vm.push_code("]");
-                                vm.push_code("\n");
-                            } else if vm.now == BlockKind::MultiLineStr
-                                || vm.now == BlockKind::Collections
-                            {
-                                vm.push_code(line);
-                                vm.push_code("\n");
-                                continue;
-                            }
-
-                            if vm.now_block.len() == 2 {
-                                vm.remove_block_kind();
-                            } else if vm.now_block.len() > 1 {
-                                vm.remove_block_kind();
-                                vm.push_code("\n");
-                                continue;
-                            }
-                            match instance.eval(mem::take(&mut vm.codes)) {
-                                Ok(out) if out.is_empty() => {
-                                    instance.input().set_block_begin();
-                                }
-                                Ok(out) => {
-                                    output.write_all((out + "\n").as_bytes()).unwrap();
-                                    output.flush().unwrap();
-                                }
-                                Err(errs) => {
-                                    if errs
-                                        .first()
-                                        .map(|e| e.core().kind == ErrorKind::SystemExit)
-                                        .unwrap_or(false)
-                                    {
-                                        instance.quit_successfully(output);
-                                    }
-                                    num_errors += errs.len();
-                                    errs.write_all_stderr();
-                                }
-                            }
-                            instance.input().set_block_begin();
-                            instance.clear();
-                            vm.clear();
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    let line = if let Some(comment_start) = line.find('#') {
-                        &line[..comment_start]
-                    } else {
-                        line
-                    };
-                    let bk = instance.expect_block(line);
-                    let bk = if bk == BlockKind::Error
-                        && (vm.now == BlockKind::MultiLineStr || vm.now == BlockKind::Collections)
-                    {
-                        BlockKind::None
-                    } else {
-                        bk
-                    };
-                    // let bk = instance.expect_block(line);
-                    match bk {
-                        BlockKind::None if vm.now == BlockKind::AtMark => {
-                            if let Some(eq) = line.find('=') {
-                                if let Some(class) = line.find("Class") {
-                                    if eq < class {
-                                        vm.push_code(indent.as_str());
-                                        instance.input().insert_whitespace(indent.as_str());
-                                        vm.push_code(line);
-                                        vm.push_code("\n");
-                                        vm.push_block_kind(bk);
-                                        continue;
-                                    }
-                                }
-                                vm.push_code(indent.as_str());
-                                instance.input().insert_whitespace(indent.as_str());
-                                vm.push_code(line);
-                                vm.push_code("\n");
-                                continue;
-                            }
-                            // Intentionally code will be evaluated and make an error
-                            vm.now = BlockKind::Main;
-                        }
-                        BlockKind::ClassDef | BlockKind::Assignment
-                            if vm.now == BlockKind::AtMark =>
-                        {
-                            vm.push_block_kind(bk);
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                        // Intentionally code will be evaluated and make an error
-                        _ if vm.now == BlockKind::AtMark => {
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            vm.now = BlockKind::Main;
-                        }
-                        BlockKind::None
-                            if vm.now == BlockKind::MultiLineStr
-                                || vm.now == BlockKind::Collections =>
-                        {
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                        // single eval
-                        BlockKind::None => {
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                        }
-                        BlockKind::Error => {
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_code(line);
-                            vm.now = BlockKind::Main;
-                            vm.now_block = vec![BlockKind::Main];
-                        }
-                        // end of MultiLineStr
-                        BlockKind::MultiLineStr if vm.now == BlockKind::MultiLineStr => {
-                            vm.remove_block_kind();
-                            vm.length = vm.now_block.len();
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                        }
-                        // end of Collection
-                        BlockKind::Collections if vm.now == BlockKind::Collections => {
-                            vm.remove_block_kind();
-                            vm.length = vm.now_block.len();
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                        }
-                        // start of MultiLineStr
-                        BlockKind::MultiLineStr => {
-                            vm.push_block_kind(BlockKind::MultiLineStr);
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                        BlockKind::Collections => {
-                            vm.push_block_kind(BlockKind::Collections);
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                        // block is expected but string
-                        _ if vm.now == BlockKind::MultiLineStr => {
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                        // expect block
-                        _ => {
-                            vm.push_code(indent.as_str());
-                            instance.input().insert_whitespace(indent.as_str());
-                            vm.push_block_kind(bk);
-                            vm.push_code(line);
-                            vm.push_code("\n");
-                            continue;
-                        }
-                    }
-
-                    if vm.now == BlockKind::Main {
-                        match instance.eval(mem::take(&mut vm.codes)) {
-                            Ok(out) => {
-                                output.write_all((out + "\n").as_bytes()).unwrap();
-                                output.flush().unwrap();
-                            }
-                            Err(errs) => {
-                                if errs
-                                    .first()
-                                    .map(|e| e.core().kind == ErrorKind::SystemExit)
-                                    .unwrap_or(false)
-                                {
-                                    return ExitStatus::new(0, 0, num_errors);
-                                }
-                                num_errors += errs.len();
-                                errs.write_all_stderr();
-                            }
-                        }
-                        instance.input().set_block_begin();
-                        instance.clear();
-                        vm.clear();
-                    }
-                }
-            }
-            InputKind::Dummy => switch_unreachable!(),
-        };
-        match res {
-            Ok(status) => status,
-            Err(errs) => {
-                num_errors += errs.len();
-                errs.write_all_stderr();
-                ExitStatus::new(1, 0, num_errors)
-            }
-        }
+        crate::repl::run::<Self>(cfg)
     }
 }
 

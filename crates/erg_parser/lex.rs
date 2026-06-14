@@ -79,6 +79,10 @@ impl Runnable for LexerRunner {
     #[inline]
     fn clear(&mut self) {}
 
+    fn completeness_checker(&self) -> Option<erg_common::stdin::CompletenessChecker> {
+        Some(Box::new(crate::parse::check_code_completeness))
+    }
+
     fn exec(&mut self) -> Result<ExitStatus, Self::Errs> {
         let lexer = Lexer::from_str(self.cfg_mut().input.read());
         let ts = lexer
@@ -442,7 +446,7 @@ impl Lexer /*<'a>*/ {
             "traditional_chinese" => format!("需要{nest_level}個`]#`"),
             "english" => format!("{nest_level} `]#`(s) are needed"),
         );
-        Err(LexError::syntax_error(
+        Err(LexError::incomplete_input_error(
             line!() as usize,
             comment.loc(),
             switch_lang!(
@@ -827,6 +831,9 @@ impl Lexer /*<'a>*/ {
     }
 
     fn unclosed_string_error(token: Token, by: &str, line: usize) -> LexError {
+        // A `"""`/`\'\'\'` string can be closed on a following line, so report it as
+        // incomplete input (ExpectNextLine); a single-quote string cannot
+        let multiline = by.chars().count() >= 3;
         let by = if by.is_empty() {
             "".to_string()
         } else {
@@ -837,17 +844,17 @@ impl Lexer /*<'a>*/ {
                 "english" => format!("by {by}"),
             )
         };
-        LexError::syntax_error(
-            line,
-            token.loc(),
-            switch_lang!(
-                "japanese" => format!("文字列が{by}閉じられていません"),
-                "simplified_chinese" => format!("字符串没有被{by}闭"),
-                "traditional_chinese" => format!("字符串没有被{by}闭"),
-                "english" => format!("the string is not closed {by}"),
-            ),
-            None,
-        )
+        let desc = switch_lang!(
+            "japanese" => format!("文字列が{by}閉じられていません"),
+            "simplified_chinese" => format!("字符串没有被{by}闭"),
+            "traditional_chinese" => format!("字符串没有被{by}闭"),
+            "english" => format!("the string is not closed {by}"),
+        );
+        if multiline {
+            LexError::incomplete_input_error(line, token.loc(), desc, None)
+        } else {
+            LexError::syntax_error(line, token.loc(), desc, None)
+        }
     }
 
     fn unclosed_interpol_error(token: Token) -> LexError {

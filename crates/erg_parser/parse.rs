@@ -123,9 +123,159 @@ impl SimpleParser {
     }
 }
 
-enum ExprOrOp {
-    Expr(Expr),
-    Op(Token),
+/// Check if the given source code is syntactically complete.
+/// Used for REPL to determine whether Enter key should execute or insert newline.
+///
+/// Returns:
+/// - `Complete`: Code is valid and can be executed
+/// - `Incomplete`: Code needs more input (unclosed brackets, unfinished blocks, etc.)
+/// - `SyntaxError`: Code has a syntax error (should be executed to show error message)
+pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness {
+    use erg_common::error::ErrorKind;
+    use erg_common::stdin::CodeCompleteness;
+
+    if src.trim().is_empty() {
+        return CodeCompleteness::Complete;
+    }
+    if has_open_delimiters(src) {
+        return CodeCompleteness::Unclosed;
+    }
+    // Trailing newlines must not affect the result, but the parser reports a
+    // plain SyntaxError (instead of ExpectNextLine) for e.g. "f x =\n",
+    // because the EOF check after `=` only fires when EOF follows directly
+    let src = src.trim_end();
+    match SimpleParser::parse(src.to_string()) {
+        Ok(_) => CodeCompleteness::Complete,
+        Err(incomplete_artifact) => {
+            // `ExpectNextLine` is emitted by the parser when a block is expected
+            // at EOF (after `=`, `=>`, a decorator, a class accessor line, ...),
+            // and by the lexer for unclosed multi-line constructs
+            let expects_more = incomplete_artifact
+                .errors
+                .iter()
+                .any(|e| e.core().kind == ErrorKind::ExpectNextLine);
+            if expects_more {
+                // a decorator must be followed by a definition at the SAME
+                // indent level, not an indented block
+                let last_line = src.lines().rev().find(|l| !l.trim().is_empty());
+                if last_line.is_some_and(|l| l.trim_start().starts_with('@')) {
+                    CodeCompleteness::Continuation
+                } else {
+                    CodeCompleteness::ExpectsBlock
+                }
+            } else {
+                // Actual syntax error - should be executed to show error
+                CodeCompleteness::SyntaxError
+            }
+        }
+    }
+}
+
+/// Check if the source ends inside an open delimiter: an unclosed bracket,
+/// string, or multi-line comment. This is a quick structural scan that runs
+/// before full parsing.
+fn has_open_delimiters(src: &str) -> bool {
+    let mut paren_count = 0i32; // ()
+    let mut bracket_count = 0i32; // []
+    let mut brace_count = 0i32; // {}
+    let mut in_string = false;
+    let mut in_triple_string = false;
+    let mut comment_depth = 0usize; // #[ ]# (nestable)
+
+    let chars: Vec<char> = src.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        // Inside a multi-line comment: only track nesting
+        if comment_depth > 0 {
+            if c == '#' && chars.get(i + 1) == Some(&'[') {
+                comment_depth += 1;
+                i += 2;
+            } else if c == ']' && chars.get(i + 1) == Some(&'#') {
+                comment_depth -= 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip escaped characters inside strings (handles `\"` and `\\`)
+        if (in_string || in_triple_string) && c == '\\' {
+            i += 2;
+            continue;
+        }
+
+        // Handle triple quotes
+        if !in_string && i + 2 < chars.len() && chars[i..i + 3] == ['"', '"', '"'] {
+            in_triple_string = !in_triple_string;
+            i += 3;
+            continue;
+        }
+
+        // Handle single-line strings
+        if c == '"' && !in_triple_string {
+            in_string = !in_string;
+            i += 1;
+            continue;
+        }
+
+        // Skip characters inside strings
+        if in_string || in_triple_string {
+            i += 1;
+            continue;
+        }
+
+        // Comments: `#[` opens a multi-line comment, otherwise skip to EOL
+        if c == '#' {
+            if chars.get(i + 1) == Some(&'[') {
+                comment_depth += 1;
+                i += 2;
+            } else {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        // Count brackets
+        match c {
+            '(' => paren_count += 1,
+            ')' => paren_count -= 1,
+            '[' => bracket_count += 1,
+            ']' => bracket_count -= 1,
+            '{' => brace_count += 1,
+            '}' => brace_count -= 1,
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    // If in unclosed string or multi-line comment, it's incomplete
+    if in_string || in_triple_string || comment_depth > 0 {
+        return true;
+    }
+
+    // If any bracket count is positive, we have unclosed brackets
+    paren_count > 0 || bracket_count > 0 || brace_count > 0
+}
+
+/// Context flags for the expression parsing engine (`try_reduce_expr_prec`).
+#[derive(Debug, Clone, Copy)]
+struct ExprCtx {
+    /// statement level: definitions, method blocks and `expr args` calls are allowed
+    chunk: bool,
+    /// parse paren-less tuples (`1, 2, 3`)
+    winding: bool,
+    in_type_args: bool,
+    /// `:` is a key-value separator, not a type ascription
+    in_brace: bool,
+    /// the expression can span multiple lines (inside parentheses)
+    line_break: bool,
 }
 
 enum ArgKind {
@@ -399,6 +549,23 @@ impl Parser {
         )
     }
 
+    /// Errors when an operator/expression would be silently discarded
+    /// (e.g. the `1 +` in `1 + x = 2`)
+    fn extra_operator_err(&mut self, errno: u32, loc: Location) {
+        let err = ParseError::syntax_error(
+            errno as usize,
+            loc,
+            switch_lang!(
+                "japanese" => "余分な式・演算子が残っています",
+                "simplified_chinese" => "存在多余的表达式或运算符",
+                "traditional_chinese" => "存在多餘的表達式或運算符",
+                "english" => "extra expression or operator remains",
+            ),
+            None,
+        );
+        self.errs.push(err);
+    }
+
     #[inline]
     fn restore(&mut self, token: Token) {
         self.tokens.push_front(token);
@@ -412,7 +579,7 @@ impl Parser {
             "･".repeat((self.level as f32 / 4.0).floor() as usize),
             self.level,
             fn_name,
-            self.peek().unwrap()
+            self.peek().unwrap_or(&Token::DUMMY)
         );
     }
 }
@@ -451,6 +618,10 @@ impl Runnable for ParserRunner {
 
     #[inline]
     fn clear(&mut self) {}
+
+    fn completeness_checker(&self) -> Option<erg_common::stdin::CompletenessChecker> {
+        Some(Box::new(crate::parse::check_code_completeness))
+    }
 
     fn exec(&mut self) -> Result<ExitStatus, Self::Errs> {
         let src = self.cfg_mut().input.read();
@@ -587,7 +758,6 @@ impl Parser {
                     line!(),
                     block.last().unwrap().loc(),
                 );
-                debug_exit_info!(self);
                 self.errs.push(err);
             }
             if block.last().unwrap().is_definition() {
@@ -635,7 +805,6 @@ impl Parser {
                                 line!(),
                                 expr.loc(),
                             );
-                            debug_exit_info!(self);
                             self.errs.push(err);
                         }
                         block.push(expr);
@@ -660,8 +829,10 @@ impl Parser {
             debug_exit_info!(self);
             Err(())
         } else if block.last().unwrap().is_definition() {
-            let err =
-                ParseError::invalid_chunk_error(line!() as usize, block.last().unwrap().loc());
+            let err = ParseError::invalid_definition_of_last_block(
+                line!() as usize,
+                block.last().unwrap().loc(),
+            );
             self.errs.push(err);
             debug_exit_info!(self);
             Err(())
@@ -760,6 +931,34 @@ impl Parser {
         let r_vbar = expect_pop!(self, VBar);
         debug_exit_info!(self);
         Ok(TypeAppArgs::new(l_vbar.loc(), args, r_vbar.loc()))
+    }
+
+    /// Parses the guard part of a refinement pattern and desugars the whole
+    /// pattern into a set comprehension (i.e. a refinement type).
+    /// `X: T | Pred` == `X: {X: T | Pred}`, `X | Pred` == `{X: _ | Pred}`
+    /// The caller must ensure that the current token is `|`.
+    fn try_reduce_refinement_guard(&mut self, var: Identifier, typ: Expr) -> ParseResult<Expr> {
+        debug_call_info!(self);
+        debug_power_assert!(self.cur_is(VBar));
+        let _vbar = self.lpop();
+        let pred = self
+            .try_reduce_expr(false, false, false, false)
+            .map_err(|_| {
+                if let Some(err) = self.errs.last_mut() {
+                    err.set_hint(switch_lang!(
+                        "japanese" => "予期: 述語式",
+                        "simplified_chinese" => "期望: 谓词表达式",
+                        "traditional_chinese" => "期望: 謂詞表達式",
+                        "english" => "expect: predicate expression",
+                    ))
+                }
+                self.stack_dec(fn_name!())
+            })?;
+        let l_brace = Token::new_with_loc(LBrace, "{", var.loc());
+        let r_brace = Token::new_with_loc(RBrace, "}", pred.loc());
+        let comp = SetComprehension::new(l_brace, r_brace, None, vec![(var, typ)], Some(pred));
+        debug_exit_info!(self);
+        Ok(Expr::Set(Set::Comprehension(comp)))
     }
 
     fn try_reduce_restriction(&mut self) -> ParseResult<VisRestriction> {
@@ -959,10 +1158,11 @@ impl Parser {
             }
             Some(RParen | RSqBr | RBrace | Dedent | Comma) => {}
             Some(_) => {
-                let elem = self
-                    .try_reduce_elem()
-                    .map_err(|_| self.stack_dec(fn_name!()))?;
-                elems.push_pos(elem);
+                let err =
+                    self.skip_and_throw_invalid_unclosed_err(caused_by!(), line!(), "]", "array");
+                self.errs.push(err);
+                debug_exit_info!(self);
+                return Err(());
             }
             None => {
                 self.errs.push(self.unexpected_none(line!(), caused_by!()));
@@ -1086,7 +1286,6 @@ impl Parser {
     fn try_reduce_args(&mut self, in_type_args: bool) -> ParseResult<Args> {
         debug_call_info!(self);
         let mut lp = None;
-        let rp;
         if self.cur_is(LParen) {
             lp = Some(self.lpop());
         }
@@ -1097,9 +1296,14 @@ impl Parser {
         };
         match self.peek_kind() {
             Some(RParen) => {
-                rp = self.lpop();
+                if let Some(lp) = lp {
+                    let rp = self.lpop();
+                    debug_exit_info!(self);
+                    return Ok(Args::pos_only(vec![], Some((lp.loc(), rp.loc()))));
+                }
+                // no `(` was consumed; this `)` belongs to an outer expression
                 debug_exit_info!(self);
-                return Ok(Args::pos_only(vec![], Some((lp.unwrap().loc(), rp.loc()))));
+                return Ok(Args::empty());
             }
             Some(RBrace | RSqBr | Dedent) => {
                 debug_exit_info!(self);
@@ -1323,6 +1527,20 @@ impl Parser {
                             }
                             self.stack_dec(fn_name!())
                         })?;
+                    // refinement pattern with an omitted type (e.g. `List(T, N | N >= 1)`)
+                    let expr = match &expr {
+                        Expr::Accessor(Accessor::Ident(ident))
+                            if !in_type_args && self.cur_is(VBar) && !self.nth_is(2, Inclusion) =>
+                        {
+                            let var = ident.clone();
+                            let infer = Expr::Accessor(Accessor::Ident(
+                                Identifier::private_with_loc(Str::ever("_"), var.loc()),
+                            ));
+                            self.try_reduce_refinement_guard(var, infer)
+                                .map_err(|_| self.stack_dec(fn_name!()))?
+                        }
+                        _ => expr,
+                    };
                     if self.cur_is(Walrus) {
                         self.skip();
                         let (kw, t_spec) = match expr {
@@ -1714,24 +1932,59 @@ impl Parser {
         }
     }
 
-    /// chunk = normal expr + def
+    /// chunk = expr + def
     fn try_reduce_chunk(&mut self, winding: bool, in_brace: bool) -> ParseResult<Expr> {
+        let ctx = ExprCtx {
+            chunk: true,
+            winding,
+            in_type_args: false,
+            in_brace,
+            line_break: false,
+        };
+        self.try_reduce_expr_prec(0, ctx)
+    }
+
+    /// winding: true => parse paren-less tuple
+    /// in_brace: true => (1: 1) will not be a syntax error (key-value pair)
+    fn try_reduce_expr(
+        &mut self,
+        winding: bool,
+        in_type_args: bool,
+        in_brace: bool,
+        line_break: bool,
+    ) -> ParseResult<Expr> {
+        let ctx = ExprCtx {
+            chunk: false,
+            winding,
+            in_type_args,
+            in_brace,
+            line_break,
+        };
+        self.try_reduce_expr_prec(0, ctx)
+    }
+
+    /// The core expression parser (precedence climbing).
+    ///
+    /// A binary operator with precedence lower than `min_prec` terminates this level
+    /// and is handled by an outer call, which makes all binary operators
+    /// left-associative without an explicit operator stack.
+    /// Postfix-like constructs (accessors, lambdas, type ascriptions, paren-less tuples)
+    /// always bind to the nearest operand, so they are handled at any level.
+    fn try_reduce_expr_prec(&mut self, min_prec: usize, ctx: ExprCtx) -> ParseResult<Expr> {
         debug_call_info!(self);
-        let mut stack = Vec::<ExprOrOp>::new();
-        stack.push(ExprOrOp::Expr(
-            self.try_reduce_bin_lhs(false, in_brace)
-                .map_err(|_| self.stack_dec(fn_name!()))?,
-        ));
+        let mut lhs = self
+            .try_reduce_bin_lhs(ctx.in_type_args, ctx.in_brace)
+            .map_err(|_| self.stack_dec(fn_name!()))?;
         loop {
             match self.peek() {
-                Some(arg) if arg.is(Symbol) || arg.category_is(TC::Literal) => {
+                // expr + args is a function call (e.g. `(x -> x) 1`), only at statement level
+                Some(t) if ctx.chunk && (t.is(Symbol) || t.category_is(TC::Literal)) => {
                     let args = self
                         .try_reduce_args(false)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
-                    let obj = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-                    stack.push(ExprOrOp::Expr(obj.call_expr(args)));
+                    lhs = lhs.call_expr(args);
                 }
-                Some(op) if op.category_is(TC::DefOp) => {
+                Some(op) if ctx.chunk && op.category_is(TC::DefOp) => {
                     let op = self.lpop();
                     if self.cur_is(EOF) {
                         let err = ParseError::expect_next_line_error(
@@ -1740,10 +1993,16 @@ impl Parser {
                             "Assignment",
                         );
                         self.errs.push(err);
+                        debug_exit_info!(self);
+                        return Err(());
+                    }
+                    if min_prec > 0 {
+                        // e.g. `a + b = ...`: the lhs of `=` must be a sole expression
+                        self.extra_operator_err(line!(), op.loc());
+                        debug_exit_info!(self);
                         return Err(());
                     }
                     let is_multiline_block = self.cur_is(Newline);
-                    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
                     let sig = self
                         .convert_rhs_to_sig(lhs)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
@@ -1781,10 +2040,10 @@ impl Parser {
                             "Lambda",
                         );
                         self.errs.push(err);
+                        debug_exit_info!(self);
                         return Err(());
                     }
                     let is_multiline_block = self.cur_is(Newline);
-                    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
                     let sig = self
                         .convert_rhs_to_lambda_sig(lhs)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
@@ -1809,12 +2068,7 @@ impl Parser {
                                 })?;
                         Block::new(vec![expr])
                     };
-                    stack.push(ExprOrOp::Expr(Expr::Lambda(Lambda::new(
-                        sig,
-                        op,
-                        block,
-                        self.counter,
-                    ))));
+                    lhs = Expr::Lambda(Lambda::new(sig, op, block, self.counter));
                 }
                 // type ascription
                 Some(op)
@@ -1822,93 +2076,98 @@ impl Parser {
                         || (op.is(SubtypeOf) || op.is(SupertypeOf) || op.is(As)) =>
                 {
                     // "a": 1 (key-value pair)
-                    if in_brace {
-                        while stack.len() >= 3 {
-                            collect_last_binop_on_stack(&mut stack);
-                        }
+                    if ctx.in_brace {
                         break;
                     }
                     let op = self.lpop();
-                    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
+                    if self.cur_is(EOF) {
+                        let err = ParseError::expect_next_line_error(
+                            line!() as usize,
+                            op.loc(),
+                            "TypeAscription",
+                        );
+                        self.errs.push(err);
+                        debug_exit_info!(self);
+                        return Err(());
+                    }
+                    let (in_type_args, in_brace) = if ctx.chunk {
+                        (false, false)
+                    } else {
+                        (ctx.in_type_args, ctx.in_brace)
+                    };
                     let t_spec_as_expr = self
-                        .try_reduce_expr(false, false, false, false)
+                        .try_reduce_expr(false, in_type_args, in_brace, false)
                         .map(Desugarer::desugar_simple_expr)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
+                    // refinement pattern (e.g. `X: T | Pred` == `X: {X: T | Pred}`)
+                    let t_spec_as_expr = match &lhs {
+                        Expr::Accessor(Accessor::Ident(ident))
+                            if !ctx.in_type_args
+                                && self.cur_is(VBar)
+                                && !self.nth_is(2, Inclusion) =>
+                        {
+                            self.try_reduce_refinement_guard(ident.clone(), t_spec_as_expr)
+                                .map(Desugarer::desugar_simple_expr)
+                                .map_err(|_| self.stack_dec(fn_name!()))?
+                        }
+                        _ => t_spec_as_expr,
+                    };
                     let t_spec = Self::expr_to_type_spec(t_spec_as_expr.clone()).map_err(|e| {
                         self.errs.push(e);
                         self.stack_dec(fn_name!())
                     })?;
                     let t_spec_op = TypeSpecWithOp::new(op, t_spec, t_spec_as_expr);
-                    let expr = lhs.type_asc_expr(t_spec_op);
-                    stack.push(ExprOrOp::Expr(expr));
+                    lhs = lhs.type_asc_expr(t_spec_op);
                 }
                 Some(op) if op.category_is(TC::BinOp) => {
-                    let op_prec = op.kind.precedence();
-                    if stack.len() >= 2 {
-                        while let Some(ExprOrOp::Op(prev_op)) = stack.get(stack.len() - 2) {
-                            if prev_op.category_is(TC::BinOp)
-                                && prev_op.kind.precedence() >= op_prec
-                            {
-                                collect_last_binop_on_stack(&mut stack);
-                            } else {
-                                break;
-                            }
-                            if stack.len() <= 1 {
-                                break;
-                            }
-                        }
+                    let op_prec = op.kind.precedence().unwrap_or(0);
+                    if op_prec < min_prec {
+                        break;
                     }
-                    stack.push(ExprOrOp::Op(self.lpop()));
-                    stack.push(ExprOrOp::Expr(
-                        self.try_reduce_bin_lhs(false, in_brace).map_err(|_| {
-                            if let Some(err) = self.errs.last_mut() {
-                                err.set_hint(switch_lang!(
-                                    "japanese" => "予期: 数値、式",
-                                    "simplified_chinese" => "期望: 数字或表达式",
-                                    "traditional_chinese" => "期望: 數字或表達式",
-                                    "english" => "expect: number or expression",
-                                ));
-                            }
-                            self.stack_dec(fn_name!())
-                        })?,
-                    ));
+                    let op = self.lpop();
+                    // parse the rhs operand together with all tighter-binding operators
+                    let rhs = self.try_reduce_expr_prec(op_prec + 1, ctx).map_err(|_| {
+                        if let Some(err) = self.errs.last_mut() {
+                            err.set_hint(switch_lang!(
+                                "japanese" => "予期: 式、被演算子",
+                                "simplified_chinese" => "期望：表达式或操作数",
+                                "traditional_chinese" => "期望：表達式或操作數",
+                                "english" => "expect: expression or operand",
+                            ))
+                        }
+                        self.stack_dec(fn_name!())
+                    })?;
+                    lhs = Expr::BinOp(BinOp::new(op, lhs, rhs));
                 }
-                Some(t) if t.is(DblColon) => {
+                Some(t) if t.is(DblColon) && ctx.chunk => {
                     let dcolon = self.lpop();
                     let token = self.lpop();
                     match token.kind {
                         Symbol => {
-                            let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                                let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                                self.errs.push(err);
-                                debug_exit_info!(self);
-                                return Err(());
-                            };
+                            let ident =
+                                Identifier::new(VisModifierSpec::Private, VarName::new(token));
                             if let Some(args) = self
                                 .opt_reduce_args(false)
                                 .transpose()
                                 .map_err(|_| self.stack_dec(fn_name!()))?
                             {
-                                let ident =
-                                    Identifier::new(VisModifierSpec::Private, VarName::new(token));
-                                let call = Call::new(obj, Some(ident), args);
-                                stack.push(ExprOrOp::Expr(Expr::Call(call)));
+                                lhs = Expr::Call(Call::new(lhs, Some(ident), args));
                             } else {
-                                let ident =
-                                    Identifier::new(VisModifierSpec::Private, VarName::new(token));
-                                stack.push(ExprOrOp::Expr(obj.attr_expr(ident)));
+                                lhs = lhs.attr_expr(ident);
                             }
                         }
                         Newline => {
+                            if min_prec > 0 {
+                                self.extra_operator_err(line!(), dcolon.loc());
+                                debug_exit_info!(self);
+                                return Err(());
+                            }
                             let vis = VisModifierSpec::ExplicitPrivate(dcolon.loc());
-                            let maybe_class = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
                             let defs = self
-                                .try_reduce_class_attr_defs(maybe_class, vis)
+                                .try_reduce_class_attr_defs(lhs, vis)
                                 .map_err(|_| self.stack_dec(fn_name!()))?;
-                            let expr = Expr::Methods(defs);
-                            assert_eq!(stack.len(), 0);
                             debug_exit_info!(self);
-                            return Ok(expr);
+                            return Ok(Expr::Methods(defs));
                         }
                         LSqBr => {
                             self.restore(token);
@@ -1917,26 +2176,26 @@ impl Parser {
                                 .map_err(|_| self.stack_dec(fn_name!()))?;
                             let vis = VisModifierSpec::Restricted(restriction);
                             expect_pop!(self, Newline);
-                            let maybe_class = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
+                            if min_prec > 0 {
+                                self.extra_operator_err(line!(), dcolon.loc());
+                                debug_exit_info!(self);
+                                return Err(());
+                            }
                             let defs = self
-                                .try_reduce_class_attr_defs(maybe_class, vis)
+                                .try_reduce_class_attr_defs(lhs, vis)
                                 .map_err(|_| self.stack_dec(fn_name!()))?;
-                            let expr = Expr::Methods(defs);
-                            assert_eq!(stack.len(), 0);
                             debug_exit_info!(self);
-                            return Ok(expr);
+                            return Ok(Expr::Methods(defs));
                         }
                         LBrace => {
                             let vis = VisModifierSpec::ExplicitPrivate(dcolon.loc());
-                            let maybe_class = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
                             self.restore(token);
                             let container = self
                                 .try_reduce_brace_container()
                                 .map_err(|_| self.stack_dec(fn_name!()))?;
                             match container {
                                 BraceContainer::Record(args) => {
-                                    let pack = DataPack::new(maybe_class, vis, args);
-                                    stack.push(ExprOrOp::Expr(Expr::DataPack(pack)));
+                                    lhs = Expr::DataPack(DataPack::new(lhs, vis, args));
                                 }
                                 other => {
                                     let err = ParseError::invalid_data_pack_definition(
@@ -1964,30 +2223,26 @@ impl Parser {
                     let token = self.lpop();
                     match token.kind {
                         Symbol => {
-                            let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                                let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                                self.errs.push(err);
-                                debug_exit_info!(self);
-                                return Err(());
-                            };
+                            let ident = Identifier::public_from_token(dot, token);
                             if let Some(args) = self
-                                .opt_reduce_args(false)
+                                .opt_reduce_args(ctx.in_type_args)
                                 .transpose()
                                 .map_err(|_| self.stack_dec(fn_name!()))?
                             {
-                                let ident = Identifier::public_from_token(dot, token);
-                                let call = Expr::Call(Call::new(obj, Some(ident), args));
-                                stack.push(ExprOrOp::Expr(call));
+                                lhs = Expr::Call(Call::new(lhs, Some(ident), args));
                             } else {
-                                let ident = Identifier::public_from_token(dot, token);
-                                stack.push(ExprOrOp::Expr(obj.attr_expr(ident)));
+                                lhs = lhs.attr_expr(ident);
                             }
                         }
-                        Newline => {
+                        Newline if ctx.chunk => {
+                            if min_prec > 0 {
+                                self.extra_operator_err(line!(), dot.loc());
+                                debug_exit_info!(self);
+                                return Err(());
+                            }
                             let vis = VisModifierSpec::Public(dot.loc());
-                            let maybe_class = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
                             let defs = self
-                                .try_reduce_class_attr_defs(maybe_class, vis)
+                                .try_reduce_class_attr_defs(lhs, vis)
                                 .map_err(|_| self.stack_dec(fn_name!()))?;
                             debug_exit_info!(self);
                             return Ok(Expr::Methods(defs));
@@ -2002,15 +2257,9 @@ impl Parser {
                     }
                 }
                 Some(t) if t.is(LSqBr) => {
-                    let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                        let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                        self.errs.push(err);
-                        debug_exit_info!(self);
-                        return Err(());
-                    };
-                    self.skip();
+                    self.skip(); // l_sqbr
                     let index = self
-                        .try_reduce_expr(false, false, in_brace, false)
+                        .try_reduce_expr(false, false, ctx.in_brace, false)
                         .map_err(|_| {
                             if let Some(err) = self.errs.last_mut() {
                                 err.set_hint(switch_lang!(
@@ -2023,342 +2272,50 @@ impl Parser {
                             self.stack_dec(fn_name!())
                         })?;
                     let r_sqbr = expect_pop!(self, fail_next RSqBr);
-                    let acc = Accessor::subscr(obj, index, r_sqbr);
-                    stack.push(ExprOrOp::Expr(Expr::Accessor(acc)));
+                    lhs = Expr::Accessor(Accessor::subscr(lhs, index, r_sqbr));
                 }
-                Some(t) if t.is(Comma) && winding => {
-                    let first_elem = ArgKind::Pos(PosArg::new(
-                        enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_))),
-                    ));
+                Some(t) if t.is(Comma) && ctx.winding => {
+                    let first_elem = ArgKind::Pos(PosArg::new(lhs));
                     let tup = self
-                        .try_reduce_nonempty_tuple(first_elem, false)
+                        .try_reduce_nonempty_tuple(first_elem, ctx.line_break)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
-                    stack.push(ExprOrOp::Expr(Expr::Tuple(tup)));
+                    lhs = Expr::Tuple(tup);
                 }
-                Some(t) if t.is(Walrus) && winding => {
+                Some(t) if t.is(Walrus) && ctx.winding => {
                     let tuple = self
-                        .try_reduce_default_parameters(&mut stack, in_brace)
+                        .try_reduce_default_parameters(lhs, ctx.in_brace)
                         .map_err(|_| self.stack_dec(fn_name!()))?;
-                    stack.push(ExprOrOp::Expr(Expr::Tuple(tuple)));
+                    lhs = Expr::Tuple(tuple);
                 }
-                Some(t) if t.is(Pipe) => self
-                    .try_reduce_stream_operator(&mut stack)
-                    .map_err(|_| self.stack_dec(fn_name!()))?,
+                Some(t) if t.is(Pipe) => {
+                    // `|>` binds loosest; only the outermost level may consume it
+                    if min_prec > 0 {
+                        break;
+                    }
+                    lhs = self
+                        .try_reduce_stream_operator(lhs)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
+                }
                 Some(t) if t.category_is(TC::Reserved) => {
                     let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
                     self.errs.push(err);
                     debug_exit_info!(self);
                     return Err(());
                 }
-                _ => {
-                    if stack.len() <= 1 {
-                        break;
-                    }
-                    // else if stack.len() == 2 { switch_unreachable!() }
-                    else {
-                        while stack.len() >= 3 {
-                            collect_last_binop_on_stack(&mut stack);
-                        }
-                    }
-                }
+                _ => break,
             }
         }
-        match stack.pop() {
-            Some(ExprOrOp::Expr(expr)) if stack.is_empty() => {
-                debug_exit_info!(self);
-                Ok(expr)
-            }
-            Some(ExprOrOp::Expr(expr)) => {
-                let extra = stack.pop().unwrap();
-                let loc = match extra {
-                    ExprOrOp::Expr(expr) => expr.loc(),
-                    ExprOrOp::Op(op) => op.loc(),
-                };
-                self.warns
-                    .push(ParseError::compiler_bug(0, loc, fn_name!(), line!()));
-                debug_exit_info!(self);
-                Ok(expr)
-            }
-            Some(ExprOrOp::Op(op)) => {
-                self.errs
-                    .push(ParseError::compiler_bug(0, op.loc(), fn_name!(), line!()));
-                debug_exit_info!(self);
-                Err(())
-            }
-            _ => switch_unreachable!(),
-        }
-    }
-
-    /// chunk = expr + def
-    /// winding: true => parse paren-less tuple
-    /// in_brace: true => (1: 1) will not be a syntax error (key-value pair)
-    fn try_reduce_expr(
-        &mut self,
-        winding: bool,
-        in_type_args: bool,
-        in_brace: bool,
-        line_break: bool,
-    ) -> ParseResult<Expr> {
-        debug_call_info!(self);
-        let mut stack = Vec::<ExprOrOp>::new();
-        stack.push(ExprOrOp::Expr(
-            self.try_reduce_bin_lhs(in_type_args, in_brace)
-                .map_err(|_| self.stack_dec(fn_name!()))?,
-        ));
-        loop {
-            match self.peek() {
-                Some(op) if op.category_is(TC::LambdaOp) => {
-                    let op = self.lpop();
-                    let is_multiline_block = self.cur_is(Newline);
-                    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-                    let sig = self
-                        .convert_rhs_to_lambda_sig(lhs)
-                        .map_err(|_| self.stack_dec(fn_name!()))?;
-                    self.counter.inc();
-                    if self.cur_is(EOF) {
-                        let err = ParseError::expect_next_line_error(
-                            line!() as usize,
-                            op.loc(),
-                            "Lambda",
-                        );
-                        self.errs.push(err);
-                        return Err(());
-                    }
-                    let block = if is_multiline_block {
-                        self.try_reduce_block()
-                            .map_err(|_| self.stack_dec(fn_name!()))?
-                    } else {
-                        let expr = self
-                            .try_reduce_expr(false, false, false, false)
-                            .map_err(|_| self.stack_dec(fn_name!()))?;
-                        Block::new(vec![expr])
-                    };
-                    stack.push(ExprOrOp::Expr(Expr::Lambda(Lambda::new(
-                        sig,
-                        op,
-                        block,
-                        self.counter,
-                    ))));
-                }
-                // type ascription
-                Some(op)
-                    if (op.is(Colon) && !self.nth_is(1, Newline))
-                        || (op.is(SubtypeOf) || op.is(SupertypeOf) || op.is(As)) =>
-                {
-                    // "a": 1 (key-value pair)
-                    if in_brace {
-                        break;
-                    }
-                    let op = self.lpop();
-                    if self.cur_is(EOF) {
-                        let err = ParseError::expect_next_line_error(
-                            line!() as usize,
-                            op.loc(),
-                            "Lambda",
-                        );
-                        self.errs.push(err);
-                        return Err(());
-                    }
-                    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-                    let t_spec_as_expr = self
-                        .try_reduce_expr(false, in_type_args, in_brace, false)
-                        .map(Desugarer::desugar_simple_expr)
-                        .map_err(|_| {
-                            if let Some(err) = self.errs.last_mut() {
-                                err.set_hint(switch_lang!(
-                                    "japanese" => "予期: Nat型",
-                                    "simplified_chinese" => "期望: Nat类型",
-                                    "traditional_chinese" => "期望: Nat類型",
-                                    "english" => "expect: Nat type",
-                                ))
-                            }
-                            self.stack_dec(fn_name!())
-                        })?;
-                    let t_spec = Self::expr_to_type_spec(t_spec_as_expr.clone())
-                        .map_err(|e| self.errs.push(e))?;
-                    let t_spec_op = TypeSpecWithOp::new(op, t_spec, t_spec_as_expr);
-                    let expr = lhs.type_asc_expr(t_spec_op);
-                    stack.push(ExprOrOp::Expr(expr));
-                }
-                Some(op) if op.category_is(TC::BinOp) => {
-                    let op_prec = op.kind.precedence();
-                    if stack.len() >= 2 {
-                        while let Some(ExprOrOp::Op(prev_op)) = stack.get(stack.len() - 2) {
-                            if prev_op.category_is(TC::BinOp)
-                                && prev_op.kind.precedence() >= op_prec
-                            {
-                                let rhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-                                let prev_op = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Op:(_)));
-                                let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-                                let bin = BinOp::new(prev_op, lhs, rhs);
-                                stack.push(ExprOrOp::Expr(Expr::BinOp(bin)));
-                            } else {
-                                break;
-                            }
-                            if stack.len() <= 1 {
-                                break;
-                            }
-                        }
-                    }
-                    stack.push(ExprOrOp::Op(self.lpop()));
-                    stack.push(ExprOrOp::Expr(
-                        self.try_reduce_bin_lhs(in_type_args, in_brace)
-                            .map_err(|_| {
-                                if let Some(err) = self.errs.last_mut() {
-                                    err.set_hint(switch_lang!(
-                                    "japanese" => "予期: 式、被演算子",
-                                    "simplified_chinese" => "期望：表达式或操作数",
-                                    "traditional_chinese" => "期望：表達式或操作數",
-                                    "english" => "expect: expression or operand",
-                                    ))
-                                }
-                                self.stack_dec(fn_name!())
-                            })?,
-                    ));
-                }
-                Some(t) if t.is(Dot) => {
-                    let vis = self.lpop();
-                    match self.lpop() {
-                        symbol if symbol.is(Symbol) => {
-                            let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                                let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                                self.errs.push(err);
-                                debug_exit_info!(self);
-                                return Err(());
-                            };
-                            if let Some(args) = self
-                                .opt_reduce_args(in_type_args)
-                                .transpose()
-                                .map_err(|_| self.stack_dec(fn_name!()))?
-                            {
-                                let ident = Identifier::new(
-                                    VisModifierSpec::Public(vis.loc()),
-                                    VarName::new(symbol),
-                                );
-                                let call = Call::new(obj, Some(ident), args);
-                                stack.push(ExprOrOp::Expr(Expr::Call(call)));
-                            } else {
-                                let ident = Identifier::new(
-                                    VisModifierSpec::Public(vis.loc()),
-                                    VarName::new(symbol),
-                                );
-                                stack.push(ExprOrOp::Expr(obj.attr_expr(ident)));
-                            }
-                        }
-                        other => {
-                            self.restore(other);
-                            let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                            self.errs.push(err);
-                            debug_exit_info!(self);
-                            return Err(());
-                        }
-                    }
-                }
-                Some(t) if t.is(LSqBr) => {
-                    let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                        let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                        self.errs.push(err);
-                        debug_exit_info!(self);
-                        return Err(());
-                    };
-                    self.skip(); // l_sqbr
-                    let index = self
-                        .try_reduce_expr(false, false, in_brace, false)
-                        .map_err(|_| {
-                            if let Some(err) = self.errs.last_mut() {
-                                err.set_hint(switch_lang!(
-                                    "japanese" => "予期: Nat型",
-                                    "simplified_chinese" => "期望: Nat类型",
-                                    "traditional_chinese" => "期望: Nat類型",
-                                    "english" => "expect: Nat type",
-                                ))
-                            }
-                            self.stack_dec(fn_name!());
-                        })?;
-                    let r_sqbr = self.lpop();
-                    if !r_sqbr.is(RSqBr) {
-                        let caused_by = caused_by!();
-                        log!(err "error caused by: {caused_by}");
-                        let err = ParseError::expect_accessor(line!() as usize, index.loc());
-                        self.errs.push(err);
-                        self.next_expr();
-                        debug_exit_info!(self);
-                        return Err(());
-                    }
-                    let acc = Accessor::subscr(obj, index, r_sqbr);
-                    stack.push(ExprOrOp::Expr(Expr::Accessor(acc)));
-                }
-                Some(t) if t.is(Comma) && winding => {
-                    let first_elem = ArgKind::Pos(PosArg::new(
-                        enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_))),
-                    ));
-                    let tup = self
-                        .try_reduce_nonempty_tuple(first_elem, line_break)
-                        .map_err(|_| self.stack_dec(fn_name!()))?;
-                    stack.push(ExprOrOp::Expr(Expr::Tuple(tup)));
-                }
-                Some(t) if t.is(Walrus) && winding => {
-                    let tuple = self
-                        .try_reduce_default_parameters(&mut stack, in_brace)
-                        .map_err(|_| self.stack_dec(fn_name!()))?;
-                    stack.push(ExprOrOp::Expr(Expr::Tuple(tuple)));
-                }
-                Some(t) if t.is(Pipe) => self
-                    .try_reduce_stream_operator(&mut stack)
-                    .map_err(|_| self.stack_dec(fn_name!()))?,
-                Some(t) if t.category_is(TC::Reserved) => {
-                    let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                    self.errs.push(err);
-                    debug_exit_info!(self);
-                    return Err(());
-                }
-                _ => {
-                    if stack.len() <= 1 {
-                        break;
-                    }
-                    // else if stack.len() == 2 { switch_unreachable!() }
-                    else {
-                        while stack.len() >= 3 {
-                            collect_last_binop_on_stack(&mut stack);
-                        }
-                    }
-                }
-            }
-        }
-        match stack.pop() {
-            Some(ExprOrOp::Expr(expr)) if stack.is_empty() => {
-                debug_exit_info!(self);
-                Ok(expr)
-            }
-            Some(ExprOrOp::Expr(expr)) => {
-                let extra = stack.pop().unwrap();
-                let loc = match extra {
-                    ExprOrOp::Expr(expr) => expr.loc(),
-                    ExprOrOp::Op(op) => op.loc(),
-                };
-                self.warns
-                    .push(ParseError::compiler_bug(0, loc, fn_name!(), line!()));
-                debug_exit_info!(self);
-                Ok(expr)
-            }
-            Some(ExprOrOp::Op(op)) => {
-                self.errs
-                    .push(ParseError::compiler_bug(0, op.loc(), fn_name!(), line!()));
-                debug_exit_info!(self);
-                Err(())
-            }
-            _ => switch_unreachable!(),
-        }
+        debug_exit_info!(self);
+        Ok(lhs)
     }
 
     #[inline]
     fn try_reduce_default_parameters(
         &mut self,
-        stack: &mut Vec<ExprOrOp>,
+        first_elem: Expr,
         in_brace: bool,
     ) -> ParseResult<Tuple> {
         debug_call_info!(self);
-        let first_elem = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
         let (keyword, t_spec) = match first_elem {
             Expr::Accessor(Accessor::Ident(ident)) => (ident.name.into_token(), None),
             Expr::TypeAscription(tasc) => {
@@ -2621,6 +2578,14 @@ impl Parser {
                         }
                         self.stack_dec(fn_name!())
                     })?;
+                // tuple comprehension: `(expr | x <- xs)`, `(x <- xs | guard)`
+                if self.cur_is(Inclusion) || (self.cur_is(VBar) && self.nth_is(2, Inclusion)) {
+                    let tup = self
+                        .try_reduce_tuple_comprehension(lparen, expr, line_break)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
+                    debug_exit_info!(self);
+                    return Ok(Expr::Tuple(Tuple::Comprehension(tup)));
+                }
                 if line_break {
                     while self.cur_is(Newline) {
                         self.skip();
@@ -2892,7 +2857,14 @@ impl Parser {
                     let call = Call::new(receiver, attr_name, args);
                     obj = Expr::Call(call);
                 }
-                Some(t) if t.is(VBar) && !in_type_args && !self.nth_is(2, Inclusion) => {
+                // a type application `T|...|` requires that `|` directly follows `T`
+                // (a spaced `|` is a refinement pattern guard, e.g. `N: Nat | N >= 1`)
+                Some(t)
+                    if t.is(VBar)
+                        && obj.col_end() == t.col_begin()
+                        && !in_type_args
+                        && !self.nth_is(2, Inclusion) =>
+                {
                     let type_args = self
                         .try_reduce_type_app_args()
                         .map_err(|_| self.stack_dec(fn_name!()))?;
@@ -2966,6 +2938,102 @@ impl Parser {
         };
         debug_exit_info!(self);
         Ok(lis)
+    }
+
+    /// tuple comprehension: `(expr | x <- xs)`, `(x <- xs | guard)`
+    /// the l_paren has already been popped, and the cursor is at `|` or `<-`
+    fn try_reduce_tuple_comprehension(
+        &mut self,
+        l_paren: Token,
+        first: Expr,
+        line_break: bool,
+    ) -> ParseResult<TupleComprehension> {
+        debug_call_info!(self);
+        let (layout, generators, guard) = match self.peek_kind() {
+            Some(Inclusion) => {
+                self.lpop();
+                let Expr::Accessor(Accessor::Ident(sym)) = first else {
+                    let err = self.skip_and_throw_invalid_seq_err(
+                        caused_by!(),
+                        line!() as usize,
+                        &["identifier"],
+                        Inclusion,
+                    );
+                    self.errs.push(err);
+                    debug_exit_info!(self);
+                    return Err(());
+                };
+                let iter = self
+                    .try_reduce_expr(false, false, false, false)
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                let _ = expect_pop!(self, VBar);
+                let guard = self
+                    .try_reduce_expr(false, false, false, false)
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                (None, vec![(sym, iter)], Some(guard))
+            }
+            Some(VBar) => {
+                self.lpop();
+                let mut generators = vec![];
+                loop {
+                    let sym = self
+                        .try_reduce_ident()
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
+                    let _ = expect_pop!(self, Inclusion);
+                    let iter = self
+                        .try_reduce_expr(false, false, false, false)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
+                    generators.push((sym, iter));
+                    if self.cur_is(Semi) {
+                        self.lpop();
+                    } else {
+                        break;
+                    }
+                }
+                let guard = if self.cur_is(VBar) {
+                    self.lpop();
+                    let expr = self
+                        .try_reduce_expr(false, false, false, false)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
+                    Some(expr)
+                } else {
+                    None
+                };
+                (Some(first), generators, guard)
+            }
+            _ => {
+                self.errs.push(self.unexpected_none(line!(), caused_by!()));
+                debug_exit_info!(self);
+                return Err(());
+            }
+        };
+        if line_break {
+            while self.cur_is(Newline) {
+                self.skip();
+            }
+            if self.cur_is(Dedent) {
+                self.skip();
+            }
+        }
+        let r_paren = match self.peek_kind() {
+            Some(RParen) => self.lpop(),
+            Some(_) => {
+                let err =
+                    self.skip_and_throw_invalid_unclosed_err(caused_by!(), line!(), ")", "tuple");
+                self.errs.push(err);
+                debug_exit_info!(self);
+                return Err(());
+            }
+            None => {
+                self.errs.push(self.unexpected_none(line!(), caused_by!()));
+                debug_exit_info!(self);
+                return Err(());
+            }
+        };
+        debug_exit_info!(self);
+        Ok(TupleComprehension::new(
+            l_paren, r_paren, layout, generators, guard,
+        ))
     }
 
     /// Set, Dict, Record
@@ -3320,6 +3388,43 @@ impl Parser {
         let rhs = self
             .try_reduce_expr(false, true, false, false)
             .map_err(|_| self.stack_dec(fn_name!()))?;
+        // dict comprehension: `{k: v | x <- xs}`, `{k: v | x <- xs | guard}`
+        if self.cur_is(VBar) && self.nth_is(2, Inclusion) {
+            self.skip();
+            let mut generators = vec![];
+            loop {
+                let ident = self.try_reduce_ident()?;
+                let _ = expect_pop!(self, fail_next Inclusion);
+                let expr = self
+                    .try_reduce_expr(false, false, false, false)
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                generators.push((ident, expr));
+                if self.cur_is(Semi) {
+                    self.skip();
+                } else {
+                    break;
+                }
+            }
+            let guard = if self.cur_is(VBar) {
+                self.skip();
+                let expr = self
+                    .try_reduce_expr(false, false, false, false)
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                Some(expr)
+            } else {
+                None
+            };
+            let r_brace = expect_pop!(self, fail_next RBrace);
+            let comp = DictComprehension::new(
+                l_brace,
+                r_brace,
+                KeyValue::new(lhs, rhs),
+                generators,
+                guard,
+            );
+            debug_exit_info!(self);
+            return Ok(BraceContainer::Dict(Dict::Comprehension(comp)));
+        }
         if self.cur_is(VBar) {
             self.skip();
             let Expr::Accessor(Accessor::Ident(var)) = lhs else {
@@ -3677,15 +3782,24 @@ impl Parser {
     fn try_reduce_string_interpolation(&mut self) -> ParseResult<Expr> {
         debug_call_info!(self);
         let mut left = self.lpop();
-        left.content = Str::from(left.content.trim_end_matches("\\{").to_string() + "\"");
+        // strip exactly one `\{`; `trim_end_matches` would also eat a literal `\{`
+        let content = left
+            .content
+            .strip_suffix("\\{")
+            .unwrap_or(&left.content[..]);
+        left.content = Str::from(content.to_string() + "\"");
         left.kind = StrLit;
         let mut expr = Expr::Literal(Literal::from(left));
         loop {
             match self.peek() {
                 Some(l) if l.is(StrInterpRight) => {
                     let mut right = self.lpop();
-                    right.content =
-                        Str::from(format!("\"{}", right.content.trim_start_matches('}')));
+                    // strip exactly one `}`; a literal `}` may follow (e.g. "\{x}}")
+                    let content = right
+                        .content
+                        .strip_prefix('}')
+                        .unwrap_or(&right.content[..]);
+                    right.content = Str::from(format!("\"{content}"));
                     right.kind = StrLit;
                     let right = Expr::Literal(Literal::from(right));
                     let op = Token::new_fake(
@@ -3739,10 +3853,10 @@ impl Parser {
                     expr = Expr::BinOp(bin);
                     if self.cur_is(StrInterpMid) {
                         let mut mid = self.lpop();
-                        mid.content = Str::from(format!(
-                            "\"{}\"",
-                            mid.content.trim_start_matches('}').trim_end_matches("\\{")
-                        ));
+                        // strip exactly one `}` and one `\{`; literal braces may remain
+                        let content = mid.content.strip_prefix('}').unwrap_or(&mid.content[..]);
+                        let content = content.strip_suffix("\\{").unwrap_or(content);
+                        mid.content = Str::from(format!("\"{content}\""));
                         mid.kind = StrLit;
                         let mid = Expr::Literal(Literal::from(mid));
                         let op = Token::new_fake(
@@ -3765,32 +3879,14 @@ impl Parser {
     }
 
     /// x |> f() => f(x)
-    fn try_reduce_stream_operator(&mut self, stack: &mut Vec<ExprOrOp>) -> ParseResult<()> {
+    fn try_reduce_stream_operator(&mut self, first_arg: Expr) -> ParseResult<Expr> {
         debug_call_info!(self);
-        let op = self.lpop();
-        while stack.len() >= 3 {
-            collect_last_binop_on_stack(stack);
-        }
-        if stack.len() == 2 {
-            let caused_by = caused_by!();
-            log!(err "error caused by: {caused_by}");
-            let err = ParseError::compiler_bug(0, op.loc(), fn_name!(), line!());
-            self.errs.push(err);
-            debug_exit_info!(self);
-            return Err(());
-        }
-
+        let _op = self.lpop();
         if matches!(self.peek_kind(), Some(Dot)) {
             // obj |> .method(...)
             let vis = self.lpop();
             match self.lpop() {
                 symbol if symbol.is(Symbol) => {
-                    let Some(ExprOrOp::Expr(obj)) = stack.pop() else {
-                        let err = self.skip_and_throw_syntax_err(line!(), caused_by!());
-                        self.errs.push(err);
-                        debug_exit_info!(self);
-                        return Err(());
-                    };
                     if let Some(args) = self
                         .opt_reduce_args(false)
                         .transpose()
@@ -3800,21 +3896,22 @@ impl Parser {
                             VisModifierSpec::Public(vis.loc()),
                             VarName::new(symbol),
                         );
-                        let mut call = Expr::Call(Call::new(obj, Some(ident), args));
+                        let mut call = Expr::Call(Call::new(first_arg, Some(ident), args));
                         while let Some(res) = self.opt_reduce_args(false) {
                             let args = res.map_err(|_| self.stack_dec(fn_name!()))?;
                             call = call.call_expr(args);
                         }
-                        stack.push(ExprOrOp::Expr(call));
+                        debug_exit_info!(self);
+                        Ok(call)
                     } else {
                         let err = self.get_stream_op_syntax_error(
                             line!() as usize,
-                            obj.loc(),
+                            first_arg.loc(),
                             caused_by!(),
                         );
                         self.errs.push(err);
                         debug_exit_info!(self);
-                        return Err(());
+                        Err(())
                     }
                 }
                 other => {
@@ -3823,7 +3920,7 @@ impl Parser {
                     let err = ParseError::expect_method_error(line!() as usize, other.loc());
                     self.errs.push(err);
                     debug_exit_info!(self);
-                    return Err(());
+                    Err(())
                 }
             }
         } else {
@@ -3842,30 +3939,9 @@ impl Parser {
                 debug_exit_info!(self);
                 return Err(());
             };
-            let ExprOrOp::Expr(first_arg) = stack.pop().unwrap() else {
-                let caused_by = caused_by!();
-                log!(err "error caused by: {caused_by}");
-                self.errs.push(ParseError::compiler_bug(
-                    line!() as usize,
-                    call.loc(),
-                    fn_name!(),
-                    line!(),
-                ));
-                debug_exit_info!(self);
-                return Err(());
-            };
             call.args.insert_pos(0, PosArg::new(first_arg));
-            stack.push(ExprOrOp::Expr(Expr::Call(call)));
+            debug_exit_info!(self);
+            Ok(Expr::Call(call))
         }
-        debug_exit_info!(self);
-        Ok(())
     }
-}
-
-fn collect_last_binop_on_stack(stack: &mut Vec<ExprOrOp>) {
-    let rhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-    let op = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Op:(_)));
-    let lhs = enum_unwrap!(stack.pop(), Some:(ExprOrOp::Expr:(_)));
-    let bin = BinOp::new(op, lhs, rhs);
-    stack.push(ExprOrOp::Expr(Expr::BinOp(bin)));
 }

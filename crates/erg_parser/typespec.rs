@@ -121,6 +121,11 @@ impl Parser {
                     let const_tup = ConstTuple::new(elems);
                     Ok(ConstExpr::Tuple(const_tup))
                 }
+                other => Err(ParseError::feature_error(
+                    line!() as usize,
+                    other.loc(),
+                    "const tuple comprehension",
+                )),
             },
             Expr::BinOp(bin) => {
                 let mut args = bin.args.into_iter();
@@ -421,14 +426,15 @@ impl Parser {
                 Ok(TypeSpec::SetWithLen(SetWithLenTypeSpec::new(t_spec, len)))
             }
             Set::Comprehension(set) => {
-                if set.layout.is_none() && set.generators.len() == 1 && set.guard.is_some() {
+                let loc = set.loc();
+                if let (None, Some(guard), 1) = (set.layout, set.guard, set.generators.len()) {
                     let (ident, expr) = set.generators.into_iter().next().unwrap();
                     let typ = Self::expr_to_type_spec(expr)?;
-                    let pred = Self::validate_const_expr(*set.guard.unwrap())?;
+                    let pred = Self::validate_const_expr(*guard)?;
                     let refine = RefinementTypeSpec::new(ident.name.into_token(), typ, pred);
                     Ok(TypeSpec::Refinement(refine))
                 } else {
-                    Err(ParseError::simple_syntax_error(line!() as usize, set.loc()))
+                    Err(ParseError::simple_syntax_error(line!() as usize, loc))
                 }
             }
         }
@@ -512,6 +518,11 @@ impl Parser {
                     tup_spec.push(value);
                 }
                 Ok(TupleTypeSpec::new(parens, tup_spec))
+            }
+            Tuple::Comprehension(comp) => {
+                // TODO: add hint
+                let err = ParseError::simple_syntax_error(line!() as usize, comp.loc());
+                Err(err)
             }
         }
     }

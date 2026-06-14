@@ -48,6 +48,10 @@ impl LexError {
     pub fn loc(&self) -> Location {
         self.0.loc
     }
+
+    pub fn core(&self) -> &ErrorCore {
+        &self.0
+    }
 }
 
 #[cfg_attr(feature = "pylib", pyo3::pyclass)]
@@ -188,6 +192,24 @@ impl LexError {
                 "traditional_chinese" => "該塊是預期的，但是是 EOF",
                 "english" => "The block is expected, but is EOF",
             ),
+            errno,
+            ExpectNextLine,
+            loc,
+        ))
+    }
+
+    /// An unclosed multi-line construct (`"""` string, `#[ ]#` comment) at EOF.
+    /// Uses `ErrorKind::ExpectNextLine` so that the REPL treats the input as
+    /// incomplete (waiting for the closing line) instead of a hard error.
+    pub fn incomplete_input_error<S: Into<String>>(
+        errno: usize,
+        loc: Location,
+        desc: S,
+        hint: Option<String>,
+    ) -> Self {
+        Self::new(ErrorCore::new(
+            vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+            desc,
             errno,
             ExpectNextLine,
             loc,

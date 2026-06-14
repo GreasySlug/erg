@@ -13,6 +13,13 @@ use erg_common::{shared::Shared, spawn::safe_yield};
 
 type TaskID = i64;
 
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RequestKind {
     // high-priority requests
@@ -91,6 +98,8 @@ impl RequestKind {
 pub struct Task {
     kind: RequestKind,
     id: TaskID,
+    /// ms since the UNIX epoch when the task entered the executing set, or 0 while pending.
+    started_at: u64,
 }
 
 /// This pauses processing of tasks when a large number of requests are received from clients to reduce the load,
@@ -116,6 +125,19 @@ impl fmt::Display for Scheduler {
 
 pub const MAX_WORKERS: usize = 10;
 
+/// RAII guard returned by [`Scheduler::finish_on_drop`]; removes the task from
+/// the executing set on drop (including during a panic unwind).
+pub struct FinishGuard {
+    scheduler: Scheduler,
+    id: TaskID,
+}
+
+impl Drop for FinishGuard {
+    fn drop(&mut self) {
+        self.scheduler.finish(self.id);
+    }
+}
+
 impl Scheduler {
     pub fn new() -> Self {
         Self {
@@ -126,8 +148,13 @@ impl Scheduler {
 
     pub fn register(&self, id: TaskID, method: &str) {
         let request = RequestKind::from(method);
-        let task = Task { kind: request, id };
+        let mut task = Task {
+            kind: request,
+            id,
+            started_at: 0,
+        };
         if self.executing.borrow().len() < MAX_WORKERS {
+            task.started_at = now_millis();
             self.executing.borrow_mut().push(task);
         } else {
             self.pending.borrow_mut().push_back(task);
@@ -164,7 +191,8 @@ impl Scheduler {
                 .borrow()
                 .iter()
                 .position(|task| task.id == id)?;
-            let task = self.pending.borrow_mut().remove(idx)?;
+            let mut task = self.pending.borrow_mut().remove(idx)?;
+            task.started_at = now_millis();
             self.executing.borrow_mut().push(task);
             Some(task)
         }
@@ -182,5 +210,30 @@ impl Scheduler {
         let mut lock = self.executing.borrow_mut();
         let idx = lock.iter().position(|task| task.id == id)?;
         Some(lock.remove(idx))
+    }
+
+    /// Returns a guard that calls [`Scheduler::finish`] when dropped, so a task
+    /// leaves the executing set even if the worker's handler panics and unwinds.
+    /// Without this, a panicked request would linger in `executing` and the
+    /// watchdog would eventually mistake it for one stuck in an infinite loop.
+    pub fn finish_on_drop(&self, id: TaskID) -> FinishGuard {
+        FinishGuard {
+            scheduler: self.clone(),
+            id,
+        }
+    }
+
+    /// The age (in ms) of the longest-running executing task, or 0 if none.
+    /// `now` is the current time in ms since the UNIX epoch. The watchdog uses
+    /// this to detect a worker thread stuck in an infinite loop, which the main
+    /// dispatch loop's in-flight timer cannot see (workers run off-thread).
+    pub fn longest_running_age_ms(&self, now: u64) -> u64 {
+        self.executing
+            .borrow()
+            .iter()
+            .filter(|task| task.started_at != 0)
+            .map(|task| now.saturating_sub(task.started_at))
+            .max()
+            .unwrap_or(0)
     }
 }

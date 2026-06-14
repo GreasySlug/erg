@@ -614,4 +614,60 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "start_client_health_checker_receiver",
         );
     }
+
+    /// Watchdog thread that monitors progress of message handling.
+    /// It force-terminates the server if either the main dispatch loop or a
+    /// worker thread stays busy on a single request longer than `WATCHDOG_TIMEOUT`,
+    /// which is taken as a sign of an infinite loop. An idle server (no message
+    /// being processed) is never flagged: `in_flight_since` is `0` between
+    /// messages and there are no executing tasks.
+    pub(crate) fn start_watchdog(&self) {
+        const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(120);
+        const WATCHDOG_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+        if self.stdout_redirect.is_some() {
+            return;
+        }
+        let in_flight_since = self.in_flight_since.clone();
+        let scheduler = self.scheduler.clone();
+        let flags = self.flags.clone();
+        spawn_new_thread(
+            move || {
+                while !flags.client_initialized() {
+                    safe_yield();
+                }
+                let timeout_ms = WATCHDOG_TIMEOUT.as_millis() as u64;
+                loop {
+                    sleep(WATCHDOG_CHECK_INTERVAL);
+                    let now = Self::now_millis();
+                    // Main dispatch loop: 0 means no message is in-flight (idle, not stuck).
+                    let since = in_flight_since.load(Ordering::Relaxed);
+                    let dispatch_stuck = since != 0 && now.saturating_sub(since) > timeout_ms;
+                    // Worker threads: a single request running longer than the timeout.
+                    let worker_age = scheduler.longest_running_age_ms(now);
+                    let worker_stuck = worker_age > timeout_ms;
+                    if dispatch_stuck || worker_stuck {
+                        let elapsed_ms = if dispatch_stuck {
+                            now.saturating_sub(since)
+                        } else {
+                            worker_age
+                        };
+                        let where_ = if dispatch_stuck {
+                            "the main dispatch loop"
+                        } else {
+                            "a worker thread"
+                        };
+                        lsp_log!(
+                            "Watchdog: {} has been busy for {}s (timeout: {}s). \
+                             Server appears stuck. Force terminating.",
+                            where_,
+                            elapsed_ms / 1000,
+                            WATCHDOG_TIMEOUT.as_secs()
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            },
+            "els_watchdog",
+        );
+    }
 }

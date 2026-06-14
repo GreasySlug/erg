@@ -5,9 +5,9 @@ use std::ops::Not;
 use std::panic;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use erg_common::config::{ErgConfig, ErgMode};
 use erg_common::consts::PYTHON_MODE;
@@ -212,6 +212,13 @@ pub struct Server<Checker: BuildRunnable = PackageBuilder, Parser: Parsable = Si
     pub(crate) channels: Option<SendChannels>,
     pub(crate) stdout_redirect: Option<mpsc::Sender<Value>>,
     pub(crate) scheduler: Scheduler,
+    /// Timestamp (ms since the UNIX epoch) at which the currently in-flight
+    /// `dispatch` started, or `0` when the server is idle (no message being
+    /// processed). The watchdog uses this to tell "stuck while processing a
+    /// message" apart from "idle, waiting for the next message" — an idle
+    /// server receives no messages, so a plain "time since last message"
+    /// metric would wrongly flag it as stuck.
+    pub(crate) in_flight_since: Arc<AtomicU64>,
     pub(crate) _parser: std::marker::PhantomData<fn() -> Parser>,
     pub(crate) _checker: std::marker::PhantomData<fn() -> Checker>,
 }
@@ -257,6 +264,7 @@ impl<C: BuildRunnable, P: Parsable> Clone for Server<C, P> {
             flags: self.flags.clone(),
             stdout_redirect: self.stdout_redirect.clone(),
             scheduler: self.scheduler.clone(),
+            in_flight_since: self.in_flight_since.clone(),
             _parser: std::marker::PhantomData,
             _checker: std::marker::PhantomData,
         }
@@ -309,9 +317,17 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             flags,
             stdout_redirect,
             scheduler: Scheduler::new(),
+            in_flight_since: Arc::new(AtomicU64::new(0)),
             _parser: std::marker::PhantomData,
             _checker: std::marker::PhantomData,
         }
+    }
+
+    pub(crate) fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
     }
 
     fn register_packages(mut cfg: ErgConfig) -> ErgConfig {
@@ -387,7 +403,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     Err(err) => {
                         lsp_log!("error: {err}");
                         if err.kind() == io::ErrorKind::UnexpectedEof {
-                            panic!("unexpected EOF");
+                            // stdin reached EOF: the client disconnected. Exit cleanly
+                            // instead of panicking — panicking only kills this thread,
+                            // and the crash-recovery loop would then respawn it to hit
+                            // EOF again immediately, spinning in an unbounded restart storm.
+                            lsp_log!("client disconnected (EOF); shutting down");
+                            std::process::exit(0);
                         }
                         continue;
                     }
@@ -417,7 +438,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                             Err(err) => {
                                 lsp_log!("error: {err}");
                                 if err.kind() == io::ErrorKind::UnexpectedEof {
-                                    panic!("unexpected EOF");
+                                    // client disconnected: exit cleanly (see above).
+                                    lsp_log!("client disconnected (EOF); shutting down");
+                                    std::process::exit(0);
                                 }
                                 continue;
                             }
@@ -566,7 +589,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             Some(options)
         };
         capabilities.execute_command_provider = Some(ExecuteCommandOptions {
-            commands: vec![format!("{}.eliminate_unused_vars", self.mode())],
+            commands: vec![
+                format!("{}.eliminate_unused_vars", self.mode()),
+                format!("{}.forceShutdown", self.mode()),
+                format!("{}.restartServer", self.mode()),
+            ],
             work_done_progress_options: WorkDoneProgressOptions::default(),
         });
         capabilities.signature_help_provider = self
@@ -724,6 +751,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.start_language_services();
         self.start_workspace_diagnostics();
         self.start_auto_diagnostics();
+        self.start_watchdog();
     }
 
     fn exit(&self) -> ELSResult<()> {
@@ -745,6 +773,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     #[allow(unused)]
     pub(crate) fn restart(&mut self) {
         lsp_log!("restarting ELS");
+        // A dispatch that panicked (unwind) leaves `in_flight_since` set; clear it
+        // on recovery so the watchdog does not flag the restarted server as stuck.
+        self.in_flight_since.store(0, Ordering::Relaxed);
         // self.file_cache.clear();
         self.comp_cache.clear();
         if let Some(chan) = self.channels.as_ref() {
@@ -793,13 +824,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         io::Error::new(io::ErrorKind::InvalidData, "Couldn't read size")
                     })?);
                 }
-                "content-type:" => {
-                    if header_value != "utf8" && header_value != "utf-8" {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Content type '{header_value}' is invalid"),
-                        ));
-                    }
+                "content-type:" if header_value != "utf8" && header_value != "utf-8" => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Content type '{header_value}' is invalid"),
+                    ));
                 }
                 // Ignore unknown headers (specification doesn't say what to do in this case).
                 _ => (),
@@ -823,6 +852,18 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     }
 
     pub fn dispatch(&mut self, msg: Value) -> ELSResult<()> {
+        // Mark a message as in-flight while it is being handled. The watchdog
+        // only treats the server as stuck when a dispatch stays in-flight past
+        // its timeout; clearing this back to 0 on return keeps an idle server
+        // (one that is simply waiting for the next message) from being killed.
+        self.in_flight_since
+            .store(Self::now_millis(), Ordering::Relaxed);
+        let res = self.dispatch_inner(msg);
+        self.in_flight_since.store(0, Ordering::Relaxed);
+        res
+    }
+
+    fn dispatch_inner(&mut self, msg: Value) -> ELSResult<()> {
         match (
             msg.get("id")
                 .and_then(|i| i.as_i64().or(i.as_str().and_then(|s| s.parse().ok()))),
@@ -865,6 +906,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                             _log!(_self, "canceled: {id}");
                             continue;
                         }
+                        // Drops at the end of this arm, removing the task from the
+                        // executing set even if `handler` panics and unwinds.
+                        let _finish = _self.scheduler.finish_on_drop(id);
                         match handler(&mut _self, params) {
                             Ok(result) => {
                                 let _ = _self.send_stdout(&LSPResult::new(id, result));
@@ -877,7 +921,6 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                                 ));
                             }
                         }
-                        _self.scheduler.finish(id);
                     }
                     Ok(WorkerMessage::Kill) => {
                         break;
@@ -991,6 +1034,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "exit" => self.exit(),
             "textDocument/didOpen" => {
                 while !self.flags.workspace_checked() {
+                    // Waiting for the initial workspace check is legitimate progress,
+                    // not a stuck loop: keep the in-flight timestamp fresh so the
+                    // watchdog does not kill the server during a slow first check.
+                    self.in_flight_since
+                        .store(Self::now_millis(), Ordering::Relaxed);
                     safe_yield();
                 }
                 let params = DidOpenTextDocumentParams::deserialize(msg["params"].clone())?;

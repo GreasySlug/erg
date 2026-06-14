@@ -2,6 +2,7 @@ use erg_compiler::erg_parser::parse::Parsable;
 use erg_compiler::varinfo::AbsLocation;
 use serde_json::Value;
 
+use erg_common::lsp_log;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::hir::Expr;
 
@@ -17,8 +18,18 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         params: ExecuteCommandParams,
     ) -> ELSResult<Option<Value>> {
         _log!(self, "command requested: {}", params.command);
-        #[allow(clippy::match_single_binding)]
+        let force_shutdown_cmd = format!("{}.forceShutdown", self.mode());
+        let restart_server_cmd = format!("{}.restartServer", self.mode());
         match &params.command[..] {
+            cmd if cmd == force_shutdown_cmd => {
+                lsp_log!("Force shutdown requested via workspace/executeCommand");
+                std::process::exit(1);
+            }
+            cmd if cmd == restart_server_cmd => {
+                lsp_log!("Restart requested via workspace/executeCommand");
+                self.restart();
+                Ok(None)
+            }
             other => {
                 _log!(self, "unknown command {other}: {params:?}");
                 Ok(None)

@@ -575,6 +575,7 @@ impl TypeObj {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[allow(clippy::derive_ord_xor_partial_ord)]
 pub struct Float(f64);
 
 impl fmt::Display for Float {
@@ -584,10 +585,11 @@ impl fmt::Display for Float {
 }
 
 impl Eq for Float {}
-#[allow(clippy::derive_ord_xor_partial_ord)]
+
 impl Ord for Float {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+        // total_cmp は NaN でも panic せず全順序を返す(partial_cmp().unwrap() は NaN で panic)
+        self.0.total_cmp(&other.0)
     }
 }
 
@@ -644,7 +646,7 @@ impl Rem for Float {
 
 /// 値オブジェクト
 /// コンパイル時評価ができ、シリアライズも可能(Typeなどはシリアライズ不可)
-#[derive(Clone, Default, Hash)]
+#[derive(Clone, Default)]
 pub enum ValueObj {
     Int(i32),
     Nat(u64),
@@ -1027,13 +1029,96 @@ impl PartialEq for ValueObj {
 
 impl Eq for ValueObj {}
 
+// `PartialEq` で `Int(n) == Nat(n)`(n >= 0)としているため、
+// `a == b ⟹ hash(a) == hash(b)` を満たすには手動実装が必要。
+// 非負 `Int` と `Nat` を同一のハッシュに正規化する。
+impl std::hash::Hash for ValueObj {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            // 非負 Int と Nat は等値なので同一タグ・同一表現でハッシュ
+            Self::Int(i) if *i >= 0 => {
+                1u8.hash(state);
+                (*i as u64).hash(state);
+            }
+            Self::Nat(n) => {
+                1u8.hash(state);
+                n.hash(state);
+            }
+            Self::Int(i) => {
+                0u8.hash(state);
+                i.hash(state);
+            }
+            Self::Float(f) => {
+                2u8.hash(state);
+                f.hash(state);
+            }
+            Self::Str(s) => {
+                3u8.hash(state);
+                s.hash(state);
+            }
+            Self::Bool(b) => {
+                4u8.hash(state);
+                b.hash(state);
+            }
+            Self::List(l) => {
+                5u8.hash(state);
+                l.hash(state);
+            }
+            Self::UnsizedList(l) => {
+                6u8.hash(state);
+                l.hash(state);
+            }
+            Self::Set(s) => {
+                7u8.hash(state);
+                s.hash(state);
+            }
+            Self::Dict(d) => {
+                8u8.hash(state);
+                d.hash(state);
+            }
+            Self::Tuple(t) => {
+                9u8.hash(state);
+                t.hash(state);
+            }
+            Self::Record(r) => {
+                10u8.hash(state);
+                r.hash(state);
+            }
+            Self::DataClass { name, fields } => {
+                11u8.hash(state);
+                name.hash(state);
+                fields.hash(state);
+            }
+            Self::Code(c) => {
+                12u8.hash(state);
+                c.hash(state);
+            }
+            Self::Subr(s) => {
+                13u8.hash(state);
+                s.hash(state);
+            }
+            Self::Type(t) => {
+                14u8.hash(state);
+                t.hash(state);
+            }
+            Self::None => 15u8.hash(state),
+            Self::Ellipsis => 16u8.hash(state),
+            Self::NotImplemented => 17u8.hash(state),
+            Self::NegInf => 18u8.hash(state),
+            Self::Inf => 19u8.hash(state),
+            Self::Failure => 20u8.hash(state),
+        }
+    }
+}
+
 impl Neg for ValueObj {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {
         match self {
             Self::Int(i) => Self::Int(-i),
-            Self::Nat(n) => Self::Int(-(n as i32)),
+            Self::Nat(n) if n <= i32::MAX as u64 => Self::Int(-(n as i32)),
+            Self::Nat(n) => panic!("cannot negate Nat({n}): too large for Int(i32)"),
             Self::Float(fl) => Self::Float(-fl),
             Self::Inf => Self::NegInf,
             Self::NegInf => Self::Inf,
@@ -1520,6 +1605,18 @@ impl ValueObj {
         }
     }
 
+    /// Like [`Self::t`] but refines `Ratio` instead of the value's own class.
+    ///
+    /// `Ratio` literals (e.g. `0.1`) are stored as [`Self::Float`] (there is no
+    /// dedicated rational `ValueObj`), so their singleton type would otherwise
+    /// refine `Float`. Typing them as `Ratio` lets `Ratio`'s `Add`/`Eq`/... be
+    /// selected (e.g. `0.1 + 0.2 == 0.3` type-checks and stays exact at runtime).
+    pub fn ratio_t(&self) -> Type {
+        let name = FRESH_GEN.fresh_varname();
+        let pred = Predicate::eq(name.clone(), TyParam::Value(self.clone()));
+        refinement(name, Type::Ratio, pred)
+    }
+
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(i) => Some(*i),
@@ -1605,10 +1702,10 @@ impl ValueObj {
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l + r)),
             (Self::Int(l), Self::Nat(r)) => Some(Self::from(l + r as i32)),
             (Self::Nat(l), Self::Int(r)) => Some(Self::Int(l as i32 + r)),
-            (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l - r as f64)),
-            (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 - *r)),
-            (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 - *r)),
-            (Self::Float(l), Self::Int(r)) => Some(Self::from(*l - r as f64)),
+            (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l + r as f64)),
+            (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
+            (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
+            (Self::Float(l), Self::Int(r)) => Some(Self::from(*l + r as f64)),
             (Self::Str(l), Self::Str(r)) => Some(Self::Str(Str::from(format!("{l}{r}")))),
             (Self::List(l), Self::List(r)) => {
                 let lis = Arc::from([l, r].concat());
@@ -1633,12 +1730,15 @@ impl ValueObj {
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 - *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l - r as f64)),
             (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 - *r)),
+            // 無限が「引く側(左)」: Inf - n = Inf, NegInf - n = NegInf
             (inf @ (Self::Inf | Self::NegInf), other)
-            | (other, inf @ (Self::Inf | Self::NegInf))
                 if other != Self::Inf && other != Self::NegInf =>
             {
                 Some(inf)
             }
+            // 無限が「引かれる側(右)」: n - Inf = -Inf, n - NegInf = +Inf
+            (other, Self::Inf) if other != Self::Inf && other != Self::NegInf => Some(Self::NegInf),
+            (other, Self::NegInf) if other != Self::Inf && other != Self::NegInf => Some(Self::Inf),
             _ => None,
         }
     }
@@ -2299,13 +2399,32 @@ pub mod value_set {
         if !is_homogeneous(set) {
             return None;
         }
-        set.iter().max_by(|x, y| x.try_cmp(y).unwrap()).cloned()
+        // try_cmp が None(比較不能)になりうるので unwrap せず None を返す
+        set.iter()
+            .try_fold(None::<&ValueObj>, |acc, x| match acc {
+                None => Some(Some(x)),
+                Some(m) => match x.try_cmp(m)? {
+                    std::cmp::Ordering::Greater => Some(Some(x)),
+                    _ => Some(Some(m)),
+                },
+            })
+            .flatten()
+            .cloned()
     }
 
     pub fn min(set: &Set<ValueObj>) -> Option<ValueObj> {
         if !is_homogeneous(set) {
             return None;
         }
-        set.iter().min_by(|x, y| x.try_cmp(y).unwrap()).cloned()
+        set.iter()
+            .try_fold(None::<&ValueObj>, |acc, x| match acc {
+                None => Some(Some(x)),
+                Some(m) => match x.try_cmp(m)? {
+                    std::cmp::Ordering::Less => Some(Some(x)),
+                    _ => Some(Some(m)),
+                },
+            })
+            .flatten()
+            .cloned()
     }
 }

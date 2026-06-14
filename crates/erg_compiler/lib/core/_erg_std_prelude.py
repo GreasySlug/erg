@@ -81,3 +81,15 @@ class Dimension(Generic[Ty, M, L, T, I, Θ, N, J]):
         return self.val
     def type_check(self, t: type) -> bool:
         return t.__name__ == "Dimension"
+
+
+from fractions import Fraction as _Fraction
+
+
+def true_div(a, b):
+    # Exact division for Erg's `Ratio`. Used when the operand types are not known
+    # at compile time (e.g. a generic `f x = x / 2`): integers divide to an exact
+    # `Fraction` (`1 / 3` stays `1/3`), while `Float`/`Complex` keep Python's `/`.
+    if isinstance(a, (float, complex)) or isinstance(b, (float, complex)):
+        return a / b
+    return _Fraction(a) / b

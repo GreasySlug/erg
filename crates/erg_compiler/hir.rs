@@ -70,8 +70,15 @@ impl TryFrom<Token> for Literal {
     fn try_from(token: Token) -> Result<Self, ()> {
         let data =
             ValueObj::from_str(type_from_token_kind(token.kind), token.content.clone()).ok_or(())?;
+        // `Ratio` literals are stored as `Float` values, so type them as `Ratio`
+        // explicitly (otherwise their singleton would refine `Float`).
+        let t = if token.is(TokenKind::RatioLit) {
+            data.ratio_t()
+        } else {
+            data.t()
+        };
         Ok(Self {
-            t: data.t(),
+            t,
             value: data,
             token,
         })

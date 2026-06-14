@@ -169,10 +169,13 @@ impl Context {
             (Obj | Failure, _) | (_, Never | Failure) => (Absolutely, true),
             (_, Obj) if lhs.is_mono_value_class() => (Absolutely, false),
             (Never, _) if rhs.is_mono_value_class() => (Absolutely, false),
-            (Complex | Float | Ratio | Int | Nat | Bool, Bool)
-            | (Complex | Float | Ratio | Int | Nat, Nat)
-            | (Complex | Float | Ratio | Int, Int)
-            | (Complex | Float | Ratio, Ratio)
+            // `Float` is an independent branch under `Complex`; it is not a
+            // supertype of `Ratio`/`Int`/`Nat`/`Bool` (see doc/EN/API/types.md):
+            //   Bool <: Nat <: Int <: Ratio <: Complex,  Float <: Complex
+            (Complex | Ratio | Int | Nat | Bool, Bool)
+            | (Complex | Ratio | Int | Nat, Nat)
+            | (Complex | Ratio | Int, Int)
+            | (Complex | Ratio, Ratio)
             | (Complex | Float, Float) => (Absolutely, true),
             (Type, ClassType | TraitType) => (Absolutely, true),
             (
@@ -316,10 +319,8 @@ impl Context {
                     (Absolutely, true) => {
                         return (Absolutely, true);
                     }
-                    (Maybe, _) => {
-                        if self.structural_supertype_of(lhs, rhs_sup) {
-                            return (Absolutely, true);
-                        }
+                    (Maybe, _) if self.structural_supertype_of(lhs, rhs_sup) => {
+                        return (Absolutely, true);
                     }
                     _ => {}
                 }
@@ -923,11 +924,18 @@ impl Context {
                     };
                     let llen = lparams[1].clone();
                     let rlen = rparams[1].clone();
-                    self.supertype_of(&lt, &rt)
-                        && self
+                    let len_judge = match (&llen, &rlen) {
+                        // a type as a length parameter represents the set of allowed lengths,
+                        // e.g. `[Int; {N: Nat | N >= 3}] :> [Int; 3]` (refinement pattern)
+                        (TyParam::Type(_), _) | (_, TyParam::Type(_)) => {
+                            self.supertype_of_tp(&llen, &rlen, Variance::Covariant)
+                        }
+                        _ => self
                             .try_cmp(&llen, &rlen)
                             .map(|ord| ord.canbe_eq() || ord.canbe_lt())
-                            .unwrap_or(false)
+                            .unwrap_or(false),
+                    };
+                    self.supertype_of(&lt, &rt) && len_judge
                 } else {
                     self.poly_supertype_of(lhs, lparams, rparams)
                 }
@@ -1256,6 +1264,15 @@ impl Context {
                 // Value([Value(1)]) => TyParam([Value(1)])
                 if let Ok(sup) = Self::convert_value_into_tp(sup.clone()) {
                     self.supertype_of_tp(&sup, sub_p, variance)
+                } else if let TyParam::Type(sub) = sub_p {
+                    // e.g. `List(Int, 3) :> List(Int, {3})`.
+                    // A type as a type parameter represents the set of allowed values,
+                    // so a scalar value parameter is compared as its singleton type
+                    let sup_t = constructors::v_enum(set! { sup.clone() });
+                    match variance {
+                        Variance::Contravariant => self.subtype_of(&sup_t, sub),
+                        Variance::Covariant | Variance::Invariant => self.supertype_of(&sup_t, sub),
+                    }
                 } else {
                     self.eq_tp(sup_p, sub_p)
                 }
@@ -1263,6 +1280,13 @@ impl Context {
             (_, TyParam::Value(sub)) => {
                 if let Ok(sub) = Self::convert_value_into_tp(sub.clone()) {
                     self.supertype_of_tp(sup_p, &sub, variance)
+                } else if let TyParam::Type(sup) = sup_p {
+                    // e.g. `List(Int, {N: Nat | N >= 3}) :> List(Int, 3)` (refinement pattern)
+                    let sub_t = constructors::v_enum(set! { sub.clone() });
+                    match variance {
+                        Variance::Contravariant => self.subtype_of(sup, &sub_t),
+                        Variance::Covariant | Variance::Invariant => self.supertype_of(sup, &sub_t),
+                    }
                 } else {
                     self.eq_tp(sup_p, sub_p)
                 }

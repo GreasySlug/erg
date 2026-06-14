@@ -366,11 +366,34 @@ impl Context {
         float.register_trait_methods(Float, float_show);
 
         /* Ratio */
-        // TODO: Int, Nat, Boolの継承元をRatioにする(今はFloat)
+        // Ratio <: Complex (Float is an independent branch; see doc/EN/API/types.md)
         let mut ratio = Self::builtin_mono_class(RATIO, 2);
-        ratio.register_superclass(Obj, &obj);
+        ratio.register_superclass(Complex, &complex);
         ratio.register_builtin_py_impl(REAL, Ratio, Const, Visibility::BUILTIN_PUBLIC, Some(REAL));
         ratio.register_builtin_py_impl(IMAG, Ratio, Const, Visibility::BUILTIN_PUBLIC, Some(IMAG));
+        // `Ratio` is backed by `fractions.Fraction`, which exposes the reduced
+        // numerator (signed) and denominator (positive).
+        ratio.register_builtin_py_impl(
+            NUMERATOR,
+            Int,
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+            Some(NUMERATOR),
+        );
+        ratio.register_builtin_py_impl(
+            DENOMINATOR,
+            Nat,
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+            Some(DENOMINATOR),
+        );
+        // Concrete comparison methods (mirroring `Float`), so subclasses
+        // `Int`/`Nat` inherit `__gt__`/`__lt__`/... directly (needed e.g. for
+        // structural typing that names these methods).
+        ratio.register_py_builtin(OP_GT, fn1_met(Ratio, Ratio, Bool), Some(OP_GT), 0);
+        ratio.register_py_builtin(OP_GE, fn1_met(Ratio, Ratio, Bool), Some(OP_GE), 0);
+        ratio.register_py_builtin(OP_LT, fn1_met(Ratio, Ratio, Bool), Some(OP_LT), 0);
+        ratio.register_py_builtin(OP_LE, fn1_met(Ratio, Ratio, Bool), Some(OP_LE), 0);
         ratio.register_trait(self, mono(NUM)).unwrap();
         ratio.register_trait(self, mono(ORD)).unwrap();
         let mut ratio_ord = Self::builtin_methods(Some(mono(ORD)), 2);
@@ -502,7 +525,7 @@ impl Context {
 
         /* Int */
         let mut int = Self::builtin_mono_class(INT, 2);
-        int.register_superclass(Float, &float); // TODO: Float -> Ratio
+        int.register_superclass(Ratio, &ratio); // Int <: Ratio (see doc/EN/API/types.md)
         int.register_trait(self, mono(NUM)).unwrap();
         // class("Rational"),
         // class("Integral"),
@@ -653,7 +676,7 @@ impl Context {
         let mut int_div = Self::builtin_methods(Some(poly(DIV, vec![ty_tp(Int)])), 2);
         int_div.register_builtin_erg_impl(
             OP_DIV,
-            fn1_met(Int, Int, Float),
+            fn1_met(Int, Int, Ratio),
             Const,
             Visibility::BUILTIN_PUBLIC,
         );
@@ -661,7 +684,7 @@ impl Context {
             OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Float),
+            ValueObj::builtin_class(Ratio),
         );
         int_div.register_builtin_const(
             MOD_OUTPUT,
@@ -813,7 +836,7 @@ impl Context {
         let mut nat_div = Self::builtin_methods(Some(poly(DIV, vec![ty_tp(Nat)])), 2);
         nat_div.register_builtin_erg_impl(
             OP_DIV,
-            fn1_met(Nat, Nat, Float),
+            fn1_met(Nat, Nat, Ratio),
             Const,
             Visibility::BUILTIN_PUBLIC,
         );
@@ -821,7 +844,7 @@ impl Context {
             OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Float),
+            ValueObj::builtin_class(Ratio),
         );
         nat_div.register_builtin_const(
             MOD_OUTPUT,

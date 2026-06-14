@@ -1,0 +1,27 @@
+# `Ratio` is an exact rational type backed by `fractions.Fraction`.
+
+# Decimal literals are exact rationals, not lossy floats.
+assert 0.1 + 0.2 == 0.3
+assert 0.1 == 1 / 10
+
+# `/` yields an exact `Ratio` (`1 / 3` is not `0.333...`).
+assert 1 / 3 + 1 / 3 + 1 / 3 == 1
+assert 1 / 2 + 1 / 4 == 3 / 4
+assert 10 / 4 == 5 / 2
+
+# A `Ratio` exposes its reduced numerator/denominator.
+third = 1 / 3
+assert third.numerator == 1
+assert third.denominator == 3
+
+# Generic division stays exact too (resolved at runtime).
+half x = x / 2
+assert half(5) == 5 / 2
+assert half(3) == 3 / 2
+
+# `Ratio` implements `Eq` (unlike `Float`), so it can be a set element.
+assert {1.0, 1.0} == {1.0}
+
+# `Ratio <: Complex` (Float is an independent branch, so a Ratio is *not* a Float).
+c: Complex = 1 / 2
+assert c.real == 1 / 2

@@ -1,10 +1,11 @@
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Write;
+use std::sync::OnceLock;
 
-use erg_common::error::{ErrorDisplay, ErrorKind, MultiErrorDisplay};
+use erg_common::error::MultiErrorDisplay;
 use erg_common::log;
 use erg_common::set::Set as HashSet;
-use erg_common::traits::BlockKind;
 use erg_common::traits::{ExitStatus, Locational, New, Runnable, Stream};
 use erg_common::Str;
 use erg_common::{config::ErgConfig, dict};
@@ -12,7 +13,6 @@ use erg_common::{config::TranspileTarget, dict::Dict as HashMap};
 
 use erg_parser::ast::{ParamPattern, TypeSpec, VarName, AST};
 use erg_parser::token::TokenKind;
-use erg_parser::ParserRunner;
 
 use crate::artifact::{
     BuildRunnable, Buildable, CompleteArtifact, ErrorArtifact, IncompleteArtifact,
@@ -59,15 +59,125 @@ fn demangle(name: &str) -> String {
 
 // TODO:
 fn replace_non_symbolic(name: &str) -> String {
-    name.replace('\'', "__single_quote__")
-        .replace(' ', "__space__")
-        .replace('+', "__plus__")
-        .replace('-', "__minus__")
-        .replace('*', "__star__")
-        .replace('/', "__slash__")
-        .replace('%', "__percent__")
-        .replace('!', "__erg_proc__")
-        .replace('$', "erg_shared__")
+    let mut replaced = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '\'' => replaced.push_str("__single_quote__"),
+            ' ' => replaced.push_str("__space__"),
+            '+' => replaced.push_str("__plus__"),
+            '-' => replaced.push_str("__minus__"),
+            '*' => replaced.push_str("__star__"),
+            '/' => replaced.push_str("__slash__"),
+            '%' => replaced.push_str("__percent__"),
+            '!' => replaced.push_str("__erg_proc__"),
+            '$' => replaced.push_str("erg_shared__"),
+            _ => replaced.push(c),
+        }
+    }
+    replaced
+}
+
+fn push_indent(code: &mut String, level: usize) {
+    for _ in 0..level {
+        code.push_str("    ");
+    }
+}
+
+/// Core runtime modules, in definition order: a module must appear after any
+/// module whose classes its own class definitions inherit from
+/// (e.g. `_erg_bool` defines `class Bool(Nat)`, so it comes after `_erg_nat`).
+const CORE_MODULES: &[(&str, &str)] = &[
+    ("_erg_result", include_str!("lib/core/_erg_result.py")),
+    ("_erg_control", include_str!("lib/core/_erg_control.py")),
+    ("_erg_type", include_str!("lib/core/_erg_type.py")),
+    ("_erg_int", include_str!("lib/core/_erg_int.py")),
+    ("_erg_nat", include_str!("lib/core/_erg_nat.py")),
+    ("_erg_bool", include_str!("lib/core/_erg_bool.py")),
+    ("_erg_str", include_str!("lib/core/_erg_str.py")),
+    ("_erg_float", include_str!("lib/core/_erg_float.py")),
+    ("_erg_range", include_str!("lib/core/_erg_range.py")),
+    (
+        "_erg_contains_operator",
+        include_str!("lib/core/_erg_contains_operator.py"),
+    ),
+    (
+        "_erg_mutate_operator",
+        include_str!("lib/core/_erg_mutate_operator.py"),
+    ),
+    ("_erg_list", include_str!("lib/core/_erg_list.py")),
+    ("_erg_dict", include_str!("lib/core/_erg_dict.py")),
+    ("_erg_set", include_str!("lib/core/_erg_set.py")),
+    ("_erg_bytes", include_str!("lib/core/_erg_bytes.py")),
+    (
+        "_erg_convertors",
+        include_str!("lib/core/_erg_convertors.py"),
+    ),
+];
+
+/// Modules required by each feature (transitive closure, in `CORE_MODULES` order)
+const RANGE_OPS_MODULES: &[&str] = &[
+    "_erg_result",
+    "_erg_control",
+    "_erg_type",
+    "_erg_int",
+    "_erg_nat",
+    "_erg_str",
+    "_erg_range",
+];
+const CONTAINS_OP_MODULES: &[&str] = &[
+    "_erg_result",
+    "_erg_type",
+    "_erg_range",
+    "_erg_contains_operator",
+];
+const BUILTIN_TYPES_MODULES: &[&str] = &[
+    "_erg_result",
+    "_erg_control",
+    "_erg_type",
+    "_erg_int",
+    "_erg_nat",
+    "_erg_bool",
+    "_erg_str",
+    "_erg_float",
+    "_erg_range",
+    "_erg_contains_operator",
+    "_erg_list",
+    "_erg_dict",
+    "_erg_set",
+    "_erg_bytes",
+];
+const CONVERTORS_MODULES: &[&str] = &[
+    "_erg_result",
+    "_erg_control",
+    "_erg_type",
+    "_erg_int",
+    "_erg_nat",
+    "_erg_str",
+    "_erg_float",
+    "_erg_convertors",
+];
+
+/// The core modules are inlined into a single prelude, so their cross-imports
+/// must be removed.
+fn strip_erg_imports(src: &str) -> String {
+    let mut stripped = String::with_capacity(src.len());
+    for line in src.lines() {
+        if !line.trim_start().starts_with("from _erg") {
+            stripped.push_str(line);
+            stripped.push('\n');
+        }
+    }
+    stripped
+}
+
+fn stripped_module_src(name: &str) -> &'static str {
+    static STRIPPED: [OnceLock<String>; CORE_MODULES.len()] =
+        [const { OnceLock::new() }; CORE_MODULES.len()];
+    let idx = CORE_MODULES
+        .iter()
+        .position(|(mod_name, _)| *mod_name == name)
+        .unwrap_or_else(|| unreachable!("unknown core module: {name}"));
+    STRIPPED[idx].get_or_init(|| strip_erg_imports(CORE_MODULES[idx].1))
 }
 
 pub enum Enclosure {
@@ -244,37 +354,8 @@ impl Runnable for Transpiler {
         Ok(artifact.object.into_code())
     }
 
-    fn expect_block(&self, src: &str) -> BlockKind {
-        let mut parser = ParserRunner::new(self.cfg().clone());
-        match parser.eval(src.to_string()) {
-            Err(errs) => {
-                let kind = errs
-                    .iter()
-                    .filter(|e| e.core().kind == ErrorKind::ExpectNextLine)
-                    .map(|e| {
-                        let msg = e.core().sub_messages.last().unwrap();
-                        // ExpectNextLine error must have msg otherwise it's a bug
-                        msg.get_msg().first().unwrap().to_owned()
-                    })
-                    .next();
-                if let Some(kind) = kind {
-                    return BlockKind::from(kind.as_str());
-                }
-                if errs
-                    .iter()
-                    .any(|err| err.core.main_message.contains("\"\"\""))
-                {
-                    return BlockKind::MultiLineStr;
-                }
-                BlockKind::Error
-            }
-            Ok(_) => {
-                if src.contains("Class") {
-                    return BlockKind::ClassDef;
-                }
-                BlockKind::None
-            }
-        }
+    fn completeness_checker(&self) -> Option<erg_common::stdin::CompletenessChecker> {
+        Some(Box::new(erg_parser::parse::check_code_completeness))
     }
 }
 
@@ -422,41 +503,24 @@ impl Transpiler {
 #[derive(Debug, Default)]
 pub struct PyScriptGenerator {
     globals: HashSet<String>,
+    loaded_mods: HashSet<&'static str>,
     level: usize,
     fresh_var_n: usize,
     namedtuple_loaded: bool,
-    mutate_op_loaded: bool,
-    contains_op_loaded: bool,
-    range_ops_loaded: bool,
-    builtin_types_loaded: bool,
-    builtin_control_loaded: bool,
-    convertors_loaded: bool,
     prelude: String,
 }
 
 impl PyScriptGenerator {
     pub fn new() -> Self {
-        Self {
-            globals: HashSet::new(),
-            level: 0,
-            fresh_var_n: 0,
-            namedtuple_loaded: false,
-            mutate_op_loaded: false,
-            contains_op_loaded: false,
-            range_ops_loaded: false,
-            builtin_types_loaded: false,
-            builtin_control_loaded: false,
-            convertors_loaded: false,
-            prelude: String::new(),
-        }
+        Self::default()
     }
 
     pub fn transpile(&mut self, hir: HIR) -> PyScript {
         let mut code = String::new();
         for chunk in hir.module.into_iter() {
-            let expr = self.transpile_expr(chunk);
-            if !expr.is_empty() {
-                code += &expr;
+            let start = code.len();
+            self.write_expr(chunk, &mut code);
+            if code.len() > start {
                 code.push('\n');
             }
         }
@@ -467,30 +531,6 @@ impl PyScriptGenerator {
         }
     }
 
-    // TODO: more smart way
-    fn replace_import(src: &str) -> String {
-        src.replace("from _erg_nat import NatMut", "")
-            .replace("from _erg_nat import Nat", "")
-            .replace("from _erg_int import IntMut", "")
-            .replace("from _erg_int import Int", "")
-            .replace("from _erg_bool import BoolMut", "")
-            .replace("from _erg_bool import Bool", "")
-            .replace("from _erg_str import StrMut", "")
-            .replace("from _erg_str import Str", "")
-            .replace("from _erg_float import FloatMut", "")
-            .replace("from _erg_float import Float", "")
-            .replace("from _erg_list import List", "")
-            .replace("from _erg_range import Range", "")
-            .replace("from _erg_result import Error", "")
-            .replace("from _erg_result import is_ok", "")
-            .replace("from _erg_control import then__", "")
-            .replace("from _erg_contains_operator import contains_operator", "")
-            .replace("from _erg_type import is_type", "")
-            .replace("from _erg_type import _isinstance", "")
-            .replace("from _erg_type import UnionType", "")
-            .replace("from _erg_type import MutType", "")
-    }
-
     fn load_namedtuple_if_not(&mut self) {
         if !self.namedtuple_loaded {
             self.prelude += "from collections import namedtuple as NamedTuple__\n";
@@ -498,157 +538,139 @@ impl PyScriptGenerator {
         }
     }
 
+    fn load_module_if_not(&mut self, name: &'static str) {
+        if self.loaded_mods.insert(name) {
+            self.prelude += stripped_module_src(name);
+        }
+    }
+
+    fn load_modules_if_not(&mut self, names: &[&'static str]) {
+        for name in names {
+            self.load_module_if_not(name);
+        }
+    }
+
     // TODO: name escaping
     fn load_range_ops_if_not(&mut self) {
-        if !self.range_ops_loaded {
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_result.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_int.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_nat.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_str.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_range.py"));
-            self.range_ops_loaded = true;
-        }
+        self.load_modules_if_not(RANGE_OPS_MODULES);
     }
 
     fn load_contains_op_if_not(&mut self) {
-        if !self.contains_op_loaded {
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_result.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_range.py"));
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_type.py"));
-            self.prelude +=
-                &Self::replace_import(include_str!("lib/core/_erg_contains_operator.py"));
-            self.contains_op_loaded = true;
-        }
+        self.load_modules_if_not(CONTAINS_OP_MODULES);
     }
 
     fn load_mutate_op_if_not(&mut self) {
-        if !self.mutate_op_loaded {
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_mutate_operator.py"));
-            self.mutate_op_loaded = true;
-        }
+        self.load_module_if_not("_erg_mutate_operator");
     }
 
     fn load_builtin_types_if_not(&mut self) {
-        if !self.builtin_types_loaded {
-            self.load_builtin_controls_if_not();
-            self.load_contains_op_if_not();
-            if self.range_ops_loaded {
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_float.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_list.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_dict.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_set.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_bytes.py"));
-            } else {
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_int.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_nat.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_bool.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_str.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_float.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_list.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_dict.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_set.py"));
-                self.prelude += &Self::replace_import(include_str!("lib/core/_erg_bytes.py"));
-            }
-            self.builtin_types_loaded = true;
-        }
+        self.load_modules_if_not(BUILTIN_TYPES_MODULES);
     }
 
     fn load_builtin_controls_if_not(&mut self) {
-        if !self.builtin_control_loaded {
-            self.prelude += include_str!("lib/core/_erg_control.py");
-            self.builtin_control_loaded = true;
-        }
+        self.load_module_if_not("_erg_control");
     }
 
     fn load_convertors_if_not(&mut self) {
-        if !self.convertors_loaded {
-            self.prelude += &Self::replace_import(include_str!("lib/core/_erg_convertors.py"));
-            self.convertors_loaded = true;
+        self.load_modules_if_not(CONVERTORS_MODULES);
+    }
+
+    fn write_escaped_str(s: &str, out: &mut String) {
+        for c in s.chars() {
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                // '\'' => out.push_str("\\'"),
+                '\0' => out.push_str("\\0"),
+                _ => out.push(c),
+            }
         }
     }
 
-    fn escape_str(s: &str) -> String {
-        s.replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-            // .replace('\'', "\\'")
-            .replace('\0', "\\0")
+    /// Builds the transpiled `expr` as a standalone string.
+    /// Only for contexts that need a `String` value (e.g. `join`);
+    /// prefer writing through [`Self::write_expr`] directly.
+    fn expr_to_string(&mut self, expr: Expr) -> String {
+        let mut code = String::new();
+        self.write_expr(expr, &mut code);
+        code
     }
 
-    fn transpile_expr(&mut self, expr: Expr) -> String {
+    /// Writes the transpiled `expr` to `out`.
+    /// Auxiliary definitions (tmp functions, imports, etc.) go to `self.prelude`.
+    fn write_expr(&mut self, expr: Expr, out: &mut String) {
         match expr {
-            Expr::Literal(lit) => self.transpile_lit(lit),
-            Expr::Call(call) => self.transpile_call(call),
-            Expr::BinOp(bin) => self.transpile_binop(bin),
-            Expr::UnaryOp(unary) => self.transpile_unaryop(unary),
+            Expr::Literal(lit) => self.write_lit(lit, out),
+            Expr::Call(call) => self.write_call(call, out),
+            Expr::BinOp(bin) => self.write_binop(bin, out),
+            Expr::UnaryOp(unary) => self.write_unaryop(unary, out),
             Expr::List(list) => match list {
                 List::Normal(lis) => {
                     self.load_builtin_types_if_not();
-                    let mut code = "List([".to_string();
+                    out.push_str("List([");
                     for elem in lis.elems.pos_args {
-                        code += &format!("{},", self.transpile_expr(elem.expr));
+                        self.write_expr(elem.expr, out);
+                        out.push(',');
                     }
-                    code += "])";
-                    code
+                    out.push_str("])");
                 }
                 other => todo!("transpiling {other}"),
             },
             Expr::Set(set) => match set {
                 Set::Normal(st) => {
                     self.load_builtin_types_if_not();
-                    let mut code = "Set({".to_string();
+                    out.push_str("Set({");
                     for elem in st.elems.pos_args {
-                        code += &format!("{},", self.transpile_expr(elem.expr));
+                        self.write_expr(elem.expr, out);
+                        out.push(',');
                     }
-                    code += "})";
-                    code
+                    out.push_str("})");
                 }
                 other => todo!("transpiling {other}"),
             },
-            Expr::Record(rec) => self.transpile_record(rec),
+            Expr::Record(rec) => self.write_record(rec, out),
             Expr::Tuple(tuple) => match tuple {
                 Tuple::Normal(tup) => {
-                    let mut code = "(".to_string();
+                    out.push('(');
                     for elem in tup.elems.pos_args {
-                        code += &format!("{},", self.transpile_expr(elem.expr));
+                        self.write_expr(elem.expr, out);
+                        out.push(',');
                     }
-                    code += ")";
-                    code
+                    out.push(')');
                 }
             },
             Expr::Dict(dict) => match dict {
                 Dict::Normal(dic) => {
                     self.load_builtin_types_if_not();
-                    let mut code = "Dict({".to_string();
+                    out.push_str("Dict({");
                     for kv in dic.kvs {
-                        code += &format!(
-                            "({}): ({}),",
-                            self.transpile_expr(kv.key),
-                            self.transpile_expr(kv.value)
-                        );
+                        out.push('(');
+                        self.write_expr(kv.key, out);
+                        out.push_str("): (");
+                        self.write_expr(kv.value, out);
+                        out.push_str("),");
                     }
-                    code += "})";
-                    code
+                    out.push_str("})");
                 }
                 other => todo!("transpiling {other}"),
             },
-            Expr::Accessor(acc) => self.transpile_acc(acc),
-            Expr::Def(def) => self.transpile_def(def),
-            Expr::Lambda(lambda) => self.transpile_lambda(lambda),
-            Expr::ClassDef(classdef) => self.transpile_classdef(classdef),
-            Expr::PatchDef(patchdef) => self.transpile_patchdef(patchdef),
-            Expr::ReDef(redef) => self.transpile_attrdef(redef),
+            Expr::Accessor(acc) => self.write_acc(acc, out),
+            Expr::Def(def) => self.write_def(def, out),
+            Expr::Lambda(lambda) => self.write_lambda(lambda, out),
+            Expr::ClassDef(classdef) => self.write_classdef(classdef, out),
+            Expr::PatchDef(patchdef) => self.write_patchdef(patchdef, out),
+            Expr::ReDef(redef) => self.write_attrdef(redef, out),
             // TODO:
             Expr::Compound(comp) => {
-                let mut code = "".to_string();
                 for expr in comp.into_iter() {
-                    let expr = self.transpile_expr(expr);
-                    if !expr.is_empty() {
-                        code += &expr;
-                        code += &format!("\n{}", "    ".repeat(self.level));
+                    let start = out.len();
+                    self.write_expr(expr, out);
+                    if out.len() > start {
+                        out.push('\n');
+                        push_indent(out, self.level);
                     }
                 }
-                code
             }
             Expr::Import(acc) => {
                 let full_name = acc
@@ -659,16 +681,14 @@ impl PyScriptGenerator {
                     "{} = __import__(\"{full_name}\")\n",
                     Self::transpile_ident(root)
                 );
-                String::new()
             }
-            Expr::TypeAsc(tasc) => self.transpile_expr(*tasc.expr),
+            Expr::TypeAsc(tasc) => self.write_expr(*tasc.expr, out),
             Expr::Code(_) => todo!("transpiling importing user-defined code"),
-            Expr::Dummy(_) => "".to_string(),
+            Expr::Dummy(_) => {}
         }
     }
 
-    fn transpile_lit(&mut self, lit: Literal) -> String {
-        let escaped = Self::escape_str(&lit.token.content);
+    fn write_lit(&mut self, lit: Literal, out: &mut String) {
         if matches!(
             &lit.value,
             ValueObj::Bool(_)
@@ -678,106 +698,109 @@ impl PyScriptGenerator {
                 | ValueObj::Float(_)
         ) {
             self.load_builtin_types_if_not();
-            format!("{}({escaped})", lit.value.class())
+            write!(out, "{}(", lit.value.class()).unwrap();
+            Self::write_escaped_str(&lit.token.content, out);
+            out.push(')');
         } else {
-            escaped
+            Self::write_escaped_str(&lit.token.content, out);
         }
     }
 
-    fn transpile_record(&mut self, rec: Record) -> String {
+    fn write_record(&mut self, rec: Record, out: &mut String) {
         self.load_namedtuple_if_not();
         let mut attrs = "[".to_string();
         let mut values = "(".to_string();
         for mut attr in rec.attrs.into_iter() {
-            attrs += &format!("'{}',", Self::transpile_ident(attr.sig.into_ident()));
+            attrs.push('\'');
+            attrs += &Self::transpile_ident(attr.sig.into_ident());
+            attrs += "',";
             if attr.body.block.len() > 1 {
                 let name = format!("instant_block_{}__", self.fresh_var_n);
                 self.fresh_var_n += 1;
                 let mut instant = format!("def {name}():\n");
-                instant += &self.transpile_block(attr.body.block, Return);
+                self.write_block(attr.body.block, Return, &mut instant);
                 self.prelude += &instant;
-                values += &format!("{name}(),");
+                values += &name;
+                values += "(),";
             } else {
                 let expr = attr.body.block.remove(0);
-                values += &format!("{},", self.transpile_expr(expr));
+                self.write_expr(expr, &mut values);
+                values.push(',');
             }
         }
         attrs += "]";
         values += ")";
-        format!("NamedTuple__('Record', {attrs}){values}")
+        out.push_str("NamedTuple__('Record', ");
+        out.push_str(&attrs);
+        out.push(')');
+        out.push_str(&values);
     }
 
-    fn transpile_binop(&mut self, bin: BinOp) -> String {
+    fn write_binop(&mut self, bin: BinOp, out: &mut String) {
         match bin.op.kind {
             TokenKind::Closed | TokenKind::LeftOpen | TokenKind::RightOpen | TokenKind::Open => {
                 self.load_range_ops_if_not();
-                let mut code = match bin.op.kind {
+                out.push_str(match bin.op.kind {
                     TokenKind::Closed => "ClosedRange(",
                     TokenKind::LeftOpen => "LeftOpenRange(",
                     TokenKind::RightOpen => "RightOpenRange(",
                     TokenKind::Open => "OpenRange(",
                     _ => unreachable!(),
-                }
-                .to_string();
-                code += &self.transpile_expr(*bin.lhs);
-                code.push(',');
-                code += &self.transpile_expr(*bin.rhs);
-                code.push(')');
-                code
+                });
+                self.write_expr(*bin.lhs, out);
+                out.push(',');
+                self.write_expr(*bin.rhs, out);
+                out.push(')');
             }
             TokenKind::ContainsOp => {
                 self.load_contains_op_if_not();
-                let mut code = "contains_operator(".to_string();
-                code += &self.transpile_expr(*bin.lhs);
-                code.push(',');
-                code += &self.transpile_expr(*bin.rhs);
-                code.push(')');
-                code
+                out.push_str("contains_operator(");
+                self.write_expr(*bin.lhs, out);
+                out.push(',');
+                self.write_expr(*bin.rhs, out);
+                out.push(')');
             }
             _ => {
-                let mut code = "(".to_string();
-                code += &self.transpile_expr(*bin.lhs);
-                code.push(' ');
-                code += &bin.op.content;
-                code.push(' ');
-                code += &self.transpile_expr(*bin.rhs);
-                code += ")";
-                code
+                out.push('(');
+                self.write_expr(*bin.lhs, out);
+                out.push(' ');
+                out.push_str(&bin.op.content);
+                out.push(' ');
+                self.write_expr(*bin.rhs, out);
+                out.push(')');
             }
         }
     }
 
-    fn transpile_unaryop(&mut self, unary: UnaryOp) -> String {
-        let mut code = "".to_string();
+    fn write_unaryop(&mut self, unary: UnaryOp, out: &mut String) {
         if unary.op.kind == TokenKind::Mutate {
             self.load_mutate_op_if_not();
-            code += "mutate_operator(";
+            out.push_str("mutate_operator(");
         } else {
-            code += "(";
-            code += &unary.op.content;
+            out.push('(');
+            out.push_str(&unary.op.content);
         }
-        code += &self.transpile_expr(*unary.expr);
-        code += ")";
-        code
+        self.write_expr(*unary.expr, out);
+        out.push(')');
     }
 
-    fn transpile_acc(&mut self, acc: Accessor) -> String {
-        let mut prefix = "".to_string();
-        match acc.ref_t().derefine() {
+    fn write_acc(&mut self, acc: Accessor, out: &mut String) {
+        // class wrapper (e.g. `Nat(x)`) for accessors of builtin types
+        let class = match acc.ref_t().derefine() {
             v @ (Type::Bool | Type::Nat | Type::Int | Type::Float | Type::Str) => {
                 self.load_builtin_types_if_not();
-                prefix.push_str(&v.qual_name());
-                prefix.push('(');
+                Some(v.qual_name())
             }
             other => {
-                if let t @ ("Bytes" | "List" | "Dict" | "Set") = &other.qual_name()[..] {
+                let name = other.qual_name();
+                if matches!(&name[..], "Bytes" | "List" | "Dict" | "Set") {
                     self.load_builtin_types_if_not();
-                    prefix.push_str(t);
-                    prefix.push('(');
+                    Some(name)
+                } else {
+                    None
                 }
             }
-        }
-        let postfix = if prefix.is_empty() { "" } else { ")" };
+        };
         match acc {
             Accessor::Ident(ident) => {
                 match &ident.inspect()[..] {
@@ -794,35 +817,54 @@ impl PyScriptGenerator {
                     }
                     _ => {}
                 }
-                prefix + &Self::transpile_ident(ident) + postfix
+                if let Some(class) = &class {
+                    out.push_str(class);
+                    out.push('(');
+                }
+                out.push_str(&Self::transpile_ident(ident));
+                if class.is_some() {
+                    out.push(')');
+                }
             }
             Accessor::Attr(attr) => {
+                // the class wrapper is not applied to debinded patch methods
                 if let Some(name) = debind(&attr.ident) {
-                    demangle(&name)
+                    out.push_str(&demangle(&name));
                 } else {
-                    format!(
-                        "{prefix}({}).{}{postfix}",
-                        self.transpile_expr(*attr.obj),
-                        Self::transpile_ident(attr.ident),
-                    )
+                    if let Some(class) = &class {
+                        out.push_str(class);
+                        out.push('(');
+                    }
+                    out.push('(');
+                    self.write_expr(*attr.obj, out);
+                    out.push_str(").");
+                    out.push_str(&Self::transpile_ident(attr.ident));
+                    if class.is_some() {
+                        out.push(')');
+                    }
                 }
             }
         }
     }
 
-    fn transpile_call(&mut self, mut call: Call) -> String {
+    fn write_call(&mut self, mut call: Call, out: &mut String) {
         match call.obj.local_name() {
             Some("assert") => {
-                let mut code = format!("assert {}", self.transpile_expr(call.args.remove(0)));
+                out.push_str("assert ");
+                self.write_expr(call.args.remove(0), out);
                 if let Some(msg) = call.args.try_remove(0) {
-                    code += &format!(", {}", self.transpile_expr(msg));
+                    out.push_str(", ");
+                    self.write_expr(msg, out);
                 }
-                code
             }
-            Some("not") => format!("(not ({}))", self.transpile_expr(call.args.remove(0))),
-            Some("if" | "if!") => self.transpile_if(call),
+            Some("not") => {
+                out.push_str("(not (");
+                self.write_expr(call.args.remove(0), out);
+                out.push_str("))");
+            }
+            Some("if" | "if!") => self.write_if(call, out),
             Some("for" | "for!") => {
-                let mut code = "for ".to_string();
+                out.push_str("for ");
                 let iter = call.args.remove(0);
                 let Expr::Lambda(block) = call.args.remove(0) else {
                     todo!()
@@ -833,34 +875,37 @@ impl PyScriptGenerator {
                     ParamPattern::Discard(token) => token,
                     _ => unreachable!(),
                 };
-                code += &Self::transpile_name(
+                out.push_str(&Self::transpile_name(
                     &VisibilityModifier::Private,
                     param_token.inspect(),
                     &non_default.vi,
-                );
-                code += &format!(" in {}:\n", self.transpile_expr(iter));
-                code += &self.transpile_block(block.body, Discard);
-                code
+                ));
+                out.push_str(" in ");
+                self.write_expr(iter, out);
+                out.push_str(":\n");
+                self.write_block(block.body, Discard, out);
             }
             Some("while" | "while!") => {
-                let mut code = "while ".to_string();
+                out.push_str("while ");
                 let Expr::Lambda(mut cond) = call.args.remove(0) else {
                     todo!()
                 };
                 let Expr::Lambda(block) = call.args.remove(0) else {
                     todo!()
                 };
-                code += &format!("{}:\n", self.transpile_expr(cond.body.remove(0)));
-                code += &self.transpile_block(block.body, Discard);
-                code
+                self.write_expr(cond.body.remove(0), out);
+                out.push_str(":\n");
+                self.write_block(block.body, Discard, out);
             }
-            Some("match" | "match!") => self.transpile_match(call),
-            _ => self.transpile_simple_call(call),
+            Some("match" | "match!") => self.write_match(call, out),
+            _ => self.write_simple_call(call, out),
         }
     }
 
-    fn transpile_if(&mut self, mut call: Call) -> String {
-        let cond = self.transpile_expr(call.args.remove(0));
+    fn write_if(&mut self, mut call: Call, out: &mut String) {
+        // the condition is written after the then-clause, but must be
+        // transpiled first to keep the evaluation (side effect) order
+        let cond = self.expr_to_string(call.args.remove(0));
         let Expr::Lambda(mut then_block) = call.args.remove(0) else {
             todo!()
         };
@@ -877,29 +922,31 @@ impl PyScriptGenerator {
                 .map(|blk| blk.body.len() == 1)
                 .unwrap_or(true)
         {
-            let then = self.transpile_expr(then_block.body.remove(0));
+            self.write_expr(then_block.body.remove(0), out);
+            out.push_str(" if ");
+            out.push_str(&cond);
+            out.push_str(" else ");
             if let Some(mut else_block) = else_block {
-                let els = self.transpile_expr(else_block.body.remove(0));
-                return format!("{then} if {cond} else {els}");
+                self.write_expr(else_block.body.remove(0), out);
             } else {
-                return format!("{then} if {cond} else None");
+                out.push_str("None");
             }
+            return;
         }
         let tmp = Str::from(format!("if_tmp_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
         let tmp_func = Str::from(format!("if_tmp_func_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
-        let mut code = format!("def {tmp_func}():\n");
-        code += &format!("    if {cond}:\n");
+        let mut code = format!("def {tmp_func}():\n    if {cond}:\n");
         let level = self.level;
         self.level = 1;
-        code += &self.transpile_block(then_block.body, StoreTmp(tmp.clone()));
+        self.write_block(then_block.body, StoreTmp(tmp.clone()), &mut code);
         self.level = level;
         if let Some(else_block) = else_block {
             code += "    else:\n";
             let level = self.level;
             self.level = 1;
-            code += &self.transpile_block(else_block.body, StoreTmp(tmp.clone()));
+            self.write_block(else_block.body, StoreTmp(tmp.clone()), &mut code);
             self.level = level;
         } else {
             code += "    else:\n";
@@ -910,23 +957,25 @@ impl PyScriptGenerator {
         // ~~ NOTE: In Python, the variable environment of a function is determined at call time
         // This is a very bad design, but can be used for this code ~~
         // FIXME: this trick only works in the global namespace
-        format!("{tmp_func}()")
+        out.push_str(&tmp_func);
+        out.push_str("()");
     }
 
-    fn transpile_match(&mut self, mut call: Call) -> String {
+    fn write_match(&mut self, mut call: Call, out: &mut String) {
         let tmp = Str::from(format!("match_tmp_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
         let tmp_func = Str::from(format!("match_tmp_func_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
         let mut code = format!("def {tmp_func}():\n");
         self.level += 1;
-        code += &"    ".repeat(self.level);
+        push_indent(&mut code, self.level);
         code += "match ";
         let cond = call.args.remove(0);
-        code += &format!("{}:\n", self.transpile_expr(cond));
+        self.write_expr(cond, &mut code);
+        code += ":\n";
         while let Some(Expr::Lambda(arm)) = call.args.try_remove(0) {
             self.level += 1;
-            code += &"    ".repeat(self.level);
+            push_indent(&mut code, self.level);
             let target = arm.params.non_defaults.first().unwrap();
             match &target.raw.pat {
                 ParamPattern::VarName(param) => {
@@ -951,7 +1000,7 @@ impl PyScriptGenerator {
                                     .elems
                                     .pos_args
                                     .iter()
-                                    .map(|elem| self.transpile_expr(elem.expr.clone()))
+                                    .map(|elem| self.expr_to_string(elem.expr.clone()))
                                     .collect::<Vec<_>>()
                                     .join(" | ");
                                 code += &format!("case ({patterns}) as {param}:\n");
@@ -963,7 +1012,7 @@ impl PyScriptGenerator {
                             code += &format!("case {param}:\n");
                         }
                     }
-                    code += &self.transpile_block(arm.body, StoreTmp(tmp.clone()));
+                    self.write_block(arm.body, StoreTmp(tmp.clone()), &mut code);
                     self.level -= 1;
                 }
                 ParamPattern::Discard(_) => {
@@ -982,20 +1031,21 @@ impl PyScriptGenerator {
                             code += "case _:\n";
                         }
                     }
-                    code += &self.transpile_block(arm.body, StoreTmp(tmp.clone()));
+                    self.write_block(arm.body, StoreTmp(tmp.clone()), &mut code);
                     self.level -= 1;
                 }
                 _ => todo!(),
             }
         }
-        code += &"    ".repeat(self.level);
+        push_indent(&mut code, self.level);
         code += &format!("return {tmp}\n");
         self.prelude += &code;
         self.level -= 1;
-        format!("{tmp_func}()")
+        out.push_str(&tmp_func);
+        out.push_str("()");
     }
 
-    fn transpile_simple_call(&mut self, call: Call) -> String {
+    fn write_simple_call(&mut self, call: Call, out: &mut String) {
         let enc = if call.obj.ref_t().is_poly_meta_type() {
             Enclosure::Bracket
         } else {
@@ -1004,42 +1054,43 @@ impl PyScriptGenerator {
         let is_py_api = if let Some(attr) = &call.attr_name {
             let is_py_api = attr.is_py_api();
             if let Some(name) = debind(attr) {
-                let name = demangle(&name);
-                return format!(
-                    "{name}({}, {})",
-                    self.transpile_expr(*call.obj),
-                    self.transpile_args(call.args, is_py_api, enc)
-                );
+                out.push_str(&demangle(&name));
+                out.push('(');
+                self.write_expr(*call.obj, out);
+                out.push_str(", ");
+                self.write_args(call.args, is_py_api, enc, out);
+                out.push(')');
+                return;
             }
             is_py_api
         } else {
             call.obj.is_py_api()
         };
-        let mut code = format!("({})", self.transpile_expr(*call.obj));
+        out.push('(');
+        self.write_expr(*call.obj, out);
+        out.push(')');
         if let Some(attr) = call.attr_name {
-            code += &format!(".{}", Self::transpile_ident(attr));
+            out.push('.');
+            out.push_str(&Self::transpile_ident(attr));
         }
-        code += &self.transpile_args(call.args, is_py_api, enc);
-        code
+        self.write_args(call.args, is_py_api, enc, out);
     }
 
-    fn transpile_args(&mut self, mut args: Args, is_py_api: bool, enc: Enclosure) -> String {
-        let mut code = String::new();
-        code.push(enc.open());
+    fn write_args(&mut self, mut args: Args, is_py_api: bool, enc: Enclosure, out: &mut String) {
+        out.push(enc.open());
         while let Some(arg) = args.try_remove_pos(0) {
-            code += &self.transpile_expr(arg.expr);
-            code.push(',');
+            self.write_expr(arg.expr, out);
+            out.push(',');
         }
         while let Some(arg) = args.try_remove_kw(0) {
             let escape = if is_py_api { "" } else { "__" };
-            code += &format!(
-                "{}{escape}={},",
-                arg.keyword.content,
-                self.transpile_expr(arg.expr)
-            );
+            out.push_str(&arg.keyword.content);
+            out.push_str(escape);
+            out.push('=');
+            self.write_expr(arg.expr, out);
+            out.push(',');
         }
-        code.push(enc.close());
-        code
+        out.push(enc.close());
     }
 
     fn transpile_ident(ident: Identifier) -> String {
@@ -1066,20 +1117,19 @@ impl PyScriptGenerator {
         }
     }
 
-    fn transpile_params(&mut self, params: Params) -> String {
-        let mut code = String::new();
+    fn write_params(&mut self, params: Params, out: &mut String) {
         for non_default in params.non_defaults {
             match non_default.raw.pat {
                 ParamPattern::VarName(param) => {
-                    code += &Self::transpile_name(
+                    out.push_str(&Self::transpile_name(
                         &VisibilityModifier::Private,
                         param.inspect(),
                         &non_default.vi,
-                    );
-                    code += ",";
+                    ));
+                    out.push(',');
                 }
                 ParamPattern::Discard(_) => {
-                    code += &format!("_{},", self.fresh_var_n);
+                    write!(out, "_{},", self.fresh_var_n).unwrap();
                     self.fresh_var_n += 1;
                 }
                 _ => unreachable!(),
@@ -1088,147 +1138,144 @@ impl PyScriptGenerator {
         for default in params.defaults {
             match default.sig.raw.pat {
                 ParamPattern::VarName(param) => {
-                    code += &format!(
-                        "{} = {},",
-                        Self::transpile_name(
-                            &VisibilityModifier::Private,
-                            param.inspect(),
-                            &default.sig.vi
-                        ),
-                        self.transpile_expr(default.default_val),
-                    );
+                    out.push_str(&Self::transpile_name(
+                        &VisibilityModifier::Private,
+                        param.inspect(),
+                        &default.sig.vi,
+                    ));
+                    out.push_str(" = ");
+                    self.write_expr(default.default_val, out);
+                    out.push(',');
                 }
                 ParamPattern::Discard(_) => {
-                    let n = self.fresh_var_n;
-                    code += &format!("_{n} = {},", self.transpile_expr(default.default_val),);
+                    write!(out, "_{} = ", self.fresh_var_n).unwrap();
                     self.fresh_var_n += 1;
+                    self.write_expr(default.default_val, out);
+                    out.push(',');
                 }
                 _ => unreachable!(),
             }
         }
-        code
     }
 
-    fn transpile_block(&mut self, block: Block, last_op: LastLineOperation) -> String {
+    fn write_block(&mut self, block: Block, last_op: LastLineOperation, out: &mut String) {
         self.level += 1;
-        let mut code = String::new();
         let last = block.len().saturating_sub(1);
         for (i, chunk) in block.into_iter().enumerate() {
-            code += &"    ".repeat(self.level);
+            push_indent(out, self.level);
             if i == last {
                 match last_op {
                     Return => {
-                        code += "return ";
+                        out.push_str("return ");
                     }
                     Discard => {}
                     StoreTmp(ref tmp) => {
-                        code += &format!("{tmp} = ");
+                        out.push_str(tmp);
+                        out.push_str(" = ");
                     }
                 }
             }
-            let expr = self.transpile_expr(chunk);
-            if !expr.is_empty() {
-                code += &expr;
-                code.push('\n');
+            let start = out.len();
+            self.write_expr(chunk, out);
+            if out.len() > start {
+                out.push('\n');
             }
         }
         self.level -= 1;
-        code
     }
 
-    fn transpile_lambda(&mut self, lambda: Lambda) -> String {
+    fn write_lambda(&mut self, lambda: Lambda, out: &mut String) {
         if lambda.body.len() > 1 {
             let name = format!("lambda_{}__", self.fresh_var_n);
             self.fresh_var_n += 1;
-            let mut code = format!("def {name}({}):\n", self.transpile_params(lambda.params));
-            code += &self.transpile_block(lambda.body, Return);
+            let mut code = format!("def {name}(");
+            self.write_params(lambda.params, &mut code);
+            code += "):\n";
+            self.write_block(lambda.body, Return, &mut code);
             self.prelude += &code;
-            name
+            out.push_str(&name);
         } else {
-            let mut code = format!("(lambda {}:", self.transpile_params(lambda.params));
-            code += &self.transpile_block(lambda.body, Discard);
-            code.pop(); // \n
-            code.push(')');
-            code
+            out.push_str("(lambda ");
+            self.write_params(lambda.params, out);
+            out.push(':');
+            self.write_block(lambda.body, Discard, out);
+            out.pop(); // \n
+            out.push(')');
         }
     }
 
     // TODO: trait definition
-    fn transpile_def(&mut self, mut def: Def) -> String {
+    fn write_def(&mut self, mut def: Def, out: &mut String) {
         // HACK: allow reference to local variables in tmp functions
-        let mut code = if self.level == 0 {
-            "".to_string()
-        } else {
-            let name = Self::transpile_ident(def.sig.ident().clone());
-            if self.globals.contains(&name) {
-                "".to_string()
-            } else {
-                self.globals.insert(name.clone());
-                format!("global {name}\n{}", "    ".repeat(self.level))
+        if self.level > 0 {
+            let ident = def.sig.ident();
+            let name = Self::transpile_name(ident.vis(), ident.inspect(), &ident.vi);
+            if !self.globals.contains(&name) {
+                out.push_str("global ");
+                out.push_str(&name);
+                out.push('\n');
+                push_indent(out, self.level);
+                self.globals.insert(name);
             }
-        };
+        }
         match def.sig {
             Signature::Var(var) => {
-                code += &format!("{} = ", Self::transpile_ident(var.ident));
+                out.push_str(&Self::transpile_ident(var.ident));
+                out.push_str(" = ");
                 if def.body.block.len() > 1 {
                     let name = format!("instant_block_{}__", self.fresh_var_n);
                     self.fresh_var_n += 1;
                     let mut instant = format!("def {name}():\n");
-                    instant += &self.transpile_block(def.body.block, Return);
+                    self.write_block(def.body.block, Return, &mut instant);
                     self.prelude += &instant;
-                    code + &format!("{name}()")
+                    out.push_str(&name);
+                    out.push_str("()");
                 } else {
                     let expr = def.body.block.remove(0);
-                    code += &self.transpile_expr(expr);
-                    code
+                    self.write_expr(expr, out);
                 }
             }
             Signature::Subr(subr) => {
-                code += &format!(
-                    "def {}({}):\n",
-                    Self::transpile_ident(subr.ident),
-                    self.transpile_params(subr.params)
-                );
-                code += &self.transpile_block(def.body.block, Return);
-                code
+                out.push_str("def ");
+                out.push_str(&Self::transpile_ident(subr.ident));
+                out.push('(');
+                self.write_params(subr.params, out);
+                out.push_str("):\n");
+                self.write_block(def.body.block, Return, out);
             }
             Signature::Glob(_) => todo!(),
         }
     }
 
-    fn transpile_classdef(&mut self, classdef: ClassDef) -> String {
+    fn write_classdef(&mut self, classdef: ClassDef, out: &mut String) {
         let class_name = Self::transpile_ident(classdef.sig.into_ident());
-        let mut code = format!("class {class_name}():\n");
-        let mut init_method = format!(
-            "{}def __init__(self, param__):\n",
-            "    ".repeat(self.level + 1)
-        );
+        writeln!(out, "class {class_name}():").unwrap();
+        push_indent(out, self.level + 1);
+        out.push_str("def __init__(self, param__):\n");
         match classdef.constructor.non_default_params().unwrap()[0].typ() {
             Type::Record(rec) => {
                 for field in rec.keys() {
                     let vis = if field.vis.is_private() { "__" } else { "" };
-                    init_method += &format!(
-                        "{}self.{}{vis} = param__.{}{vis}\n",
-                        "    ".repeat(self.level + 2),
-                        field.symbol,
-                        field.symbol,
-                    );
+                    push_indent(out, self.level + 2);
+                    writeln!(
+                        out,
+                        "self.{}{vis} = param__.{}{vis}",
+                        field.symbol, field.symbol
+                    )
+                    .unwrap();
                 }
             }
             other => todo!("{other}"),
         }
-        code += &init_method;
         if classdef.need_to_gen_new {
-            code += &"    ".repeat(self.level + 1);
-            code += &format!("def new(x): return {class_name}.__call__(x)\n");
+            push_indent(out, self.level + 1);
+            writeln!(out, "def new(x): return {class_name}.__call__(x)").unwrap();
         }
         let methods = ClassDef::take_all_methods(classdef.methods_list);
-        code += &self.transpile_block(methods, Discard);
-        code
+        self.write_block(methods, Discard, out);
     }
 
-    fn transpile_patchdef(&mut self, patch_def: PatchDef) -> String {
-        let mut code = String::new();
+    fn write_patchdef(&mut self, patch_def: PatchDef, out: &mut String) {
         for chunk in patch_def.methods.into_iter() {
             let Expr::Def(mut def) = chunk else { todo!() };
             let name = format!(
@@ -1237,26 +1284,26 @@ impl PyScriptGenerator {
                 demangle(&def.sig.ident().to_string_notype()),
             );
             def.sig.ident_mut().raw.name = VarName::from_str(Str::from(name));
-            code += &"    ".repeat(self.level);
-            code += &self.transpile_def(def);
-            code.push('\n');
+            push_indent(out, self.level);
+            self.write_def(def, out);
+            out.push('\n');
         }
-        code
     }
 
-    fn transpile_attrdef(&mut self, mut redef: ReDef) -> String {
-        let mut code = format!("{} = ", self.transpile_expr(Expr::Accessor(redef.attr)));
+    fn write_attrdef(&mut self, mut redef: ReDef, out: &mut String) {
+        self.write_expr(Expr::Accessor(redef.attr), out);
+        out.push_str(" = ");
         if redef.block.len() > 1 {
             let name = format!("instant_block_{}__", self.fresh_var_n);
             self.fresh_var_n += 1;
             let mut instant = format!("def {name}():\n");
-            instant += &self.transpile_block(redef.block, Return);
+            self.write_block(redef.block, Return, &mut instant);
             self.prelude += &instant;
-            code + &format!("{name}()")
+            out.push_str(&name);
+            out.push_str("()");
         } else {
             let expr = redef.block.remove(0);
-            code += &self.transpile_expr(expr);
-            code
+            self.write_expr(expr, out);
         }
     }
 }

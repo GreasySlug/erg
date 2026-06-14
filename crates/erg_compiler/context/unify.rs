@@ -2223,7 +2223,9 @@ impl<L: Locational> Unifier<'_, '_, '_, L> {
                             return None;
                         }
                     }
-                    debug_assert!(t.has_no_qvar(), "{t} has qvar");
+                    if !t.has_no_qvar() {
+                        return None;
+                    }
                     return Some(t.clone());
                 }
             }

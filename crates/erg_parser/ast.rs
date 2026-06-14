@@ -1273,23 +1273,89 @@ impl NormalTuple {
     }
 }
 
+#[pyclass]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TupleComprehension {
+    pub l_paren: Token,
+    pub r_paren: Token,
+    pub layout: Option<Box<Expr>>,
+    pub generators: Vec<(Identifier, Expr)>,
+    pub guard: Option<Box<Expr>>,
+}
+
+impl NestedDisplay for TupleComprehension {
+    fn fmt_nest(&self, f: &mut fmt::Formatter<'_>, _level: usize) -> fmt::Result {
+        let mut generators = String::new();
+        for (name, gen) in self.generators.iter() {
+            write!(generators, "{name} <- {gen}; ")?;
+        }
+        write!(
+            f,
+            "({}{}{})",
+            fmt_option!(self.layout, post " | "),
+            generators,
+            fmt_option!(pre " | ", &self.guard)
+        )
+    }
+}
+
+impl_display_from_nested!(TupleComprehension);
+impl_locational!(TupleComprehension, l_paren, r_paren);
+
+impl Traversable for TupleComprehension {
+    type Target = Expr;
+    fn traverse(&self, f: &mut impl FnMut(&Self::Target)) {
+        if let Some(layout) = &self.layout {
+            f(layout);
+        }
+        for (_, gen) in &self.generators {
+            f(gen);
+        }
+        if let Some(guard) = &self.guard {
+            f(guard);
+        }
+    }
+}
+
+#[pymethods]
+impl TupleComprehension {
+    #[staticmethod]
+    #[pyo3(signature = (l_paren, r_paren, layout, generators, guard=None))]
+    pub fn new(
+        l_paren: Token,
+        r_paren: Token,
+        layout: Option<Expr>,
+        generators: Vec<(Identifier, Expr)>,
+        guard: Option<Expr>,
+    ) -> Self {
+        Self {
+            l_paren,
+            r_paren,
+            layout: layout.map(Box::new),
+            generators,
+            guard: guard.map(Box::new),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Tuple {
     Normal(NormalTuple),
-    // Comprehension(TupleComprehension),
+    Comprehension(TupleComprehension),
 }
 
-impl_nested_display_for_enum!(Tuple; Normal);
-impl_display_for_enum!(Tuple; Normal);
-impl_locational_for_enum!(Tuple; Normal);
-impl_into_py_for_enum!(Tuple; Normal);
-impl_from_py_for_enum!(Tuple; Normal(NormalTuple));
+impl_nested_display_for_enum!(Tuple; Normal, Comprehension);
+impl_display_for_enum!(Tuple; Normal, Comprehension);
+impl_locational_for_enum!(Tuple; Normal, Comprehension);
+impl_into_py_for_enum!(Tuple; Normal, Comprehension);
+impl_from_py_for_enum!(Tuple; Normal(NormalTuple), Comprehension(TupleComprehension));
 
 impl Traversable for Tuple {
     type Target = Expr;
     fn traverse(&self, f: &mut impl FnMut(&Self::Target)) {
         match self {
             Self::Normal(tuple) => tuple.traverse(f),
+            Self::Comprehension(tuple) => tuple.traverse(f),
         }
     }
 }
@@ -1298,6 +1364,7 @@ impl Tuple {
     pub fn paren(&self) -> Option<&(Location, Location)> {
         match self {
             Self::Normal(tuple) => tuple.elems.paren.as_ref(),
+            Self::Comprehension(_) => None,
         }
     }
 }
@@ -1607,7 +1674,7 @@ impl From<MixedRecord> for NormalRecord {
             match attr {
                 RecordAttrOrIdent::Ident(ident) => {
                     let pat = VarPattern::Ident(ident.clone());
-                    let sig = Signature::Var(VarSignature::new(pat, None));
+                    let sig = Signature::Var(VarSignature::new(pat, None, None));
                     let block = Block::new(vec![Expr::Accessor(Accessor::Ident(ident))]);
                     let body = DefBody::new(Token::DUMMY, block, DefId(0));
                     let def = Def::new(sig, body);
@@ -2083,11 +2150,11 @@ impl BinOp {
     }
 
     pub fn set_lhs(&mut self, lhs: Expr) {
-        self.args[0] = Box::new(lhs);
+        *self.args[0] = lhs;
     }
 
     pub fn set_rhs(&mut self, rhs: Expr) {
-        self.args[1] = Box::new(rhs);
+        *self.args[1] = rhs;
     }
 }
 
@@ -2142,7 +2209,7 @@ impl UnaryOp {
     }
 
     pub fn set_value(&mut self, value: Expr) {
-        self.args[0] = Box::new(value);
+        *self.args[0] = value;
     }
 }
 
@@ -2242,7 +2309,7 @@ impl Call {
 
     #[setter]
     pub fn set_obj(&mut self, obj: Expr) {
-        self.obj = Box::new(obj);
+        *self.obj = obj;
     }
 
     #[getter]
@@ -5195,11 +5262,22 @@ impl VarPattern {
 pub struct VarSignature {
     pub pat: VarPattern,
     pub t_spec: Option<Box<TypeSpecWithOp>>,
+    pub bounds: TypeBoundSpecs,
 }
 
 impl NestedDisplay for VarSignature {
     fn fmt_nest(&self, f: &mut fmt::Formatter<'_>, _level: usize) -> fmt::Result {
-        write!(f, "{}{}", self.pat, fmt_option!(pre ": ", self.t_spec))
+        if self.bounds.is_empty() {
+            write!(f, "{}{}", self.pat, fmt_option!(pre ": ", self.t_spec))
+        } else {
+            write!(
+                f,
+                "{}|{}|{}",
+                self.pat,
+                self.bounds,
+                fmt_option!(pre ": ", self.t_spec)
+            )
+        }
     }
 }
 
@@ -5209,6 +5287,8 @@ impl Locational for VarSignature {
     fn loc(&self) -> Location {
         if let Some(t_spec) = self.t_spec.as_deref() {
             Location::concat(&self.pat, t_spec)
+        } else if !self.bounds.is_empty() {
+            Location::concat(&self.pat, &self.bounds)
         } else {
             self.pat.loc()
         }
@@ -5232,10 +5312,16 @@ impl VarSignature {
     }
 
     #[staticmethod]
-    pub fn new(pat: VarPattern, t_spec: Option<TypeSpecWithOp>) -> Self {
+    #[pyo3(signature = (pat, t_spec=None, bounds=None))]
+    pub fn new(
+        pat: VarPattern,
+        t_spec: Option<TypeSpecWithOp>,
+        bounds: Option<TypeBoundSpecs>,
+    ) -> Self {
         Self {
             pat,
             t_spec: t_spec.map(Box::new),
+            bounds: bounds.unwrap_or_else(TypeBoundSpecs::empty),
         }
     }
 
@@ -6250,7 +6336,7 @@ impl Signature {
     }
 
     pub fn new_var(ident: Identifier) -> Self {
-        Self::Var(VarSignature::new(VarPattern::Ident(ident), None))
+        Self::Var(VarSignature::new(VarPattern::Ident(ident), None, None))
     }
 
     pub fn new_subr(ident: Identifier, params: Params) -> Self {

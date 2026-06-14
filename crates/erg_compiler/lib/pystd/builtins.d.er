@@ -231,3 +231,12 @@ assert set() == {}
 assert set([1, 2]) == {1, 2}
 '''
 .set: |T| (iterable := Iterable(T)) -> {T; _}
+
+'''
+Convert `iterable` into a tuple.
+'''
+'''erg
+assert tuple() == ()
+assert tuple([1, 2]) == (1, 2)
+'''
+.tuple: |T| (iterable := Iterable(T)) -> HomogenousTuple T

@@ -234,6 +234,12 @@ impl Context {
             out_list_t(T.clone(), TyParam::erased(Nat)),
         )
         .quantify();
+        let t_tuple = no_var_func(
+            vec![],
+            vec![kw(KW_ITERABLE, poly(ITERABLE, vec![ty_tp(T.clone())]))],
+            poly(HOMOGENOUS_TUPLE, vec![ty_tp(T.clone())]),
+        )
+        .quantify();
         let t_log = func(
             vec![],
             Some(kw(KW_OBJECTS, ref_(Obj))),
@@ -746,6 +752,7 @@ impl Context {
             Some(FUNC_SUM),
             None,
         );
+        self.register_py_builtin(FUNC_TUPLE, t_tuple, Some(FUNC_TUPLE), 242);
         self.register_builtin_py_impl(FUNC_VARS, t_vars, Immutable, vis.clone(), Some(FUNC_VARS));
         self.register_py_builtin_const(
             FUNC_ZIP,

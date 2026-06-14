@@ -32,7 +32,7 @@ impl Parser {
                 let list_pat = self
                     .convert_list_to_list_pat(list)
                     .map_err(|_| self.stack_dec(fn_name!()))?;
-                let var = VarSignature::new(VarPattern::List(list_pat), None);
+                let var = VarSignature::new(VarPattern::List(list_pat), None, None);
                 debug_exit_info!(self);
                 Ok(Signature::Var(var))
             }
@@ -40,7 +40,7 @@ impl Parser {
                 let record_pat = self
                     .convert_record_to_record_pat(record)
                     .map_err(|_| self.stack_dec(fn_name!()))?;
-                let var = VarSignature::new(VarPattern::Record(record_pat), None);
+                let var = VarSignature::new(VarPattern::Record(record_pat), None, None);
                 debug_exit_info!(self);
                 Ok(Signature::Var(var))
             }
@@ -48,7 +48,7 @@ impl Parser {
                 let data_pack = self
                     .convert_data_pack_to_data_pack_pat(pack)
                     .map_err(|_| self.stack_dec(fn_name!()))?;
-                let var = VarSignature::new(VarPattern::DataPack(data_pack), None);
+                let var = VarSignature::new(VarPattern::DataPack(data_pack), None, None);
                 debug_exit_info!(self);
                 Ok(Signature::Var(var))
             }
@@ -56,7 +56,7 @@ impl Parser {
                 let tuple_pat = self
                     .convert_tuple_to_tuple_pat(tuple)
                     .map_err(|_| self.stack_dec(fn_name!()))?;
-                let var = VarSignature::new(VarPattern::Tuple(tuple_pat), None);
+                let var = VarSignature::new(VarPattern::Tuple(tuple_pat), None, None);
                 debug_exit_info!(self);
                 Ok(Signature::Var(var))
             }
@@ -86,7 +86,15 @@ impl Parser {
                     VarPattern::Ident(ident)
                 };
                 debug_exit_info!(self);
-                Ok(VarSignature::new(pat, None))
+                Ok(VarSignature::new(pat, None, None))
+            }
+            Accessor::TypeApp(t_app) => {
+                let (ident, bounds) = self
+                    .convert_accessor_to_ident(Accessor::TypeApp(t_app))
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                let pat = VarPattern::Ident(ident);
+                debug_exit_info!(self);
+                Ok(VarSignature::new(pat, None, Some(bounds)))
             }
             other => {
                 let err = ParseError::simple_syntax_error(line!() as usize, other.loc());
@@ -203,7 +211,8 @@ impl Parser {
                     .map(|attr_or_ident| match attr_or_ident {
                         RecordAttrOrIdent::Attr(attr) => self.convert_def_to_var_record_attr(attr),
                         RecordAttrOrIdent::Ident(ident) => {
-                            let rhs = VarSignature::new(VarPattern::Ident(ident.clone()), None);
+                            let rhs =
+                                VarSignature::new(VarPattern::Ident(ident.clone()), None, None);
                             Ok(VarRecordAttr::new(ident, rhs))
                         }
                     })
@@ -274,6 +283,12 @@ impl Parser {
                 debug_exit_info!(self);
                 Ok(tuple)
             }
+            Tuple::Comprehension(comp) => {
+                let err = ParseError::simple_syntax_error(line!() as usize, comp.loc());
+                self.errs.push(err);
+                debug_exit_info!(self);
+                Err(())
+            }
         }
     }
 
@@ -284,7 +299,7 @@ impl Parser {
             .map_err(|_| self.stack_dec(fn_name!()))?;
         let sig = match sig {
             Signature::Var(var) => {
-                let var = VarSignature::new(var.pat, Some(tasc.t_spec));
+                let var = VarSignature::new(var.pat, Some(tasc.t_spec), Some(var.bounds));
                 Signature::Var(var)
             }
             Signature::Subr(subr) => {
@@ -709,6 +724,12 @@ impl Parser {
                 debug_exit_info!(self);
                 Ok(ParamTuplePattern::new(params))
             }
+            Tuple::Comprehension(comp) => {
+                let err = ParseError::simple_syntax_error(line!() as usize, comp.loc());
+                self.errs.push(err);
+                debug_exit_info!(self);
+                Err(())
+            }
         }
     }
 
@@ -875,6 +896,12 @@ impl Parser {
                 }
                 debug_exit_info!(self);
                 Ok(params)
+            }
+            Tuple::Comprehension(comp) => {
+                let err = ParseError::simple_syntax_error(line!() as usize, comp.loc());
+                self.errs.push(err);
+                debug_exit_info!(self);
+                Err(())
             }
         }
     }

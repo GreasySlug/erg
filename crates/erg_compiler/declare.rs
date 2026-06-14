@@ -348,6 +348,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 let elems = hir::Args::pos_only(elems, paren);
                 Ok(hir::Tuple::Normal(hir::NormalTuple::new(elems)))
             }
+            // TODO:
+            ast::Tuple::Comprehension(_) => Ok(hir::Tuple::Normal(hir::NormalTuple::new(
+                hir::Args::empty(),
+            ))),
         }
     }
 
@@ -818,7 +822,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     ctx
                 };
                 let vi = ctx.assign_var_sig(
-                    &ast::VarSignature::new(ast::VarPattern::Ident(attr.ident.clone()), None),
+                    &ast::VarSignature::new(ast::VarPattern::Ident(attr.ident.clone()), None, None),
                     &t,
                     ast::DefId(0),
                     None,
@@ -1005,7 +1009,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             _ => (t.clone(), None),
         };
         self.module.context.assign_var_sig(
-            &ast::VarSignature::new(ast::VarPattern::Ident(ident.clone()), None),
+            &ast::VarSignature::new(ast::VarPattern::Ident(ident.clone()), None, None),
             &t,
             ast::DefId(0),
             None,

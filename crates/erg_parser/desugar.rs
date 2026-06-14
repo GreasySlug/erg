@@ -19,9 +19,9 @@ use crate::ast::{
     NonDefaultParamSignature, NormalDict, NormalList, NormalRecord, NormalSet, NormalTuple,
     ParamPattern, ParamRecordAttr, ParamTuplePattern, Params, PatchDef, PosArg, ReDef, Record,
     RecordAttrOrIdent, RecordAttrs, RecordTypeSpec, Set as astSet, SetComprehension, SetWithLength,
-    Signature, SubrSignature, Tuple, TupleTypeSpec, TypeAppArgs, TypeAppArgsKind, TypeBoundSpecs,
-    TypeSpec, TypeSpecWithOp, UnaryOp, VarName, VarPattern, VarRecordAttr, VarSignature,
-    VisModifierSpec, AST,
+    Signature, SubrSignature, Tuple, TupleComprehension, TupleTypeSpec, TypeAppArgs,
+    TypeAppArgsKind, TypeBoundSpecs, TypeSpec, TypeSpecWithOp, UnaryOp, VarName, VarPattern,
+    VarRecordAttr, VarSignature, VisModifierSpec, AST,
 };
 use crate::token::{Token, TokenKind, COLON, DOT};
 
@@ -229,6 +229,23 @@ impl Desugarer {
                     let new_tup = Args::pos_only(elems, paren);
                     let tup = NormalTuple::new(new_tup);
                     Expr::Tuple(Tuple::Normal(tup))
+                }
+                Tuple::Comprehension(tup) => {
+                    let layout = tup.layout.map(|ex| desugar(*ex));
+                    let generators = tup
+                        .generators
+                        .into_iter()
+                        .map(|(ident, gen)| (ident, desugar(gen)))
+                        .collect();
+                    let guard = tup.guard.map(|ex| desugar(*ex));
+                    let tup = TupleComprehension::new(
+                        tup.l_paren,
+                        tup.r_paren,
+                        layout,
+                        generators,
+                        guard,
+                    );
+                    Expr::Tuple(Tuple::Comprehension(tup))
                 }
             },
             Expr::Set(set) => match set {
@@ -677,6 +694,7 @@ impl Desugarer {
         let buf_sig = Signature::Var(VarSignature::new(
             VarPattern::Ident(Identifier::private_with_loc(Str::rc(&buf_name), loc)),
             t_spec,
+            None,
         ));
         (buf_name, buf_sig)
     }
@@ -1061,7 +1079,7 @@ impl Desugarer {
             .map(|attr_or_ident| match attr_or_ident {
                 RecordAttrOrIdent::Attr(def) => def,
                 RecordAttrOrIdent::Ident(ident) => {
-                    let var = VarSignature::new(VarPattern::Ident(ident.clone()), None);
+                    let var = VarSignature::new(VarPattern::Ident(ident.clone()), None, None);
                     let sig = Signature::Var(var);
                     let body = DefBody::new(
                         Token::from_str(TokenKind::Assign, "="),
@@ -1473,6 +1491,7 @@ impl Desugarer {
                     Signature::Var(VarSignature::new(
                         VarPattern::Ident(ident),
                         sig.t_spec.clone(),
+                        None,
                     )),
                     body,
                 );
@@ -1518,6 +1537,7 @@ impl Desugarer {
                     Signature::Var(VarSignature::new(
                         VarPattern::Ident(Identifier::private(Str::from(&buf_name))),
                         sig.t_spec.clone(),
+                        None,
                     )),
                     body,
                 );
@@ -1558,6 +1578,7 @@ impl Desugarer {
                     Signature::Var(VarSignature::new(
                         VarPattern::Ident(Identifier::private(Str::from(&buf_name))),
                         sig.t_spec.clone(),
+                        None,
                     )),
                     body,
                 );
@@ -1635,7 +1656,7 @@ impl Desugarer {
                     guards.extend(Self::type_guard(name.inspect().clone(), t_spec, name));
                 }
                 let ident = Identifier::new(VisModifierSpec::Private, name.clone());
-                let v = VarSignature::new(VarPattern::Ident(ident), sig.t_spec.clone());
+                let v = VarSignature::new(VarPattern::Ident(ident), sig.t_spec.clone(), None);
                 let def = Def::new(Signature::Var(v), body);
                 guards.push(GuardClause::Bind(def));
                 guards
@@ -1668,11 +1689,6 @@ impl Desugarer {
     }
 
     fn _desugar_self_inner(_expr: Expr) -> Expr {
-        todo!()
-    }
-
-    /// `F(I | I > 0)` -> `F(I: {I: Int | I > 0})`
-    fn _desugar_refinement_pattern(_mod: Module) -> Module {
         todo!()
     }
 
@@ -1781,7 +1797,7 @@ impl Desugarer {
 
     /// ```erg
     /// [y | x <- xs] ==> list(map(x -> y, xs))
-    /// [(a, b) | x <- xs; y <- ys] ==> list(map(((x, y),) -> (a, b), itertools.product(xs, ys)))
+    /// [(a, b) | x <- xs; y <- ys] ==> list(map(x -> list(map(y -> (a, b), ys)), xs).reduce([], (a, b) -> a + b))
     /// {k: v | x <- xs} ==> dict(map(x -> (k, v), xs))
     /// {y | x <- xs} ==> set(map(x -> y, xs))
     /// {x <- xs | x <= 10} ==> set(filter(x -> x <= 10, xs))
@@ -1789,48 +1805,112 @@ impl Desugarer {
     /// ```
     fn rec_desugar_comprehension(expr: Expr) -> Expr {
         match expr {
-            Expr::List(List::Comprehension(mut comp)) => {
+            Expr::List(List::Comprehension(comp)) => {
                 debug_power_assert!(comp.generators.len(), >, 0);
-                if comp.generators.len() != 1 {
-                    return Expr::List(List::Comprehension(comp));
-                }
-                let (ident, iter) = comp.generators.remove(0);
-                let iterator = Self::desugar_layout_and_guard(ident, iter, comp.layout, comp.guard);
-                Identifier::auto("list".into())
-                    .call1(iterator.into())
-                    .into()
+                let iterator = Self::desugar_generators(comp.generators, comp.layout, comp.guard);
+                Identifier::auto("list".into()).call1(iterator).into()
             }
-            Expr::Dict(Dict::Comprehension(mut comp)) => {
+            Expr::Dict(Dict::Comprehension(comp)) => {
                 debug_power_assert!(comp.generators.len(), >, 0);
-                if comp.generators.len() != 1 {
-                    return Expr::Dict(Dict::Comprehension(comp));
-                }
-                let (ident, iter) = comp.generators.remove(0);
-                let params = Params::single(NonDefaultParamSignature::new(
-                    ParamPattern::VarName(ident.name),
-                    None,
-                ));
-                let sig = LambdaSignature::new(params, None, TypeBoundSpecs::empty());
+                let kv = *comp.kv;
                 let tuple = Tuple::Normal(NormalTuple::new(Args::pos_only(
-                    vec![PosArg::new(comp.kv.key), PosArg::new(comp.kv.value)],
+                    vec![PosArg::new(kv.key), PosArg::new(kv.value)],
                     None,
                 )));
-                let body = Block::new(vec![tuple.into()]);
-                let lambda = Lambda::new(sig, Token::DUMMY, body, DefId(0));
-                let map = Identifier::private("map".into()).call2(lambda.into(), iter);
-                Identifier::auto("dict".into()).call1(map.into()).into()
+                let iterator = Self::desugar_generators(
+                    comp.generators,
+                    Some(Box::new(tuple.into())),
+                    comp.guard,
+                );
+                Identifier::auto("dict".into()).call1(iterator).into()
             }
-            Expr::Set(astSet::Comprehension(mut comp)) => {
+            Expr::Set(astSet::Comprehension(comp)) => {
                 debug_power_assert!(comp.generators.len(), >, 0);
-                if comp.generators.len() != 1 {
-                    return Expr::Set(astSet::Comprehension(comp));
-                }
-                let (ident, iter) = comp.generators.remove(0);
-                let iterator = Self::desugar_layout_and_guard(ident, iter, comp.layout, comp.guard);
-                Identifier::auto("set".into()).call1(iterator.into()).into()
+                let iterator = Self::desugar_generators(comp.generators, comp.layout, comp.guard);
+                Identifier::auto("set".into()).call1(iterator).into()
+            }
+            Expr::Tuple(Tuple::Comprehension(comp)) => {
+                debug_power_assert!(comp.generators.len(), >, 0);
+                let iterator = Self::desugar_generators(comp.generators, comp.layout, comp.guard);
+                Identifier::auto("tuple".into()).call1(iterator).into()
             }
             expr => Self::perform_desugar(Self::rec_desugar_comprehension, expr),
         }
+    }
+
+    /// Desugars the generator/guard part of a comprehension into a flat iterable expression.
+    /// A single generator becomes `map`/`filter` calls (see `desugar_layout_and_guard`).
+    /// Multiple generators are nested `map`s (the guard goes to the innermost level,
+    /// where all generator variables are in scope), and each outer level is flattened
+    /// by concatenating the inner lists:
+    /// `elem | x <- xs; y <- ys` ==> `map(x -> list(map(y -> elem, ys)), xs).reduce([], (a, b) -> a + b)`
+    fn desugar_generators(
+        generators: Vec<(Identifier, Expr)>,
+        layout: Option<Box<Expr>>,
+        guard: Option<Box<Expr>>,
+    ) -> Expr {
+        let layout = layout.map(|l| Box::new(Self::rec_desugar_comprehension(*l)));
+        let guard = guard.map(|g| Box::new(Self::rec_desugar_comprehension(*g)));
+        let mut generators = generators
+            .into_iter()
+            .map(|(ident, iter)| (ident, Self::rec_desugar_comprehension(iter)))
+            .collect::<Vec<_>>();
+        let (ident, iter) = generators.pop().unwrap();
+        let innermost = Self::desugar_layout_and_guard(ident, iter, layout, guard);
+        if generators.is_empty() {
+            return innermost.into();
+        }
+        let mut inner: Expr = Identifier::auto("list".into())
+            .call1(innermost.into())
+            .into();
+        while let Some((ident, iter)) = generators.pop() {
+            let params = Params::single(NonDefaultParamSignature::new(
+                ParamPattern::VarName(ident.name),
+                None,
+            ));
+            let sig = LambdaSignature::new(params, None, TypeBoundSpecs::empty());
+            let body = Block::new(vec![inner]);
+            let lambda = Lambda::new(sig, Token::DUMMY, body, DefId(0));
+            let mapped: Expr = Identifier::auto("map".into())
+                .call2(lambda.into(), iter)
+                .into();
+            inner = Self::desugar_concat_lists(mapped);
+        }
+        inner
+    }
+
+    /// `iterable` ==> `iterable.reduce([], (%a, %b) -> %a + %b)`
+    fn desugar_concat_lists(iterable: Expr) -> Expr {
+        let empty_list = Expr::List(List::Normal(NormalList::new(
+            Token::dummy(TokenKind::LSqBr, "["),
+            Token::dummy(TokenKind::RSqBr, "]"),
+            Args::empty(),
+        )));
+        let lhs = Identifier::private("%a".into());
+        let rhs = Identifier::private("%b".into());
+        let params = Params::new(
+            vec![
+                NonDefaultParamSignature::new(ParamPattern::VarName(lhs.name.clone()), None),
+                NonDefaultParamSignature::new(ParamPattern::VarName(rhs.name.clone()), None),
+            ],
+            None,
+            vec![],
+            None,
+            None,
+        );
+        let sig = LambdaSignature::new(params, None, TypeBoundSpecs::empty());
+        let concat = Expr::BinOp(BinOp::new(
+            Token::dummy(TokenKind::Plus, "+"),
+            Expr::Accessor(Accessor::Ident(lhs)),
+            Expr::Accessor(Accessor::Ident(rhs)),
+        ));
+        let body = Block::new(vec![concat]);
+        let lambda = Lambda::new(sig, Token::DUMMY, body, DefId(0));
+        iterable.method_call2(
+            Identifier::public("reduce".into()),
+            empty_list,
+            lambda.into(),
+        )
     }
 
     fn desugar_layout_and_guard(

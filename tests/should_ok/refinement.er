@@ -9,3 +9,17 @@ check "abc"
 
 dic as Dict({{111}: {222}}) = {111: 222}
 _: {222} = dic[111]
+
+# refinement pattern: `X: T | Pred` == `X: {X: T | Pred}`
+f(n: Nat | n >= 3) = n
+_ = f 5
+g = (n: Int | n >= 1) -> n + 1
+_ = g 2
+y: Int | y >= 3 = 5
+assert y == 5
+
+# refinement pattern with an omitted type: `X | Pred` == `{X: _ | Pred}`
+m(l: List(Int, N | N >= 3)) = l
+lis: List(Int, 3) = [1, 2, 3]
+_ = m lis
+_ = m [4, 5, 6, 7]

@@ -1,0 +1,7 @@
+# Test for user-defined polymorphic classes
+
+# Simple polymorphic class
+# Note: Using "MyContainer" to avoid conflict with builtin "Container" type
+MyContainer|T| = Class()
+
+print! "Polymorphic class test passed"

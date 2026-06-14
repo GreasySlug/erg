@@ -1,6 +1,5 @@
 use std::option::Option; // conflicting to Type::Option
 
-use erg_common::consts::PYTHON_MODE;
 use erg_common::levenshtein::get_similar_name;
 #[allow(unused)]
 use erg_common::log;
@@ -600,14 +599,47 @@ impl Context {
                 .instantiate_mono_t(simple, opt_decl_t, tmp_tv_cache, not_found_is_qvar)
                 .map_err(|errs| (Type::Failure, errs)),
             ast::PreDeclTypeSpec::Poly(poly) => match &poly.acc {
-                ast::ConstAccessor::Local(local) => self.instantiate_local_poly_t(
-                    local,
-                    &poly.args,
-                    self,
-                    opt_decl_t,
-                    tmp_tv_cache,
-                    not_found_is_qvar,
-                ),
+                ast::ConstAccessor::Local(local) => {
+                    let res = self.instantiate_local_poly_t(
+                        local,
+                        &poly.args,
+                        self,
+                        opt_decl_t,
+                        tmp_tv_cache,
+                        not_found_is_qvar,
+                    );
+                    // Fallback: `local` may be a compile-time function returning `Type`
+                    // (e.g. `MyOption T: Type = T or NoneType` used as `x: MyOption(Int)`).
+                    // Only attempt this when `local` is *not* a registered poly type but
+                    // *is* a constant subroutine, so that argument errors of genuine poly
+                    // types (e.g. `List!(Int, M := 1)`) are not masked by the more lenient
+                    // const evaluator.
+                    let local_name = local.inspect().trim_start_matches([':', '.']);
+                    let is_const_type_fn = self.get_type_ctx(local_name).is_none()
+                        && matches!(
+                            self.rec_get_const_obj(local_name),
+                            Some(ValueObj::Subr(_))
+                        );
+                    if res.is_err() && is_const_type_fn {
+                        // Evaluate the call `local(args)` and use its resulting type.
+                        let app = ast::ConstExpr::App(ast::ConstApp::new(
+                            ast::ConstExpr::Accessor(ast::ConstAccessor::Local(local.clone())),
+                            None,
+                            poly.args.clone(),
+                        ));
+                        if let Ok(t) = self.instantiate_const_expr_as_type(
+                            &app,
+                            None,
+                            tmp_tv_cache,
+                            not_found_is_qvar,
+                        ) {
+                            if !matches!(t, Type::Failure) {
+                                return Ok(t);
+                            }
+                        }
+                    }
+                    res
+                }
                 ast::ConstAccessor::Attr(attr) => {
                     let ctxs = self
                         .get_singular_ctxs(&attr.obj.clone().downgrade(), self)
@@ -708,23 +740,23 @@ impl Context {
         not_found_is_qvar: bool,
     ) -> TyCheckResult<Type> {
         match &ident.inspect()[..] {
-            "_" | "Obj" => Ok(Type::Obj),
+            "_" | "Obj" | "object" => Ok(Type::Obj),
             "Nat" => Ok(Type::Nat),
-            "Int" => Ok(Type::Int),
+            "Int" | "int" => Ok(Type::Int),
             "Ratio" => Ok(Type::Ratio),
-            "Float" => Ok(Type::Float),
-            "Str" => Ok(Type::Str),
-            "Bool" => Ok(Type::Bool),
-            "NoneType" => Ok(Type::NoneType),
+            "Float" | "float" => Ok(Type::Float),
+            "Str" | "str" => Ok(Type::Str),
+            "Bool" | "bool" => Ok(Type::Bool),
+            "NoneType" | "None" => Ok(Type::NoneType),
             "Ellipsis" => Ok(Type::Ellipsis),
             "NotImplementedType" => Ok(Type::NotImplementedType),
             "Inf" => Ok(Type::Inf),
             "NegInf" => Ok(Type::NegInf),
             "Never" => Ok(Type::Never),
-            "Any" if PYTHON_MODE => Ok(Type::Failure),
+            "Any" => Ok(Type::Obj),
             "ClassType" => Ok(Type::ClassType),
             "TraitType" => Ok(Type::TraitType),
-            "Type" => Ok(Type::Type),
+            "Type" | "type" => Ok(Type::Type),
             "Self" => self.rec_get_self_t().ok_or_else(|| {
                 TyCheckErrors::from(TyCheckError::self_type_error(
                     self.cfg.input.clone(),
@@ -733,7 +765,7 @@ impl Context {
                     self.caused_by(),
                 ))
             }),
-            "True" | "False" | "None" => Err(TyCheckErrors::from(TyCheckError::not_a_type_error(
+            "True" | "False" => Err(TyCheckErrors::from(TyCheckError::not_a_type_error(
                 self.cfg.input.clone(),
                 line!() as usize,
                 ident.loc(),
@@ -805,7 +837,7 @@ impl Context {
     ) -> Failable<Type> {
         let mut errs = TyCheckErrors::empty();
         match name.inspect().trim_start_matches([':', '.']) {
-            "List" => {
+            "List" | "list" => {
                 let Some(ctx) = self.get_nominal_type_ctx(&list_t(Type::Obj, TyParam::Failure))
                 else {
                     return Err((
@@ -1046,10 +1078,18 @@ impl Context {
                 self.get_tp_t(&tp).map_err(|errs| (Type::Failure, errs))
             }
             other => {
-                let Some(ctx) = ctx_of_type.get_type_ctx(other).or_else(|| {
+                // Map Python type names to Erg equivalents
+                let mapped = match other {
+                    "dict" => "Dict",
+                    "set" => "Set",
+                    "tuple" => "Tuple",
+                    "frozenset" => "FrozenSet",
+                    _ => other,
+                };
+                let Some(ctx) = ctx_of_type.get_type_ctx(mapped).or_else(|| {
                     ctx_of_type
                         .consts
-                        .get(other)
+                        .get(mapped)
                         .and_then(|v| ctx_of_type.convert_value_into_type(v.clone()).ok())
                         .and_then(|typ| ctx_of_type.get_nominal_type_ctx(&typ))
                 }) else {
@@ -1561,24 +1601,30 @@ impl Context {
                 }
             }
             ast::ConstExpr::Set(ConstSet::Comprehension(set)) => {
-                if set.layout.is_none() && set.generators.len() == 1 && set.guard.is_some() {
-                    let (ident, expr) = set.generators.first().unwrap();
+                if let (None, [(ident, expr)], Some(guard)) =
+                    (&set.layout, set.generators.as_slice(), &set.guard)
+                {
                     let iter = self.instantiate_const_expr(
                         expr,
                         erased_idx,
                         tmp_tv_cache,
                         not_found_is_qvar,
                     )?;
-                    let pred = match self
-                        .instantiate_pred_from_expr(set.guard.as_ref().unwrap(), tmp_tv_cache)
-                    {
+                    let pred = match self.instantiate_pred_from_expr(guard, tmp_tv_cache) {
                         Ok(pred) => pred,
                         Err((pred, es)) => {
                             errs.extend(es);
                             pred
                         }
                     };
-                    if let Ok(t) = self.instantiate_tp_as_type(iter, set) {
+                    // `{N: _ | N >= 1}` (a desugared refinement pattern, e.g. `List(T, N | N >= 1)`)
+                    // erases the base type, which is inferred from the corresponding parameter
+                    let t = match iter {
+                        TyParam::Erased(t) if *t == Type::Uninited => Some(Type::Obj),
+                        TyParam::Erased(t) => Some(*t),
+                        iter => self.instantiate_tp_as_type(iter, set).ok(),
+                    };
+                    if let Some(t) = t {
                         let tp = TyParam::t(refinement(ident.inspect().clone(), t, pred));
                         if errs.is_empty() {
                             return Ok(tp);
@@ -2918,6 +2964,16 @@ impl Context {
         &self,
         spec: &VisModifierSpec,
     ) -> TyCheckResult<VisibilityModifier> {
+        // .pyi files: all symbols are public (Python has no private/public visibility)
+        if self
+            .cfg
+            .input
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "pyi")
+        {
+            return Ok(VisibilityModifier::Public);
+        }
         match spec {
             VisModifierSpec::Auto => Err(TyCheckErrors::from(TyCheckError::unreachable(
                 self.cfg.input.clone(),

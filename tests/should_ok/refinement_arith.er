@@ -1,0 +1,26 @@
+# Integer refinement arithmetic: the result type of `+`/`-`/`*` on concrete
+# integer operands is narrowed from their interval bounds. Subtracting `1` from a
+# lower-bounded natural (`>= 1`) therefore stays `Nat` instead of widening to `Int`.
+
+dec(x: {I: Nat | I >= 1}): Nat = x - 1
+assert dec(5) == 4
+assert dec(1) == 0
+
+# `Nat + Nat` / `Nat * Nat` stay `Nat`
+add(a: Nat, b: Nat): Nat = a + b
+mul(a: Nat, b: Nat): Nat = a * b
+assert add(2, 3) == 5
+assert mul(4, 5) == 20
+
+# true division of a non-negative by a strictly-positive value rules out division by
+# zero and yields a non-negative `Ratio` (the result type is refined to `R >= 0`).
+half(a: Nat, b: {B: Nat | B >= 1}): {R: Ratio | R >= 0} = a / b
+assert half(10, 4) == 5 / 2
+assert half(7, 2) == 7 / 2
+
+# the refined `Ratio` result is still emitted exactly via `Fraction` (not a lossy float)
+q = 10 / 4
+assert q.numerator == 5
+assert q.denominator == 2
+
+print! "ok"

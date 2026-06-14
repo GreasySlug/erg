@@ -219,7 +219,7 @@ impl<'c> Substituter<'c> {
                     if sup.qual_name() == qt.qual_name() {
                         let mut child = Self::new(ctx);
                         let sup_tps = sup.typarams();
-                        for (sup_tp, stp) in sup_tps.into_iter().zip(stps.into_iter()) {
+                        for (sup_tp, stp) in sup_tps.into_iter().zip(stps) {
                             let _ = child.substitute_typaram(sup_tp, stp);
                         }
                         if st == &sup {
@@ -246,7 +246,7 @@ impl<'c> Substituter<'c> {
         }
         let mut self_ = Self::new(ctx);
         let mut errs = EvalErrors::empty();
-        for (qtp, stp) in qtps.into_iter().zip(stps.into_iter()) {
+        for (qtp, stp) in qtps.into_iter().zip(stps) {
             if let Err(err) = self_.substitute_typaram(qtp, stp) {
                 errs.extend(err);
             }
@@ -303,7 +303,7 @@ impl<'c> Substituter<'c> {
                     if sup.qual_name() == qt.qual_name() {
                         let mut child = Self::new(ctx);
                         let sup_tps = sup.typarams();
-                        for (sup_tp, stp) in sup_tps.into_iter().zip(stps.into_iter()) {
+                        for (sup_tp, stp) in sup_tps.into_iter().zip(stps) {
                             let _ = child.overwrite_typaram(sup_tp, stp);
                         }
                         if st == &sup {
@@ -330,7 +330,7 @@ impl<'c> Substituter<'c> {
         }
         let mut self_ = Self::new(ctx);
         let mut errs = EvalErrors::empty();
-        for (qtp, stp) in qtps.into_iter().zip(stps.into_iter()) {
+        for (qtp, stp) in qtps.into_iter().zip(stps) {
             if let Err(err) = self_.overwrite_typaram(qtp, stp) {
                 errs.extend(err);
             }
@@ -357,7 +357,7 @@ impl<'c> Substituter<'c> {
                 let tps = stp.typarams();
                 debug_assert_eq!(args.len(), tps.len());
                 let mut errs = EvalErrors::empty();
-                for (qtp, stp) in args.iter().zip(tps.into_iter()) {
+                for (qtp, stp) in args.iter().zip(tps) {
                     if let Err(err) = self.substitute_typaram(qtp.clone(), stp) {
                         errs.extend(err);
                     }
@@ -449,7 +449,7 @@ impl<'c> Substituter<'c> {
                 let tps = stp.typarams();
                 debug_assert_eq!(args.len(), tps.len());
                 let mut errs = EvalErrors::empty();
-                for (qtp, stp) in args.iter().zip(tps.into_iter()) {
+                for (qtp, stp) in args.iter().zip(tps) {
                     if let Err(err) = self.overwrite_typaram(qtp.clone(), stp) {
                         errs.extend(err);
                     }
@@ -1205,6 +1205,17 @@ impl Context {
                     };
                     elems.push(elem);
                 }
+            }
+            _ => {
+                return Err((
+                    ValueObj::Failure,
+                    EvalErrors::from(EvalError::not_const_expr(
+                        self.cfg.input.clone(),
+                        line!() as usize,
+                        tuple.loc(),
+                        self.caused_by(),
+                    )),
+                ));
             }
         }
         let tuple = ValueObj::Tuple(ArcArray::from(elems));
@@ -2596,10 +2607,10 @@ impl Context {
                             continue;
                         }
                     }
-                    (ClassDefType::ImplTrait { impl_trait, .. }, None) => {
-                        if !self.supertype_of(impl_trait, &sub) {
-                            continue;
-                        }
+                    (ClassDefType::ImplTrait { impl_trait, .. }, None)
+                        if !self.supertype_of(impl_trait, &sub) =>
+                    {
+                        continue;
                     }
                     _ => {}
                 }
@@ -3380,10 +3391,8 @@ impl Context {
             // opt_sup: Add(?T), methods.impl_of(): Add(Int)
             // opt_sup: Add([Int; 2]), methods.impl_of(): Add([T; M])
             match (&opt_sup, methods.impl_of()) {
-                (Some(sup), Some(trait_)) => {
-                    if !self.supertype_of(&trait_, sup) {
-                        return Triple::None;
-                    }
+                (Some(sup), Some(trait_)) if !self.supertype_of(&trait_, sup) => {
+                    return Triple::None;
                 }
                 _ => {}
             }

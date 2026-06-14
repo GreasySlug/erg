@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use erg_common::consts::{ERG_MODE, PYTHON_MODE};
 use erg_common::dict::Dict;
-use erg_common::env::is_pystd_main_module;
+use erg_common::env::{is_pystd_main_module, python_site_packages, python_sys_path};
 use erg_common::erg_util::BUILTIN_ERG_MODS;
 use erg_common::levenshtein::get_similar_name;
+use erg_common::normalize_path;
 use erg_common::pathutil::{DirKind, FileKind, NormalizedPathBuf};
 use erg_common::python_util::BUILTIN_PYTHON_MODS;
 use erg_common::set::Set;
@@ -18,19 +19,24 @@ use ast::{
     VarName,
 };
 use erg_parser::ast::{self, ClassAttr, RecordAttrOrIdent, TypeSpecWithOp};
+use erg_parser::Parser;
 
 use crate::ty::constructors::{
-    func, func0, func1, module, proc, py_module, ref_, ref_mut, str_dict_t, tp_enum,
+    func, func0, func1, module, proc, py_module, ref_, ref_mut, str_dict_t, subr_t, tp_enum,
     unknown_len_list_t, v_enum,
 };
 use crate::ty::free::HasLevel;
 use crate::ty::typaram::TyParam;
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{
-    CastTarget, Field, GuardType, HasType, ParamTy, SubrType, Type, Visibility, VisibilityModifier,
+    CastTarget, ConstSubr, Field, GuardType, HasType, ParamTy, SubrKind, SubrType, Type,
+    UserConstSubr, Visibility, VisibilityModifier,
 };
 
-use crate::context::{ClassDefType, Context, ContextKind, DefaultInfo, RegistrationMode};
+use crate::build_package::CheckStatus;
+use crate::context::{
+    ClassDefType, Context, ContextKind, DefaultInfo, ModuleContext, RegistrationMode,
+};
 use crate::error::{concat_result, readable_name, Failable};
 use crate::error::{
     CompileError, CompileErrors, CompileResult, TyCheckError, TyCheckErrors, TyCheckResult,
@@ -472,8 +478,14 @@ impl Context {
                 }
             }
             ast::ParamPattern::VarName(name) => {
+                // A parameter introduces a fresh binding in its own scope and may shadow any
+                // outer name, so only a sibling parameter of the same name (a real duplicate,
+                // e.g. `f(x, x)`) is a conflict. Pass `is_const = false` to restrict the lookup
+                // to the current scope: searching the outer scope (which `is_const = true` does)
+                // would wrongly flag e.g. a `match` catch-all branch variable as reassigning the
+                // enclosing const function's parameter (recursive const functions with 3+ arms).
                 if self
-                    .registered_info(name.inspect(), name.is_const())
+                    .registered_info(name.inspect(), false)
                     .is_some()
                     && &name.inspect()[..] != "_"
                 {
@@ -881,6 +893,11 @@ impl Context {
         let mut errs = TyCheckErrors::empty();
         // already defined as const
         if sig.ident.is_const() {
+            // For const subroutines (ValueObj::Subr), already registered in locals
+            if let Some(vi) = self.locals.get(sig.ident.inspect()).cloned() {
+                return Ok(vi);
+            }
+            // For other const values, move from decls to locals
             let vi = self.decls.remove(sig.ident.inspect()).unwrap();
             self.locals.insert(sig.ident.name.clone(), vi.clone());
             return Ok(vi);
@@ -988,7 +1005,10 @@ impl Context {
         // already defined as const
         if ident.is_const() {
             if let Some(vi) = self.decls.remove(ident.inspect()) {
+                // a const declaration was found: preserve it as-is instead of
+                // overwriting with a `DoesNotExist`/`failure_t` entry below
                 self.locals.insert(ident.name.clone(), vi);
+                return Ok(());
             } else {
                 log!(err "not found: {}", ident.name);
                 return Ok(());
@@ -1474,6 +1494,10 @@ impl Context {
             ast::Expr::Accessor(ast::Accessor::Ident(ident)) => match &ident.inspect()[..] {
                 "Class" => {
                     let ident = var.ident().unwrap();
+                    // Skip preregistration for polymorphic classes - they will be registered in register_def
+                    if !var.bounds.is_empty() {
+                        return Ok(());
+                    }
                     let t = Type::Mono(format!("{}{ident}", self.name).into());
                     let class = GenTypeObj::class(t, None, None, false);
                     let class = ValueObj::Type(TypeObj::Generated(class));
@@ -1481,6 +1505,10 @@ impl Context {
                 }
                 "Trait" => {
                     let ident = var.ident().unwrap();
+                    // Skip preregistration for polymorphic traits - they will be registered in register_def
+                    if !var.bounds.is_empty() {
+                        return Ok(());
+                    }
                     let t = Type::Mono(format!("{}{ident}", self.name).into());
                     let trait_ =
                         GenTypeObj::trait_(t, TypeObj::builtin_type(Type::Failure), None, false);
@@ -1505,60 +1533,88 @@ impl Context {
         match &def.sig {
             ast::Signature::Subr(sig) => {
                 if sig.is_const() {
-                    let tv_cache = match self.instantiate_ty_bounds(&sig.bounds, PreRegister) {
-                        Ok(tv_cache) => tv_cache,
-                        Err((tv_cache, es)) => {
-                            errs.extend(es);
-                            tv_cache
-                        }
-                    };
-                    let vis = self.instantiate_vis_modifier(sig.vis())?;
-                    self.grow(__name__, ContextKind::Proc, vis, Some(tv_cache));
-                    let (obj, const_t) = match self.eval_const_block(&def.body.block) {
-                        Ok(obj) => (obj.clone(), v_enum(set! {obj})),
-                        Err((obj, es)) => {
-                            if PYTHON_MODE {
-                                self.pop();
-                                if let Err(es) = self.declare_sub(sig, id) {
+                    // If the const subroutine has parameters, create a UserConstSubr
+                    // instead of evaluating the body immediately
+                    if !sig.params.is_empty() {
+                        let obj =
+                            match self.register_const_subr(sig, &def.body.block, def.def_kind()) {
+                                Ok(obj) => obj,
+                                Err((obj, es)) => {
                                     errs.extend(es);
+                                    obj
                                 }
-                                if errs.is_empty() {
-                                    return Ok(());
-                                } else {
-                                    return Err(errs);
-                                }
-                            }
-                            errs.extend(es);
-                            (obj.clone(), v_enum(set! {obj}))
-                        }
-                    };
-                    if let Some(spec) = sig.return_t_spec.as_ref() {
-                        let mut dummy_tv_cache = TyVarCache::new(self.level, self);
-                        let spec_t = match self.instantiate_typespec_full(
-                            &spec.t_spec,
-                            None,
-                            &mut dummy_tv_cache,
-                            PreRegister,
-                            false,
+                            };
+                        if let Err(es) = self.register_gen_const(
+                            def.sig.ident().unwrap(),
+                            obj,
+                            call,
+                            def.def_kind().is_other(),
                         ) {
-                            Ok(ty) => ty,
-                            Err((ty, es)) => {
+                            errs.extend(es);
+                        }
+                    } else {
+                        // No parameters: evaluate the body immediately (const value)
+                        let tv_cache = match self.instantiate_ty_bounds(&sig.bounds, PreRegister) {
+                            Ok(tv_cache) => tv_cache,
+                            Err((tv_cache, es)) => {
                                 errs.extend(es);
-                                ty
+                                tv_cache
                             }
                         };
-                        if let Err(es) = self.sub_unify(&const_t, &spec_t, &def.body, None) {
+                        let vis = match self.instantiate_vis_modifier(sig.vis()) {
+                            Ok(vis) => vis,
+                            Err(es) => {
+                                errs.extend(es);
+                                VisibilityModifier::Private
+                            }
+                        };
+                        self.grow(__name__, ContextKind::Proc, vis, Some(tv_cache));
+                        let (obj, const_t) = match self.eval_const_block(&def.body.block) {
+                            Ok(obj) => (obj.clone(), v_enum(set! {obj})),
+                            Err((obj, es)) => {
+                                if PYTHON_MODE {
+                                    self.pop();
+                                    if let Err(es) = self.declare_sub(sig, id) {
+                                        errs.extend(es);
+                                    }
+                                    if errs.is_empty() {
+                                        return Ok(());
+                                    } else {
+                                        return Err(errs);
+                                    }
+                                }
+                                errs.extend(es);
+                                (obj.clone(), v_enum(set! {obj}))
+                            }
+                        };
+                        if let Some(spec) = sig.return_t_spec.as_ref() {
+                            let mut dummy_tv_cache = TyVarCache::new(self.level, self);
+                            let spec_t = match self.instantiate_typespec_full(
+                                &spec.t_spec,
+                                None,
+                                &mut dummy_tv_cache,
+                                PreRegister,
+                                false,
+                            ) {
+                                Ok(ty) => ty,
+                                Err((ty, es)) => {
+                                    errs.extend(es);
+                                    ty
+                                }
+                            };
+                            if let Err(es) = self.sub_unify(&const_t, &spec_t, &def.body, None) {
+                                errs.extend(es);
+                            }
+                        }
+                        self.pop();
+                        if let Err(es) = self.register_gen_const(
+                            def.sig.ident().unwrap(),
+                            obj,
+                            call,
+                            def.def_kind().is_other(),
+                        ) {
                             errs.extend(es);
                         }
-                    }
-                    self.pop();
-                    if let Err(es) = self.register_gen_const(
-                        def.sig.ident().unwrap(),
-                        obj,
-                        call,
-                        def.def_kind().is_other(),
-                    ) {
-                        errs.extend(es);
                     }
                 } else if let Err(es) = self.declare_sub(sig, id) {
                     errs.extend(es);
@@ -1568,7 +1624,19 @@ impl Context {
                 if sig.is_const() {
                     let kind = ContextKind::from(def);
                     let vis = self.instantiate_vis_modifier(sig.vis())?;
-                    self.grow(__name__, kind, vis, None);
+                    // Instantiate type bounds for polymorphic class/trait definitions
+                    let tv_cache = if sig.bounds.is_empty() {
+                        None
+                    } else {
+                        match self.instantiate_ty_bounds(&sig.bounds, PreRegister) {
+                            Ok(tv_cache) => Some(tv_cache),
+                            Err((tv_cache, es)) => {
+                                errs.extend(es);
+                                Some(tv_cache)
+                            }
+                        }
+                    };
+                    self.grow(__name__, kind, vis, tv_cache);
                     let (obj, const_t) = match self.eval_const_block(&def.body.block) {
                         Ok(obj) => (obj.clone(), v_enum(set! {obj})),
                         Err((obj, es)) => {
@@ -1881,6 +1949,153 @@ impl Context {
         Ok(())
     }
 
+    /// Register a user-defined const subroutine (compile-time function with parameters).
+    /// Instead of evaluating the body immediately, we create a UserConstSubr that stores
+    /// the function definition and evaluates it when called.
+    fn register_const_subr(
+        &mut self,
+        sig: &ast::SubrSignature,
+        block: &ast::Block,
+        _def_kind: ast::DefKind,
+    ) -> Failable<ValueObj> {
+        let mut errs = TyCheckErrors::empty();
+        let mut tmp_tv_cache = match self.instantiate_ty_bounds(&sig.bounds, PreRegister) {
+            Ok(tv_cache) => tv_cache,
+            Err((tv_cache, es)) => {
+                errs.extend(es);
+                tv_cache
+            }
+        };
+        let mut non_default_params = Vec::with_capacity(sig.params.non_defaults.len());
+        for param in sig.params.non_defaults.iter() {
+            match self.instantiate_param_ty(
+                param,
+                None,
+                &mut tmp_tv_cache,
+                PreRegister,
+                ParamKind::NonDefault,
+                false,
+            ) {
+                Ok(pt) => non_default_params.push(pt),
+                Err((pt, err)) => {
+                    non_default_params.push(pt);
+                    errs.extend(err);
+                }
+            }
+        }
+        let var_params = if let Some(p) = sig.params.var_params.as_ref() {
+            match self.instantiate_param_ty(
+                p,
+                None,
+                &mut tmp_tv_cache,
+                PreRegister,
+                ParamKind::VarParams,
+                false,
+            ) {
+                Ok(pt) => Some(pt),
+                Err((pt, err)) => {
+                    errs.extend(err);
+                    Some(pt)
+                }
+            }
+        } else {
+            None
+        };
+        let mut default_params = Vec::with_capacity(sig.params.defaults.len());
+        for param in sig.params.defaults.iter() {
+            let default_t = match self.eval_const_expr(&param.default_val) {
+                Ok(val) => val.t(),
+                Err((val, es)) => {
+                    errs.extend(es);
+                    val.t()
+                }
+            };
+            match self.instantiate_param_ty(
+                &param.sig,
+                None,
+                &mut tmp_tv_cache,
+                PreRegister,
+                ParamKind::Default(default_t),
+                false,
+            ) {
+                Ok(pt) => default_params.push(pt),
+                Err((pt, err)) => {
+                    errs.extend(err);
+                    default_params.push(pt);
+                }
+            }
+        }
+        let kw_var_params = if let Some(p) = sig.params.kw_var_params.as_ref() {
+            match self.instantiate_param_ty(
+                p,
+                None,
+                &mut tmp_tv_cache,
+                PreRegister,
+                ParamKind::KwVarParams,
+                false,
+            ) {
+                Ok(pt) => Some(pt),
+                Err((pt, err)) => {
+                    errs.extend(err);
+                    Some(pt)
+                }
+            }
+        } else {
+            None
+        };
+        let return_t = if let Some(spec) = sig.return_t_spec.as_ref() {
+            match self.instantiate_typespec_full(
+                &spec.t_spec,
+                None,
+                &mut tmp_tv_cache,
+                PreRegister,
+                false,
+            ) {
+                Ok(ty) => ty,
+                Err((ty, es)) => {
+                    errs.extend(es);
+                    ty
+                }
+            }
+        } else {
+            Type::Obj
+        };
+        let const_block = match Parser::validate_const_block(block.clone()) {
+            Ok(block) => block,
+            Err(_) => {
+                errs.push(TyCheckError::feature_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    sig.loc(),
+                    "const function body",
+                    self.caused_by(),
+                ));
+                return Err((ValueObj::Failure, errs));
+            }
+        };
+        let sig_t = subr_t(
+            SubrKind::Func,
+            non_default_params,
+            var_params,
+            default_params,
+            kw_var_params,
+            return_t,
+        );
+        let sig_t = self.generalize_t(sig_t);
+        let user_subr = UserConstSubr::new(
+            sig.ident.inspect().clone(),
+            sig.params.clone(),
+            const_block,
+            sig_t,
+        );
+        let subr = ValueObj::Subr(ConstSubr::User(user_subr));
+        if errs.is_empty() {
+            Ok(subr)
+        } else {
+            Err((subr, errs))
+        }
+    }
+
     pub(crate) fn register_gen_const(
         &mut self,
         ident: &Identifier,
@@ -1910,6 +2125,24 @@ impl Context {
                     TypeObj::Generated(gen) => self.register_gen_type(ident, gen, call),
                     TypeObj::Builtin { t, meta_t } => self.register_type_alias(ident, t, meta_t),
                 },
+                ValueObj::Subr(ref subr) => {
+                    let id = DefId(get_hash(ident));
+                    let sig_t = subr.sig_t().clone();
+                    let vi = VarInfo::new(
+                        sig_t,
+                        Const,
+                        Visibility::new(vis, self.name.clone()),
+                        VarKind::Defined(id),
+                        None,
+                        self.kind.clone(),
+                        None,
+                        self.absolutize(ident.name.loc()),
+                    );
+                    self.index().register(ident.inspect().clone(), &vi);
+                    self.locals.insert(ident.name.clone(), vi);
+                    self.consts.insert(ident.name.clone(), obj);
+                    Ok(())
+                }
                 // TODO: not all value objects are comparable
                 other => {
                     let id = DefId(get_hash(ident));
@@ -2761,12 +2994,11 @@ impl Context {
         if let Some(parent) = parent {
             if DirKind::from(parent).is_erg_module() {
                 let parent = parent.join("__init__.er");
-                let parent_module = if let Some(parent) = self.get_mod_with_path(&parent) {
-                    Some(parent)
-                } else {
-                    self.get_mod_with_path(&parent)
-                };
-                if let Some(parent_module) = parent_module {
+                // `check_mod_vis` takes `&self`, so the parent `__init__.er` cannot be
+                // built here; it is expected to already be in the module cache by the
+                // time a submodule is imported. If it isn't cached, the visibility check
+                // is skipped (best-effort).
+                if let Some(parent_module) = self.get_mod_with_path(&parent) {
                     let import_err = |line| {
                         TyCheckErrors::from(TyCheckError::import_error(
                             self.cfg.input.clone(),
@@ -2847,15 +3079,102 @@ impl Context {
     }
 
     fn import_py_mod(&self, __name__: &Str, loc: &impl Locational) -> CompileResult<PathBuf> {
-        let path = self.get_decl_path(__name__, loc)?;
-        // module itself
-        if self.cfg.input.path() == path.as_path() {
-            return Ok(path);
+        match self.get_decl_path(__name__, loc) {
+            Ok(path) => {
+                // module itself
+                if self.cfg.input.path() == path.as_path() {
+                    return Ok(path);
+                }
+                if self.py_mod_cache().get(&path).is_some() {
+                    return Ok(path);
+                }
+                Ok(path)
+            }
+            Err(_) => {
+                let path = Path::new(&__name__[..]);
+                if let Ok(pyi_path) = self.cfg.input.resolve_pyi(path) {
+                    return Ok(pyi_path);
+                }
+                let py_path = self
+                    .cfg
+                    .input
+                    .resolve_py(path)
+                    .or_else(|_| {
+                        for sys_path in python_sys_path() {
+                            let mut dir = sys_path.clone();
+                            dir.push(path);
+                            dir.set_extension("py");
+                            if dir.exists() {
+                                return Ok(normalize_path(dir));
+                            }
+                            let mut dir = sys_path.clone();
+                            dir.push(path);
+                            dir.push("__init__.py");
+                            if dir.exists() {
+                                return Ok(normalize_path(dir));
+                            }
+                        }
+                        for pkgs_path in python_site_packages() {
+                            let mut dir = pkgs_path.clone();
+                            dir.push(path);
+                            dir.set_extension("py");
+                            if dir.exists() {
+                                return Ok(normalize_path(dir));
+                            }
+                            let mut dir = pkgs_path.clone();
+                            dir.push(path);
+                            dir.push("__init__.py");
+                            if dir.exists() {
+                                return Ok(normalize_path(dir));
+                            }
+                        }
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!("module {__name__} not found"),
+                        ))
+                    })
+                    .map_err(|_| {
+                        TyCheckErrors::from(TyCheckError::import_error(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            format!("module {__name__} not found"),
+                            loc.loc(),
+                            self.caused_by(),
+                            self.similar_builtin_erg_mod_name(__name__)
+                                .or_else(|| self.mod_cache().get_similar_name(__name__)),
+                            self.similar_builtin_py_mod_name(__name__)
+                                .or_else(|| self.py_mod_cache().get_similar_name(__name__)),
+                        ))
+                    })?;
+                if self.cfg.input.path() == py_path.as_path() {
+                    return Ok(py_path);
+                }
+                let norm_path = NormalizedPathBuf::from(py_path.clone());
+                if self.py_mod_cache().get(&norm_path).is_some() {
+                    return Ok(py_path);
+                }
+                // Register an empty (untyped) module context
+                let cfg = self.cfg.inherit(py_path.clone());
+                let ctx = Context::new(
+                    Str::rc(&__name__[..]),
+                    cfg,
+                    ContextKind::Module,
+                    vec![],
+                    None,
+                    self.shared.clone(),
+                    Self::TOP_LEVEL,
+                );
+                let mod_ctx = ModuleContext::new(ctx, erg_common::dict::Dict::new());
+                self.py_mod_cache().register(
+                    py_path.clone(),
+                    None,
+                    None,
+                    mod_ctx,
+                    CheckStatus::Succeed,
+                );
+                Ok(py_path)
+            }
         }
-        if self.py_mod_cache().get(&path).is_some() {
-            return Ok(path);
-        }
-        Ok(path)
     }
 
     pub fn del(&mut self, ident: &hir::Identifier) -> CompileResult<()> {
@@ -3206,8 +3525,14 @@ impl Context {
             ast::Expr::Literal(_) => false,
             ast::Expr::Accessor(acc) => self.inc_ref_acc(acc, namespace, tmp_tv_cache),
             ast::Expr::BinOp(bin) => {
-                self.inc_ref_expr(&bin.args[0], namespace, tmp_tv_cache)
-                    || self.inc_ref_expr(&bin.args[1], namespace, tmp_tv_cache)
+                let mut res = false;
+                if self.inc_ref_expr(&bin.args[0], namespace, tmp_tv_cache) {
+                    res = true;
+                }
+                if self.inc_ref_expr(&bin.args[1], namespace, tmp_tv_cache) {
+                    res = true;
+                }
+                res
             }
             ast::Expr::UnaryOp(unary) => self.inc_ref_expr(&unary.value(), namespace, tmp_tv_cache),
             ast::Expr::Call(call) => {

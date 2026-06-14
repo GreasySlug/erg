@@ -474,14 +474,36 @@ impl Predicate {
                 preds.insert(other);
                 Self::Or(preds)
             }
-            // I == 1 or I >= 1 => I >= 1
+            // I == x or I >= x => I >= x (順不同)
             (
                 Predicate::Equal { lhs, rhs },
                 Predicate::GreaterEqual {
                     lhs: lhs2,
                     rhs: rhs2,
                 },
+            )
+            | (
+                Predicate::GreaterEqual {
+                    lhs: lhs2,
+                    rhs: rhs2,
+                },
+                Predicate::Equal { lhs, rhs },
             ) if lhs == lhs2 && rhs == rhs2 => Self::ge(lhs, rhs),
+            // I == x or I <= x => I <= x (順不同)
+            (
+                Predicate::Equal { lhs, rhs },
+                Predicate::LessEqual {
+                    lhs: lhs2,
+                    rhs: rhs2,
+                },
+            )
+            | (
+                Predicate::LessEqual {
+                    lhs: lhs2,
+                    rhs: rhs2,
+                },
+                Predicate::Equal { lhs, rhs },
+            ) if lhs == lhs2 && rhs == rhs2 => Self::le(lhs, rhs),
             (p1, p2) => {
                 if p1 == p2 {
                     p1
@@ -677,8 +699,14 @@ impl Predicate {
                 }
                 Some(false)
             }
-            Self::And(lhs, rhs) => Some(lhs.can_be_false()? && rhs.can_be_false()?),
-            Self::Not(pred) => Some(!pred.can_be_false()?),
+            // And(p, q) はどちらか一方が偽なら偽
+            Self::And(lhs, rhs) => Some(lhs.can_be_false()? || rhs.can_be_false()?),
+            Self::Not(pred) => match pred.as_ref() {
+                // Not(true)=false(常に偽)→Some(true) / Not(false)=true(常に真)→Some(false)
+                Self::Value(ValueObj::Bool(b)) => Some(*b),
+                // 非定数述語は真にも偽にもなりうる → 保守的に「偽になりうる」
+                _ => Some(true),
+            },
             _ => Some(true),
         }
     }
@@ -867,8 +895,22 @@ impl Predicate {
             Self::LessEqual { lhs, rhs } => Self::gt(lhs, rhs),
             Self::NotEqual { lhs, rhs } => Self::eq(lhs, rhs),
             Self::GeneralEqual { lhs, rhs } => Self::GeneralNotEqual { lhs, rhs },
-            Self::GeneralLessEqual { lhs, rhs } => Self::GeneralGreaterEqual { lhs, rhs },
-            Self::GeneralGreaterEqual { lhs, rhs } => Self::GeneralLessEqual { lhs, rhs },
+            // NOT(A <= B) = A > B = (A >= B) and (A != B)
+            Self::GeneralLessEqual { lhs, rhs } => Self::and(
+                Self::GeneralGreaterEqual {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                },
+                Self::GeneralNotEqual { lhs, rhs },
+            ),
+            // NOT(A >= B) = A < B = (A <= B) and (A != B)
+            Self::GeneralGreaterEqual { lhs, rhs } => Self::and(
+                Self::GeneralLessEqual {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                },
+                Self::GeneralNotEqual { lhs, rhs },
+            ),
             Self::GeneralNotEqual { lhs, rhs } => Self::GeneralEqual { lhs, rhs },
             Self::Not(pred) => *pred,
             other => Self::Not(Box::new(other)),

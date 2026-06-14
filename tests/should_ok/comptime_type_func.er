@@ -1,0 +1,18 @@
+# compile-time functions (uppercase-initial) returning a type,
+# used in type-annotation position (both `T(args)` and `T args` forms).
+
+MyOption T: Type = T or NoneType
+
+a: MyOption(Int) = 1
+b: MyOption Int = None
+assert a == 1
+assert b == None
+
+# nested compile-time type function
+Pair(A, B: Type): Type = (A, B)
+p: Pair(Int, Str) = (1, "a")
+assert p == (1, "a")
+
+# value-returning compile-time function still works
+MyAdd(X, Y: Nat): Nat = X + Y
+assert MyAdd(1, 2) == 3

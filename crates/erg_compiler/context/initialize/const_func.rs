@@ -3,8 +3,10 @@ use std::mem;
 use std::path::Path;
 
 use erg_common::dict::Dict;
+use erg_common::env::{python_site_packages, python_sys_path};
 #[allow(unused_imports)]
 use erg_common::log;
+use erg_common::normalize_path;
 use erg_common::traits::Stream;
 use erg_common::{dict, set, set_recursion_limit};
 
@@ -12,7 +14,7 @@ use crate::context::eval::UndoableLinkedList;
 use crate::context::initialize::closed_range;
 use crate::context::Context;
 use crate::feature_error;
-use crate::ty::constructors::{and, dict_mut, list_mut, mono, tuple_t, v_enum};
+use crate::ty::constructors::{and, dict_mut, list_mut, mono, poly, tuple_t, v_enum};
 use crate::ty::value::{EvalValueError, EvalValueResult, GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{Field, TyParam, Type, ValueArgs};
 use erg_common::error::{ErrorCore, ErrorKind, Location, SubMessage};
@@ -74,7 +76,22 @@ pub(crate) fn class_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<
     let base = args.remove_left_or_key("Base");
     let impls = args.remove_left_or_key("Impl");
     let impls = impls.and_then(|v| v.as_type(ctx));
-    let t = mono(ctx.name.clone());
+    // Check if the context has type parameters for polymorphic class
+    let t = if let Some(ref tv_cache) = ctx.tv_cache {
+        if !tv_cache.tyvar_instances.is_empty() {
+            // Create polymorphic type with type parameters from tv_cache
+            let params = tv_cache
+                .tyvar_instances
+                .iter()
+                .map(|(_, ty)| TyParam::t(ty.clone()))
+                .collect();
+            poly(ctx.name.clone(), params)
+        } else {
+            mono(ctx.name.clone())
+        }
+    } else {
+        mono(ctx.name.clone())
+    };
     match base {
         Some(value) => {
             if let Some(base) = value.as_type(ctx) {
@@ -152,7 +169,21 @@ pub(crate) fn trait_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<
     };
     let impls = args.remove_left_or_key("Impl");
     let impls = impls.and_then(|v| v.as_type(ctx));
-    let t = mono(ctx.name.clone());
+    // Check if the context has type parameters for polymorphic trait
+    let t = if let Some(ref tv_cache) = ctx.tv_cache {
+        if !tv_cache.tyvar_instances.is_empty() {
+            let params = tv_cache
+                .tyvar_instances
+                .iter()
+                .map(|(_, ty)| TyParam::t(ty.clone()))
+                .collect();
+            poly(ctx.name.clone(), params)
+        } else {
+            mono(ctx.name.clone())
+        }
+    } else {
+        mono(ctx.name.clone())
+    };
     Ok(ValueObj::gen_t(GenTypeObj::trait_(t, req, impls, true)).into())
 }
 
@@ -1533,17 +1564,49 @@ pub(crate) fn resolve_decl_path_func(
             return Err(type_mismatch("Str", other, "Path"));
         }
     };
-    let Some(path) = ctx.cfg.input.resolve_decl_path(path, &ctx.cfg) else {
-        return Err(ErrorCore::new(
-            vec![SubMessage::only_loc(Location::Unknown)],
-            format!("Path {} is not found", path.display()),
-            line!() as usize,
-            ErrorKind::IoError,
-            Location::Unknown,
-        )
-        .into());
-    };
-    Ok(ValueObj::Str(path.to_string_lossy().into()).into())
+    if let Some(path) = ctx.cfg.input.resolve_decl_path(path, &ctx.cfg) {
+        return Ok(ValueObj::Str(path.to_string_lossy().into()).into());
+    }
+    // Fallback: resolve .py file directly for untyped pyimport
+    if let Ok(resolved) = ctx.cfg.input.resolve_py(path) {
+        return Ok(ValueObj::Str(resolved.to_string_lossy().into()).into());
+    }
+    for sys_path in python_sys_path() {
+        let mut dir = sys_path.clone();
+        dir.push(path);
+        dir.set_extension("py");
+        if dir.exists() {
+            return Ok(ValueObj::Str(normalize_path(dir).to_string_lossy().into()).into());
+        }
+        let mut dir = sys_path.clone();
+        dir.push(path);
+        dir.push("__init__.py");
+        if dir.exists() {
+            return Ok(ValueObj::Str(normalize_path(dir).to_string_lossy().into()).into());
+        }
+    }
+    for pkgs_path in python_site_packages() {
+        let mut dir = pkgs_path.clone();
+        dir.push(path);
+        dir.set_extension("py");
+        if dir.exists() {
+            return Ok(ValueObj::Str(normalize_path(dir).to_string_lossy().into()).into());
+        }
+        let mut dir = pkgs_path.clone();
+        dir.push(path);
+        dir.push("__init__.py");
+        if dir.exists() {
+            return Ok(ValueObj::Str(normalize_path(dir).to_string_lossy().into()).into());
+        }
+    }
+    Err(ErrorCore::new(
+        vec![SubMessage::only_loc(Location::Unknown)],
+        format!("Path {} is not found", path.display()),
+        line!() as usize,
+        ErrorKind::IoError,
+        Location::Unknown,
+    )
+    .into())
 }
 
 pub(crate) fn succ_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
@@ -1605,7 +1668,7 @@ pub(crate) fn zip_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         }
     };
     let mut zipped = vec![];
-    for (v1, v2) in iterable1.into_iter().zip(iterable2.into_iter()) {
+    for (v1, v2) in iterable1.into_iter().zip(iterable2) {
         zipped.push(ValueObj::Tuple(vec![v1, v2].into()));
     }
     Ok(TyParam::Value(ValueObj::List(zipped.into())))

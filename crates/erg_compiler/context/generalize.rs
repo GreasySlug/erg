@@ -1204,7 +1204,7 @@ impl<'c, 'q, 'l, L: Locational> Dereferencer<'c, 'q, 'l, L> {
                 let mut tps = vec![];
                 for ((lp, rp), variance) in lps
                     .into_iter()
-                    .zip(rps.into_iter())
+                    .zip(rps)
                     .zip(variances.into_iter().chain(std::iter::repeat(Invariant)))
                 {
                     self.ctx

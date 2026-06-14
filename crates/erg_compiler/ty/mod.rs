@@ -335,7 +335,8 @@ impl ParamTy {
                 ty: f(ty),
                 default,
             },
-            Self::Star | Self::Slash => Self::Slash,
+            Self::Star => Self::Star,
+            Self::Slash => Self::Slash,
         }
     }
 
@@ -500,7 +501,7 @@ impl StructuralEq for SubrType {
     fn structural_eq(&self, other: &Self) -> bool {
         let kw_check = || {
             for lpt in self.default_params.iter() {
-                if let Some(rpt) = self
+                if let Some(rpt) = other
                     .default_params
                     .iter()
                     .find(|rpt| rpt.name() == lpt.name())
@@ -685,6 +686,9 @@ impl SubrType {
                 qvars.extend(default.qvars());
             }
         }
+        if let Some(kw_var_params) = &self.kw_var_params {
+            qvars.extend(kw_var_params.typ().qvars());
+        }
         qvars.extend(self.return_t.qvars());
         qvars
     }
@@ -707,6 +711,7 @@ impl SubrType {
             .iter()
             .map(|pt| pt.typ().qnames())
             .chain(self.var_params.iter().map(|pt| pt.typ().qnames()))
+            .chain(self.kw_var_params.iter().map(|pt| pt.typ().qnames()))
             .chain(self.default_params.iter().map(|pt| pt.typ().qnames()))
             .chain(
                 self.default_params
@@ -759,6 +764,11 @@ impl SubrType {
                 .iter()
                 .filter_map(|pt| pt.default_typ())
                 .map(|t| TyParam::t(t.clone()))
+                .collect(),
+            self.kw_var_params
+                .as_ref()
+                .map(|pt| TyParam::t(pt.typ().clone()))
+                .into_iter()
                 .collect(),
         ]
         .concat()
@@ -2033,6 +2043,11 @@ impl HasLevel for Type {
                     .filter_map(|p| p.typ().level())
                     .min();
                 let v_min = subr.var_params.iter().filter_map(|p| p.typ().level()).min();
+                let kw_v_min = subr
+                    .kw_var_params
+                    .iter()
+                    .filter_map(|p| p.typ().level())
+                    .min();
                 let d_min = subr
                     .default_params
                     .iter()
@@ -2044,7 +2059,7 @@ impl HasLevel for Type {
                     .filter_map(|p| p.default_typ().and_then(|t| t.level()))
                     .min();
                 let ret_min = subr.return_t.level();
-                [nd_min, v_min, d_min, dv_min, ret_min]
+                [nd_min, v_min, kw_v_min, d_min, dv_min, ret_min]
                     .iter()
                     .filter_map(|o| *o)
                     .min()
@@ -2118,6 +2133,9 @@ impl HasLevel for Type {
                     pt.typ().set_level(level);
                 }
                 if let Some(pt) = subr.var_params.as_ref() {
+                    pt.typ().set_level(level);
+                }
+                if let Some(pt) = subr.kw_var_params.as_ref() {
                     pt.typ().set_level(level);
                 }
                 for pt in subr.default_params.iter() {
@@ -2254,11 +2272,13 @@ impl StructuralEq for Type {
                     after: after2,
                 },
             ) => {
-                before.structural_eq(before2)
-                    && after
-                        .as_ref()
-                        .zip(after2.as_ref())
-                        .is_none_or(|(a, b)| a.structural_eq(b))
+                // after は両方 Some か両方 None のときのみ等しい(片側のみ Some は不一致)
+                let after_eq = match (after.as_ref(), after2.as_ref()) {
+                    (Some(a), Some(b)) => a.structural_eq(b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                before.structural_eq(before2) && after_eq
             }
             (
                 Self::Proj { lhs, rhs },
@@ -3184,7 +3204,14 @@ impl Type {
     pub fn contains_value(&self, target: &ValueObj) -> bool {
         match self {
             Self::FreeVar(fv) if fv.is_linked() => fv.unwrap_linked().contains_value(target),
-            Self::FreeVar(_) => false,
+            Self::FreeVar(fv) => {
+                fv.get_subsup().is_some_and(|(sub, sup)| {
+                    fv.dummy_link();
+                    let res = sub.contains_value(target) || sup.contains_value(target);
+                    fv.undo();
+                    res
+                }) || fv.get_type().is_some_and(|t| t.contains_value(target))
+            }
             Self::Record(rec) => rec.iter().any(|(_, t)| t.contains_value(target)),
             Self::NamedTuple(rec) => rec.iter().any(|(_, t)| t.contains_value(target)),
             Self::Poly { params, .. } => params.iter().any(|tp| tp.contains_value(target)),
@@ -5074,6 +5101,10 @@ impl Type {
                 if let Some(var) = subr.var_params.as_mut() {
                     *var.as_mut().typ_mut() = std::mem::take(var.as_mut().typ_mut()).normalize();
                 }
+                if let Some(kw_var) = subr.kw_var_params.as_mut() {
+                    *kw_var.as_mut().typ_mut() =
+                        std::mem::take(kw_var.as_mut().typ_mut()).normalize();
+                }
                 for d in subr.default_params.iter_mut() {
                     *d.typ_mut() = std::mem::take(d.typ_mut()).normalize();
                     if let Some(default) = d.default_typ_mut() {
@@ -5635,6 +5666,9 @@ impl Type {
                 }
                 if let Some(var) = sub.var_params.as_ref() {
                     set.extend(var.typ().variables());
+                }
+                if let Some(kw_var) = sub.kw_var_params.as_ref() {
+                    set.extend(kw_var.typ().variables());
                 }
                 for d in sub.default_params.iter() {
                     set.extend(d.typ().variables());

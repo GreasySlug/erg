@@ -102,6 +102,11 @@ fn exec_comptime() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_poly_class() -> Result<(), ()> {
+    expect_success("tests/should_ok/poly_class.er", 2)
+}
+
+#[test]
 fn exec_container_class() -> Result<(), ()> {
     expect_success("tests/should_ok/container_class.er", 0)
 }
@@ -363,6 +368,21 @@ fn exec_poly_type_spec() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_comptime_type_func() -> Result<(), ()> {
+    expect_success("tests/should_ok/comptime_type_func.er", 0)
+}
+
+#[test]
+fn exec_recursive_multi_arm() -> Result<(), ()> {
+    expect_success("tests/should_ok/recursive_multi_arm.er", 0)
+}
+
+#[test]
+fn exec_refinement_arith() -> Result<(), ()> {
+    expect_success("tests/should_ok/refinement_arith.er", 0)
+}
+
+#[test]
 fn exec_pyimport_test() -> Result<(), ()> {
     // HACK: When running the test with Windows, the exit code is 1 (the cause is unknown)
     if cfg!(windows) && env_python_version().unwrap().minor < Some(8) {
@@ -380,6 +400,11 @@ fn exec_quantified() -> Result<(), ()> {
 #[test]
 fn exec_raw_ident() -> Result<(), ()> {
     expect_success("examples/raw_ident.er", 1)
+}
+
+#[test]
+fn exec_ratio() -> Result<(), ()> {
+    expect_success("tests/should_ok/ratio.er", 0)
 }
 
 #[test]
@@ -786,7 +811,7 @@ fn exec_recursive_fn_err() -> Result<(), ()> {
 
 #[test]
 fn exec_refinement_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/refinement.er", 0, 10)
+    expect_compile_failure("tests/should_err/refinement.er", 0, 13)
 }
 
 #[test]

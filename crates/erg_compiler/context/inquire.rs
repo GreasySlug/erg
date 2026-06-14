@@ -18,7 +18,10 @@ use erg_common::{fmt_vec, levenshtein};
 use erg_parser::ast::{self, Identifier, VarName};
 use erg_parser::token::Token;
 
-use crate::ty::constructors::{anon, fn_met, free_var, func, mono, poly, proc, proj, ref_, subr_t};
+use crate::ty::constructors::{
+    anon, closed_range, fn_met, free_var, func, mono, poly, proc, proj, ref_, refinement, subr_t,
+};
+use erg_parser::token::TokenKind;
 use crate::ty::free::{Constraint, FreeTyParam, FreeTyVar};
 use crate::ty::typaram::TyParam;
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
@@ -620,10 +623,8 @@ impl Context {
                 Ok(()) if acc_kind.matches(vi) => {
                     return Triple::Ok(vi.clone());
                 }
-                Err(err) => {
-                    if !acc_kind.is_local() {
-                        return Triple::Err(err);
-                    }
+                Err(err) if !acc_kind.is_local() => {
+                    return Triple::Err(err);
                 }
                 _ => {}
             }
@@ -688,10 +689,8 @@ impl Context {
                     let vi = self.get_mut_current_scope_var(&ident.name).unwrap();
                     return Some(vi);
                 }
-                Err(_err) => {
-                    if !acc_kind.is_local() {
-                        return None;
-                    }
+                Err(_err) if !acc_kind.is_local() => {
+                    return None;
                 }
                 _ => {}
             }
@@ -726,10 +725,8 @@ impl Context {
                 Ok(()) if acc_kind.matches(vi) => {
                     return Triple::Ok(vi.clone());
                 }
-                Err(err) => {
-                    if !acc_kind.is_local() {
-                        return Triple::Err(err);
-                    }
+                Err(err) if !acc_kind.is_local() => {
+                    return Triple::Err(err);
                 }
                 _ => {}
             }
@@ -835,7 +832,7 @@ impl Context {
         }
         // class/module attr
         if let Ok(singular_ctxs) = self.get_singular_ctxs_by_hir_expr(obj, namespace) {
-            for ctx in singular_ctxs {
+            for ctx in &singular_ctxs {
                 match ctx.rec_get_var_info(ident, AccessKind::UnboundAttr, input, namespace) {
                     Triple::Ok(vi) => {
                         return Triple::Ok(vi);
@@ -845,6 +842,20 @@ impl Context {
                     }
                     Triple::None => {}
                 }
+            }
+            // Untyped PyModule fallback: if the module context is empty, return Obj
+            if self_t.is_py_module() && singular_ctxs.iter().all(|ctx| ctx.is_empty()) {
+                let muty = Mutability::from(&ident.inspect()[..]);
+                return Triple::Ok(VarInfo::new(
+                    Type::Obj,
+                    muty,
+                    Visibility::DUMMY_PUBLIC,
+                    VarKind::Builtin,
+                    None,
+                    ContextKind::Dummy,
+                    None,
+                    AbsLocation::unknown(),
+                ));
             }
         }
         // bound method/instance attr
@@ -908,6 +919,23 @@ impl Context {
                 return Triple::Err(err);
             }
             _ => {}
+        }
+        // Untyped Python value fallback: if the obj type is Obj and all normal resolution failed,
+        // allow arbitrary attribute access (returns Obj). This enables chained access on values
+        // from untyped Python modules (e.g., wave.Error.__name__).
+        // This is placed AFTER all normal resolution to avoid interfering with Erg type inference.
+        if *obj.ref_t() == Type::Obj {
+            let muty = Mutability::from(&ident.inspect()[..]);
+            return Triple::Ok(VarInfo::new(
+                Type::Obj,
+                muty,
+                Visibility::DUMMY_PUBLIC,
+                VarKind::Builtin,
+                None,
+                ContextKind::Dummy,
+                None,
+                AbsLocation::unknown(),
+            ));
         }
         self.fallback_get_attr_info(obj, ident, input, namespace, expect)
     }
@@ -1032,6 +1060,8 @@ impl Context {
         match t {
             // (obj: Failure).foo: Failure
             Type::Failure => Triple::Ok(VarInfo::ILLEGAL),
+            // Note: Type::Obj is NOT handled here to avoid affecting normal Erg type inference.
+            // Untyped Python value propagation is handled via get_attr_info fallback instead.
             Type::FreeVar(fv) if fv.is_linked() => {
                 self.get_attr_info_from_attributive(&fv.unwrap_linked(), ident, namespace)
             }
@@ -1156,6 +1186,20 @@ impl Context {
                 ..VarInfo::default()
             });
         }
+        // Obj(args) -> Obj: untyped Python value used as callable
+        if *obj.ref_t() == Type::Obj {
+            return Ok(VarInfo {
+                t: Type::Subr(SubrType::new(
+                    SubrKind::Func,
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    Obj,
+                )),
+                ..VarInfo::default()
+            });
+        }
         if let Some(attr_name) = attr_name.as_ref() {
             let mut vi =
                 self.search_method_info(obj, attr_name, pos_args, kw_args, input, namespace)?;
@@ -1201,6 +1245,20 @@ impl Context {
                     vec![],
                     Some(ParamTy::Pos(ref_(Obj))),
                     Failure,
+                )),
+                ..VarInfo::default()
+            });
+        }
+        // Obj(args) -> Obj: untyped Python value used as callable
+        if *obj.ref_t() == Type::Obj {
+            return Ok(VarInfo {
+                t: Type::Subr(SubrType::new(
+                    SubrKind::Func,
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    Obj,
                 )),
                 ..VarInfo::default()
             });
@@ -1409,6 +1467,18 @@ impl Context {
             return Ok(vi);
         }
         match self.get_attr_info_from_attributive(obj.ref_t(), attr_name, namespace) {
+            // Untyped value (Obj): make callable for method call context
+            Triple::Ok(vi) if vi.t == Type::Obj => {
+                let subr_t = Type::Subr(SubrType::new(
+                    SubrKind::Func,
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    Obj,
+                ));
+                return Ok(VarInfo { t: subr_t, ..vi });
+            }
             Triple::Ok(vi) => {
                 return Ok(vi);
             }
@@ -1418,7 +1488,7 @@ impl Context {
             _ => {}
         }
         if let Ok(singular_ctxs) = self.get_singular_ctxs_by_hir_expr(obj, namespace) {
-            for ctx in singular_ctxs {
+            for ctx in &singular_ctxs {
                 if let Some(vi) = ctx.get_current_scope_non_param(&attr_name.name) {
                     self.validate_visibility(attr_name, vi, input, namespace)?;
                     return Ok(vi.clone());
@@ -1429,6 +1499,28 @@ impl Context {
                         return Ok(vi.clone());
                     }
                 }
+            }
+            // Untyped PyModule: any method call returns Obj
+            if obj.ref_t().is_py_module() && singular_ctxs.iter().all(|ctx| ctx.is_empty()) {
+                let subr_t = Type::Subr(SubrType::new(
+                    SubrKind::Func,
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    vec![],
+                    Some(ParamTy::Pos(ref_(Obj))),
+                    Obj,
+                ));
+                let muty = Mutability::from(&attr_name.inspect()[..]);
+                return Ok(VarInfo::new(
+                    subr_t,
+                    muty,
+                    Visibility::DUMMY_PUBLIC,
+                    VarKind::Builtin,
+                    None,
+                    ContextKind::Dummy,
+                    None,
+                    AbsLocation::unknown(),
+                ));
             }
         }
         let mut checked = vec![];
@@ -1756,6 +1848,138 @@ impl Context {
         } else {
             e
         }
+    }
+
+    /// Extract integer interval bounds `[lo, hi]` (`None` = unbounded) from a refinement /
+    /// interval type over `Int`/`Nat`. Returns `None` if the type is not an integer type
+    /// with usable bounds (so the caller leaves the result type unchanged).
+    pub(crate) fn int_interval_bounds(&self, t: &Type) -> Option<(Option<i64>, Option<i64>)> {
+        fn const_int(tp: &TyParam) -> Option<i64> {
+            match tp {
+                TyParam::Value(ValueObj::Int(n)) => Some(*n as i64),
+                TyParam::Value(ValueObj::Nat(n)) => i64::try_from(*n).ok(),
+                TyParam::FreeVar(fv) if fv.is_linked() => const_int(&fv.crack()),
+                _ => None,
+            }
+        }
+        fn apply(var: &str, pred: &Predicate, lo: &mut Option<i64>, hi: &mut Option<i64>) {
+            match pred {
+                Predicate::Equal { lhs, rhs } if &lhs[..] == var => {
+                    if let Some(n) = const_int(rhs) {
+                        *lo = Some(lo.map_or(n, |l| l.max(n)));
+                        *hi = Some(hi.map_or(n, |h| h.min(n)));
+                    }
+                }
+                Predicate::GreaterEqual { lhs, rhs } if &lhs[..] == var => {
+                    if let Some(n) = const_int(rhs) {
+                        *lo = Some(lo.map_or(n, |l| l.max(n)));
+                    }
+                }
+                Predicate::LessEqual { lhs, rhs } if &lhs[..] == var => {
+                    if let Some(n) = const_int(rhs) {
+                        *hi = Some(hi.map_or(n, |h| h.min(n)));
+                    }
+                }
+                Predicate::And(p1, p2) => {
+                    apply(var, p1, lo, hi);
+                    apply(var, p2, lo, hi);
+                }
+                _ => {}
+            }
+        }
+        match t {
+            Type::FreeVar(fv) if fv.is_linked() => self.int_interval_bounds(&fv.crack()),
+            // Type variables / generic params may unify to anything; never treat them as
+            // integers (otherwise a generic `(x, y) -> x + y` would be refined to Nat).
+            Type::FreeVar(_) => None,
+            Type::Refinement(r) => {
+                let (mut lo, mut hi) = self.int_interval_bounds(&r.t)?;
+                apply(&r.var, &r.pred, &mut lo, &mut hi);
+                Some((lo, hi))
+            }
+            // only concrete nominal integer types
+            Nat => Some((Some(0), None)),
+            Int => Some((None, None)),
+            _ => None,
+        }
+    }
+
+    fn build_num_refinement(
+        &self,
+        base: Type,
+        lo: Option<i64>,
+        hi: Option<i64>,
+    ) -> Option<Type> {
+        let in_i32 = |n: i64| i32::try_from(n).ok();
+        let var = Str::ever("_v");
+        match (lo, hi) {
+            (None, None) => None,
+            (Some(a), Some(b)) if a <= b => Some(closed_range(base, in_i32(a)?, in_i32(b)?)),
+            (Some(a), None) => Some(refinement(
+                var.clone(),
+                base,
+                Predicate::ge(var, TyParam::value(in_i32(a)?)),
+            )),
+            (None, Some(b)) => Some(refinement(
+                var.clone(),
+                base,
+                Predicate::le(var, TyParam::value(in_i32(b)?)),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Compute a refined result type for an arithmetic binop (`+`/`-`/`*`/`/`) from the
+    /// concrete operand types. Returns `None` when no refinement applies. This is a *leaf*
+    /// computation (it builds the result type directly and never re-enters projection
+    /// evaluation), so it cannot cause unbounded recursion.
+    pub(crate) fn refine_num_binop(
+        &self,
+        op: TokenKind,
+        l_t: &Type,
+        r_t: &Type,
+    ) -> Option<Type> {
+        let (llo, lhi) = self.int_interval_bounds(l_t)?;
+        let (rlo, rhi) = self.int_interval_bounds(r_t)?;
+        let add = |a: Option<i64>, b: Option<i64>| a.zip(b).and_then(|(a, b)| a.checked_add(b));
+        let sub = |a: Option<i64>, b: Option<i64>| a.zip(b).and_then(|(a, b)| a.checked_sub(b));
+        let mul = |a: Option<i64>, b: Option<i64>| a.zip(b).and_then(|(a, b)| a.checked_mul(b));
+        // `ratio_base` selects `Ratio` for true division; otherwise the base is `Nat`/`Int`
+        // chosen below from the sign of the result's lower bound.
+        let (ratio_base, lo, hi) = match op {
+            TokenKind::Plus => (false, add(llo, rlo), add(lhi, rhi)),
+            TokenKind::Minus => (false, sub(llo, rhi), sub(lhi, rlo)),
+            // multiplication of non-negative operands stays in `[lo*lo, hi*hi]`
+            TokenKind::Star if llo.is_some_and(|l| l >= 0) && rlo.is_some_and(|r| r >= 0) => {
+                (false, mul(llo, rlo), mul(lhi, rhi))
+            }
+            // true division: only the non-negative / strictly-positive case is sound here
+            // (it rules out division by zero and avoids sign analysis). `a / b` then lies in
+            // `[floor(a_lo / b_hi), ceil(a_hi / b_lo)]` and is a non-negative `Ratio`.
+            TokenKind::Slash if llo.is_some_and(|l| l >= 0) && rlo.is_some_and(|r| r >= 1) => {
+                let a_lo = llo.unwrap();
+                let b_lo = rlo.unwrap();
+                let lo = match rhi {
+                    Some(b_hi) => Some(a_lo.div_euclid(b_hi)),
+                    None => Some(0),
+                };
+                let hi = lhi.and_then(|a_hi| {
+                    a_hi.checked_add(b_lo)
+                        .and_then(|x| x.checked_sub(1))
+                        .map(|x| x.div_euclid(b_lo))
+                });
+                (true, lo, hi)
+            }
+            _ => return None,
+        };
+        let base = if ratio_base {
+            Ratio
+        } else if lo.is_some_and(|a| a >= 0) {
+            Nat
+        } else {
+            Int
+        };
+        self.build_num_refinement(base, lo, hi)
     }
 
     pub(crate) fn get_binop_t(
@@ -2090,7 +2314,7 @@ impl Context {
                     }
                 })
             }
-            Type::Failure | Type::Never => Ok(SubstituteResult::Ok),
+            Type::Failure | Type::Never | Type::Obj => Ok(SubstituteResult::Ok),
             _ => self.substitute_dunder_call(
                 obj,
                 attr_name,
@@ -3508,7 +3732,13 @@ impl Context {
                 }
             },
             Type::Mono(name) => {
-                return self.get_mono_type(name);
+                // First try mono_types, then fall back to poly_types
+                // This handles user-defined polymorphic classes where gen_type returns Mono
+                // but the class is registered as polymorphic
+                if let Some(ctx) = self.get_mono_type(name) {
+                    return Some(ctx);
+                }
+                return self.get_poly_type(name);
             }
             Type::Poly { name, .. } => {
                 return self.get_poly_type(name);

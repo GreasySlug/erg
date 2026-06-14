@@ -763,28 +763,22 @@ impl HasLevel for TyParam {
             Self::UnsizedList(tp) => tp.level(),
             Self::Dict(tps) => tps
                 .iter()
-                .map(|(k, v)| {
-                    k.level()
-                        .unwrap_or(GENERIC_LEVEL)
-                        .min(v.level().unwrap_or(GENERIC_LEVEL))
-                })
+                .flat_map(|(k, v)| [k.level(), v.level()])
+                .flatten()
                 .min(),
-            Self::Record(rec) | Self::DataClass { fields: rec, .. } => rec
-                .iter()
-                .map(|(_, v)| v.level().unwrap_or(GENERIC_LEVEL))
-                .min(),
+            Self::Record(rec) | Self::DataClass { fields: rec, .. } => {
+                rec.iter().filter_map(|(_, v)| v.level()).min()
+            }
             Self::Lambda(lambda) => lambda.level(),
             Self::Set(tps) => tps.iter().filter_map(|tp| tp.level()).min(),
             Self::Proj { obj, .. } => obj.level(),
-            Self::ProjCall { obj, args, .. } => obj.level().and_then(|l| {
-                args.iter()
-                    .filter_map(|tp| tp.level())
-                    .min()
-                    .map(|r| l.min(r))
-            }),
+            Self::ProjCall { obj, args, .. } => core::iter::once(obj.level())
+                .chain(args.iter().map(|tp| tp.level()))
+                .flatten()
+                .min(),
             Self::App { args, .. } => args.iter().filter_map(|tp| tp.level()).min(),
             Self::UnaryOp { val, .. } => val.level(),
-            Self::BinOp { lhs, rhs, .. } => lhs.level().and_then(|l| rhs.level().map(|r| l.min(r))),
+            Self::BinOp { lhs, rhs, .. } => [lhs.level(), rhs.level()].into_iter().flatten().min(),
             Self::Value(val) => val.level(),
             Self::Erased(ty) => ty.level(),
             Self::Mono(_) | Self::Failure => None,
@@ -1127,7 +1121,9 @@ impl TyParam {
                 } else {
                     Some(TyParamOrdering::NotEqual)
                 },
-            (l, r @ (Self::Erased(_) | Self::Mono{ .. } | Self::FreeVar{ .. })) =>
+            (Self::Mono(l), Self::Mono(r)) =>
+                Some(if l == r { TyParamOrdering::Equal } else { TyParamOrdering::NotEqual }),
+            (l, r @ (Self::Erased(_) | Self::FreeVar{ .. })) =>
                 r.cheap_cmp(l).map(|ord| ord.reverse()),
             _ => None,
         }
@@ -1561,6 +1557,20 @@ impl TyParam {
     pub fn substitute(self, var: &str, to: &TyParam) -> TyParam {
         if self.qual_name().is_some_and(|n| n == var) {
             return to.clone();
+        }
+        // ラムダが同名の仮引数を束縛している場合、本体内の `var` はその仮引数を指すので
+        // 代入してはいけない(変数捕獲の回避)
+        if let TyParam::Lambda(lambda) = &self {
+            let shadowed = lambda
+                .nd_params
+                .iter()
+                .chain(lambda.var_params.iter())
+                .chain(lambda.d_params.iter())
+                .chain(lambda.kw_var_params.iter())
+                .any(|p| p.name().is_some_and(|n| n == var));
+            if shadowed {
+                return self;
+            }
         }
         self.map(&mut |tp| tp.substitute(var, to), &SharedFrees::new())
     }
@@ -2236,7 +2246,10 @@ impl TyParamOrdering {
         matches!(self, Greater | GreaterEqual | Equal | Any)
     }
     pub const fn canbe_ne(self) -> bool {
-        matches!(self, NotEqual | Any)
+        matches!(
+            self,
+            Less | Greater | LessEqual | GreaterEqual | NotEqual | Any
+        )
     }
     pub const fn is_lt(&self) -> bool {
         matches!(self, Less | LessEqual | Any)
@@ -2262,9 +2275,10 @@ impl TyParamOrdering {
             Greater => Less,
             LessEqual => GreaterEqual,
             GreaterEqual => LessEqual,
-            Equal => NotEqual,
-            NotEqual => Equal,
-            Any | NoRelation => Any,
+            Equal => Equal,
+            NotEqual => NotEqual,
+            Any => Any,
+            NoRelation => NoRelation,
         }
     }
 }

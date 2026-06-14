@@ -23,9 +23,13 @@ static UNBOUND_ID: AtomicUsize = AtomicUsize::new(0);
 pub trait HasLevel {
     fn level(&self) -> Option<Level>;
     fn set_level(&self, lev: Level);
+    /// レベルを `level` まで下げる(現在のレベルが `level` より高いときのみ)。
+    /// `lower`(レベルを 1 下げる)の「指定値まで下げる」版。
     fn set_lower(&self, level: Level) {
-        if self.level() < Some(level) {
-            self.set_level(level);
+        if let Some(cur) = self.level() {
+            if cur > level {
+                self.set_level(level);
+            }
         }
     }
     fn lift(&self) {
@@ -444,9 +448,11 @@ impl<T> FreeKind<T> {
     }
 
     pub fn new_unbound(lev: Level, constraint: Constraint) -> Self {
-        UNBOUND_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // fetch_add は旧値をアトミックに返す。+1 で一意な新 ID を得る
+        // (load を分離すると並行時に同一 ID を採番する TOCTOU になる)
+        let id = UNBOUND_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Self::Unbound {
-            id: UNBOUND_ID.load(std::sync::atomic::Ordering::SeqCst),
+            id: id + 1,
             lev,
             constraint,
         }
@@ -680,10 +686,11 @@ impl Free<Type> {
     pub fn linked_free(&self) -> Option<Free<Type>> {
         let linked = self.get_linked()?;
         let fv = linked.as_free()?;
-        if let Some(fv) = fv.linked_free() {
-            Some(fv)
+        if let Some(deeper) = fv.linked_free() {
+            Some(deeper)
         } else {
-            Some(self.clone())
+            // 終端の自由変数(fv)を返す。self は fv へのリンクなので self ではなく fv。
+            Some(fv.clone())
         }
     }
 
@@ -755,9 +762,6 @@ impl Free<Type> {
                         log!(err "cannot update the constraint of a generalized type variable");
                         return;
                     }
-                    if addr_eq!(*constraint, new_constraint) {
-                        return;
-                    }
                     *constraint = new_constraint;
                 }
                 FreeKind::Linked(_) | FreeKind::UndoableLinked { .. } => unreachable!(),
@@ -772,10 +776,11 @@ impl Free<TyParam> {
     pub fn linked_free(&self) -> Option<Free<TyParam>> {
         let linked = self.get_linked()?;
         let fv = linked.as_free()?;
-        if let Some(fv) = fv.linked_free() {
-            Some(fv)
+        if let Some(deeper) = fv.linked_free() {
+            Some(deeper)
         } else {
-            Some(self.clone())
+            // 終端の自由変数(fv)を返す。self は fv へのリンクなので self ではなく fv。
+            Some(fv.clone())
         }
     }
 
@@ -856,9 +861,9 @@ impl HasLevel for Free<Type> {
     fn set_level(&self, level: Level) {
         match &mut *self.borrow_mut() {
             FreeKind::Unbound { lev, .. } | FreeKind::NamedUnbound { lev, .. } => {
-                if addr_eq!(*lev, level) {
-                    return;
-                }
+                // NOTE: ここで `*lev == level` による早期 return をしてはいけない。
+                // `update_constraint` は新しい制約境界のレベルを同期しないため、
+                // 下の sub/sup への伝播は毎回実行する必要がある。
                 *lev = level;
             }
             _ => {}
@@ -887,9 +892,9 @@ impl HasLevel for Free<TyParam> {
     fn set_level(&self, level: Level) {
         match &mut *self.borrow_mut() {
             FreeKind::Unbound { lev, .. } | FreeKind::NamedUnbound { lev, .. } => {
-                if addr_eq!(*lev, level) {
-                    return;
-                }
+                // NOTE: ここで `*lev == level` による早期 return をしてはいけない。
+                // `update_constraint` は新しい制約境界のレベルを同期しないため、
+                // 下の sub/sup への伝播は毎回実行する必要がある。
                 *lev = level;
             }
             _ => {}
@@ -1239,9 +1244,6 @@ impl Free<TyParam> {
                 } => {
                     if !in_inst_or_gen && *lev == GENERIC_LEVEL {
                         log!(err "cannot update the constraint of a generalized type variable");
-                        return;
-                    }
-                    if addr_eq!(*constraint, new_constraint) {
                         return;
                     }
                     *constraint = new_constraint;

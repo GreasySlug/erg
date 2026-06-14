@@ -1,0 +1,20 @@
+# Test for user-defined const functions (compile-time functions)
+
+# Basic const function with two parameters
+MyAdd(X, Y: Nat): Nat = X + Y
+assert MyAdd(1, 2) == 3
+assert MyAdd(10, 20) == 30
+
+# Single parameter const function
+MyDouble(X: Nat): Nat = X * 2
+assert MyDouble(5) == 10
+assert MyDouble(0) == 0
+
+# Const function with subtraction
+MySub(X, Y: Nat): Nat = X - Y
+assert MySub(10, 3) == 7
+
+# Const function returning a computed value
+MySquare(X: Nat): Nat = X * X
+assert MySquare(4) == 16
+assert MySquare(3) == 9

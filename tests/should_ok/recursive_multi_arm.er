@@ -1,0 +1,23 @@
+# Recursive multi-arm (3+ arm) functions, regular and const (uppercase-initial).
+# Regression test: a 3+ arm const function whose catch-all parameter name matched
+# the merged function parameter used to fail with a spurious "cannot be assigned
+# more than once" because `registered_info` searched the outer scope for const names.
+
+# regular (lowercase) multi-arm recursion
+fib 0 = 0
+fib 1 = 1
+fib(n: Int): Int = fib(n - 1) + fib(n - 2)
+assert fib(10) == 55
+
+# const (uppercase) multi-arm recursion
+Fib 0 = 0
+Fib 1 = 1
+Fib(N: Int): Int = Fib(N - 1) + Fib(N - 2)
+assert Fib(10) == 55
+
+# const factorial (single base arm + catch-all)
+Fact 0 = 1
+Fact(N: Int): Int = N * Fact(N - 1)
+assert Fact(5) == 120
+
+print! "ok"

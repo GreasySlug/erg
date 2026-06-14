@@ -45,6 +45,179 @@ use crate::ty::ValueObj;
 use crate::varinfo::VarInfo;
 use crate::GenericHIRBuilder;
 
+/// Preprocess `.pyi` (Python type stub) source text to Erg-compatible syntax.
+///
+/// Converts Python stub syntax to type ascriptions that the Erg parser can handle:
+/// - `def func(a: int, b: int) -> int: ...` → `func: (a: int, b: int) -> int`
+/// - `x: int = ...` → `x: int`
+/// - Removes `import`, `from ... import`, `@decorator`, `class`, `...`, `pass`
+fn preprocess_pyi(src: &str) -> String {
+    let mut result = String::with_capacity(src.len());
+    let mut paren_depth: i32 = 0;
+    let mut in_def = false;
+    let mut in_class_body = false;
+    let mut class_indent: usize = 0;
+    for line in src.lines() {
+        let trimmed = line.trim();
+        let indent_len = line.len() - line.trim_start().len();
+        // Track class body scope
+        if in_class_body {
+            if !trimmed.is_empty() && indent_len <= class_indent {
+                in_class_body = false;
+            } else {
+                result.push('\n');
+                continue;
+            }
+        }
+        // Multi-line def continuation
+        if in_def {
+            for ch in trimmed.chars() {
+                match ch {
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -= 1,
+                    _ => {}
+                }
+            }
+            if paren_depth <= 0 {
+                in_def = false;
+                let cleaned = strip_pyi_body(trimmed);
+                let has_return = cleaned.contains("->");
+                let cleaned = replace_none_return(cleaned);
+                let indent = &line[..indent_len];
+                result.push_str(indent);
+                result.push_str(&cleaned);
+                if !has_return {
+                    result.push_str(" -> NoneType");
+                }
+                result.push('\n');
+            } else {
+                result.push_str(line);
+                result.push('\n');
+            }
+            continue;
+        }
+        // Skip empty lines
+        if trimmed.is_empty() {
+            result.push('\n');
+            continue;
+        }
+        // Skip standalone ellipsis and pass
+        if trimmed == "..." || trimmed == "pass" {
+            result.push('\n');
+            continue;
+        }
+        // Skip import statements
+        if trimmed.starts_with("from ") || trimmed.starts_with("import ") {
+            result.push('\n');
+            continue;
+        }
+        // Skip decorators
+        if trimmed.starts_with('@') {
+            result.push('\n');
+            continue;
+        }
+        // Skip class definitions and their bodies
+        if trimmed.starts_with("class ") {
+            in_class_body = true;
+            class_indent = indent_len;
+            result.push('\n');
+            continue;
+        }
+        // Handle def → type ascription
+        if let Some(rest) = trimmed.strip_prefix("def ") {
+            if let Some(paren_pos) = rest.find('(') {
+                let func_name = &rest[..paren_pos];
+                let after_name = &rest[paren_pos..];
+                paren_depth = 0;
+                for ch in after_name.chars() {
+                    match ch {
+                        '(' => paren_depth += 1,
+                        ')' => paren_depth -= 1,
+                        _ => {}
+                    }
+                }
+                let indent = &line[..indent_len];
+                if paren_depth <= 0 {
+                    // Single-line def
+                    let after_name = strip_pyi_body(after_name);
+                    let has_return = after_name.contains("->");
+                    let after_name = replace_none_return(after_name);
+                    result.push_str(indent);
+                    result.push_str(func_name);
+                    result.push_str(": ");
+                    result.push_str(&after_name);
+                    if !has_return {
+                        result.push_str(" -> NoneType");
+                    }
+                    result.push('\n');
+                } else {
+                    // Multi-line def starts
+                    in_def = true;
+                    result.push_str(indent);
+                    result.push_str(func_name);
+                    result.push_str(": ");
+                    result.push_str(after_name);
+                    result.push('\n');
+                }
+            } else {
+                result.push('\n');
+            }
+            continue;
+        }
+        // Handle variable declarations with `= ...` (e.g., `x: int = ...`)
+        if let Some(pos) = trimmed.rfind(" = ...") {
+            if trimmed[..pos].contains(": ") {
+                let indent = &line[..indent_len];
+                result.push_str(indent);
+                result.push_str(&trimmed[..pos]);
+                result.push('\n');
+                continue;
+            }
+        }
+        // Skip untyped assignments (e.g., `T = TypeVar('T')`, `__all__ = [...]`)
+        if !trimmed.contains(": ") && trimmed.contains(" = ") {
+            result.push('\n');
+            continue;
+        }
+        // Pass through other lines (e.g., `x: int`)
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
+}
+
+/// Convert `.pyi` source to Erg declarations. Uses the full converter
+/// (`erg_pydecl`, a real Python parser) when the `pydecl` feature is
+/// enabled, falling back to the line-based `preprocess_pyi` if the
+/// conversion fails or the feature is off.
+fn convert_pyi(src: &str) -> String {
+    #[cfg(feature = "pydecl")]
+    if let Ok(decl) = erg_pydecl::convert_pyi_to_decl(src) {
+        return decl;
+    }
+    preprocess_pyi(src)
+}
+
+/// Strip `: ...` or `: pass` body suffix from a `.pyi` line.
+fn strip_pyi_body(s: &str) -> &str {
+    s.strip_suffix(": ...")
+        .or_else(|| s.strip_suffix(":..."))
+        .or_else(|| s.strip_suffix(": pass"))
+        .unwrap_or(s)
+}
+
+/// Replace `-> None` with `-> NoneType` (only when `None` is the full return type).
+fn replace_none_return(s: &str) -> String {
+    // Match `-> None` at the end but NOT `-> NoneType`
+    let trimmed = s.trim_end();
+    if trimmed.ends_with("-> None") && !trimmed.ends_with("-> NoneType") {
+        let prefix = &trimmed[..trimmed.len() - "None".len()];
+        format!("{prefix}NoneType")
+    } else {
+        s.to_owned()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckStatus {
     Succeed,
@@ -691,7 +864,9 @@ impl<ASTBuilder: ASTBuildable, HIRBuilder: Buildable>
                 .resolve_decl_path(path, cfg)
                 .or_else(|| cfg.input.resolve_real_path(path, cfg))
         };
-        VFS.cache_path(cfg.input.clone(), path.to_path_buf(), resolved.clone());
+        if resolved.is_some() {
+            VFS.cache_path(cfg.input.clone(), path.to_path_buf(), resolved.clone());
+        }
         let import_path = match resolved {
             Some(path) => path,
             None if ERG_MODE => {
@@ -789,6 +964,11 @@ impl<ASTBuilder: ASTBuildable, HIRBuilder: Buildable>
     fn parse(&mut self, import_path: &NormalizedPathBuf) -> Option<AST> {
         let Ok(src) = import_path.try_read() else {
             return None;
+        };
+        let src = if import_path.extension() == Some(OsStr::new("pyi")) {
+            convert_pyi(&src)
+        } else {
+            src
         };
         let cfg = self.cfg.inherit(import_path.to_path_buf());
         let result = if import_path.extension() == Some(OsStr::new("er")) {
@@ -1025,5 +1205,85 @@ impl<ASTBuilder: ASTBuildable, HIRBuilder: Buildable>
             }
         }
         self.shared.promises.mark_as_joined(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preprocess_pyi_basic() {
+        let src = "x: int\ny: str\n";
+        assert_eq!(preprocess_pyi(src), "x: int\ny: str\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_def_single_line() {
+        let src = "def add(a: int, b: int) -> int: ...\n";
+        assert_eq!(preprocess_pyi(src), "add: (a: int, b: int) -> int\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_def_none_return() {
+        let src = "def do_nothing() -> None: ...\n";
+        assert_eq!(preprocess_pyi(src), "do_nothing: () -> NoneType\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_def_no_return() {
+        let src = "def side_effect(x: int): ...\n";
+        assert_eq!(preprocess_pyi(src), "side_effect: (x: int) -> NoneType\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_def_multi_line() {
+        let src = "def func(\n    a: int,\n    b: int,\n) -> int: ...\n";
+        assert_eq!(
+            preprocess_pyi(src),
+            "func: (\n    a: int,\n    b: int,\n) -> int\n"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_pyi_def_multi_line_no_return() {
+        let src = "def func(\n    a: int,\n): ...\n";
+        assert_eq!(preprocess_pyi(src), "func: (\n    a: int,\n) -> NoneType\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_skip_imports() {
+        let src = "from typing import Optional\nimport os\nx: int\n";
+        assert_eq!(preprocess_pyi(src), "\n\nx: int\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_skip_class() {
+        let src = "class Foo:\n    x: int\n    def bar(self) -> int: ...\ny: str\n";
+        assert_eq!(preprocess_pyi(src), "\n\n\ny: str\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_skip_decorators() {
+        let src = "@overload\ndef f(x: int) -> int: ...\n";
+        assert_eq!(preprocess_pyi(src), "\nf: (x: int) -> int\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_var_with_ellipsis() {
+        let src = "VERSION: str = ...\n";
+        assert_eq!(preprocess_pyi(src), "VERSION: str\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_skip_untyped_assignments() {
+        let src = "T = TypeVar('T')\n__all__ = ['x']\nx: int\n";
+        assert_eq!(preprocess_pyi(src), "\n\nx: int\n");
+    }
+
+    #[test]
+    fn test_preprocess_pyi_skip_ellipsis_pass() {
+        let src = "...\npass\nx: int\n";
+        assert_eq!(preprocess_pyi(src), "\n\nx: int\n");
     }
 }

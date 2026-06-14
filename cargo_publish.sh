@@ -4,6 +4,8 @@ cd ../erg_common
 cargo publish
 cd ../erg_parser
 cargo publish
+cd ../erg_pydecl
+cargo publish
 cd ../erg_compiler
 cargo publish
 cd ../erg_linter

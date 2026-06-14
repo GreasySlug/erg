@@ -507,13 +507,17 @@ impl<'a> HIRLinker<'a> {
         let mod_path = self
             .cfg
             .input
-            .resolve_decl_path(Path::new(&mod_name_str[..]), self.cfg)
-            .unwrap();
-        if !mod_path
-            .canonicalize()
-            .unwrap()
-            .starts_with(dir.canonicalize().unwrap())
-        {
+            .resolve_decl_path(Path::new(&mod_name_str[..]), self.cfg);
+        if let Some(mod_path) = mod_path {
+            if !mod_path
+                .canonicalize()
+                .unwrap()
+                .starts_with(dir.canonicalize().unwrap())
+            {
+                dir = PathBuf::new();
+            }
+        } else {
+            // Untyped pyimport: no .d.er file, module is external/stdlib
             dir = PathBuf::new();
         }
         let mod_name_str = if let Some(stripped) = mod_name_str.strip_prefix("./") {

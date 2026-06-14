@@ -1,0 +1,12 @@
+# Test untyped pyimport: modules without .d.er files
+# wave has no .d.er in Erg stdlib
+wave = pyimport "wave"
+# Attribute access (module.attr → Obj)
+x = wave.Error
+print! x
+# Chained access (module.attr.attr → Obj)
+y = wave.Error.__name__
+print! y
+# Attribute as value (not called)
+f = wave.open
+print! f

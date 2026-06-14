@@ -20,6 +20,7 @@ members = [
     "crates/erg_parser",
     "crates/els",
     "crates/erg_proc_macros/",
+    "crates/erg_pydecl",
 ]
 
 [workspace.package]
@@ -67,6 +68,7 @@ large_thread = [
 ]
 py_compat = ["erg_compiler/py_compat", "els/py_compat"]
 gal = ["erg_common/gal", "erg_compiler/gal"]
+pydecl = ["erg_compiler/pydecl"]
 els = ["erg_common/els", "erg_compiler/els", "dep:els"]
 full-repl = ["erg_common/full-repl"]
 full = ["els", "full-repl", "unicode", "pretty"]
@@ -81,6 +83,7 @@ erg_compiler = { version = "0.6.53", path = "./crates/erg_compiler" }
 erg_linter = { version = "0.6.53", path = "./crates/erg_linter" }
 els = { version = "0.1.65", path = "./crates/els" }
 erg_proc_macros = { version = "0.6.53", path = "./crates/erg_proc_macros" }
+erg_pydecl = { version = "0.6.53", path = "./crates/erg_pydecl" }
 pyo3 = { version = "0.25", features = ["extension-module"] }
 
 [dependencies]

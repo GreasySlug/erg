@@ -271,6 +271,7 @@ pub fn mod_name(path: &Path) -> Str {
                         .trim_end_matches("lib.d.er")
                         .trim_end_matches(".d.er")
                         .trim_end_matches(".d")
+                        .trim_end_matches(".pyi")
                         .trim_end_matches(".py")
                         .to_string()
                 })
@@ -298,6 +299,7 @@ pub fn mod_name(path: &Path) -> Str {
                     c.trim_end_matches("lib.d.er")
                         .trim_end_matches(".d.er")
                         .trim_end_matches(".d")
+                        .trim_end_matches(".pyi")
                         .trim_end_matches(".py")
                         .to_string()
                 })
@@ -312,6 +314,7 @@ pub fn mod_name(path: &Path) -> Str {
         .unwrap()
         .to_string_lossy()
         .trim_end_matches(".d.er")
+        .trim_end_matches(".pyi")
         .trim_end_matches(".py")
         .to_string();
     let mut parents = path.components().rev().skip(1);

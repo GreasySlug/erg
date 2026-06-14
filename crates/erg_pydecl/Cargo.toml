@@ -1,0 +1,13 @@
+[package]
+name = "erg_pydecl"
+description = "Generates Erg type declarations from Python type stubs (.pyi)"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+erg_parser = { workspace = true }
+rustpython-parser = "0.4"

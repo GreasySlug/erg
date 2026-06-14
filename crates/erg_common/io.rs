@@ -12,6 +12,8 @@ use crate::env::{
 };
 use crate::pathutil::{add_postfix_foreach, remove_postfix};
 use crate::random::random;
+#[cfg(feature = "full-repl")]
+use crate::stdin::CellResult;
 use crate::stdin::GLOBAL_STDIN;
 use crate::traits::Immutable;
 use crate::vfs::VFS;
@@ -225,6 +227,12 @@ impl Input {
         GLOBAL_STDIN.set_indent(indent);
     }
 
+    /// Read a multi-line cell
+    #[cfg(feature = "full-repl")]
+    pub fn read_cell(&self) -> CellResult {
+        GLOBAL_STDIN.read_cell()
+    }
+
     pub fn file_stem(&self) -> String {
         match &self.kind {
             InputKind::File { path, .. } => path
@@ -301,7 +309,15 @@ impl Input {
                 }
             },
             InputKind::Pipe(s) | InputKind::Str(s) => s.clone(),
+            #[cfg(feature = "full-repl")]
             InputKind::REPL => GLOBAL_STDIN.read(),
+            #[cfg(not(feature = "full-repl"))]
+            InputKind::REPL => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).unwrap_or(0);
+                GLOBAL_STDIN.push_line(line.clone());
+                line
+            }
             InputKind::DummyREPL(dummy) => dummy.read_line(),
             InputKind::Dummy => panic!("cannot read from a dummy file"),
         }
@@ -319,7 +335,15 @@ impl Input {
         match &mut self.kind {
             InputKind::File { path, .. } => VFS.read(path),
             InputKind::Pipe(s) | InputKind::Str(s) => Ok(s.clone()),
+            #[cfg(feature = "full-repl")]
             InputKind::REPL => Ok(GLOBAL_STDIN.read()),
+            #[cfg(not(feature = "full-repl"))]
+            InputKind::REPL => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                GLOBAL_STDIN.push_line(line.clone());
+                Ok(line)
+            }
             InputKind::DummyREPL(dummy) => Ok(dummy.read_line()),
             InputKind::Dummy => panic!("cannot read from a dummy file"),
         }
@@ -339,7 +363,15 @@ impl Input {
                 }
             },
             InputKind::Pipe(s) | InputKind::Str(s) => s.clone(),
+            #[cfg(feature = "full-repl")]
             InputKind::REPL => GLOBAL_STDIN.read(),
+            #[cfg(not(feature = "full-repl"))]
+            InputKind::REPL => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).unwrap_or(0);
+                GLOBAL_STDIN.push_line(line.clone());
+                line
+            }
             InputKind::Dummy | InputKind::DummyREPL(_) => panic!("cannot read from a dummy file"),
         }
     }
@@ -464,6 +496,19 @@ impl Input {
         Ok(result)
     }
 
+    fn resolve_local_pyi(&self, path: &Path) -> Result<PathBuf, std::io::Error> {
+        let mut dir = self.dir();
+        dir.push(path);
+        dir.set_extension("pyi");
+        let path = dir.canonicalize().or_else(|_| {
+            let mut dir = self.dir();
+            dir.push(path);
+            dir.push("__init__.pyi");
+            dir.canonicalize()
+        })?;
+        Ok(normalize_path(path))
+    }
+
     fn resolve_local_py(&self, path: &Path) -> Result<PathBuf, std::io::Error> {
         let mut dir = self.dir();
         dir.push(path);
@@ -532,6 +577,63 @@ impl Input {
         Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("cannot find module `{}`", path.display()),
+        ))
+    }
+
+    pub fn resolve_pyi(&self, path: &Path) -> Result<PathBuf, std::io::Error> {
+        if let Ok(resolved) = self.resolve_local_pyi(path) {
+            VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+            return Ok(resolved);
+        }
+        for sys_path in python_sys_path() {
+            let mut dir = sys_path.clone();
+            dir.push(path);
+            dir.set_extension("pyi");
+            if dir.exists() {
+                let resolved = normalize_path(dir);
+                VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+                return Ok(resolved);
+            }
+            let mut dir = sys_path.clone();
+            dir.push(path);
+            dir.push("__init__.pyi");
+            if dir.exists() {
+                let resolved = normalize_path(dir);
+                VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+                return Ok(resolved);
+            }
+        }
+        for pkgs_path in python_site_packages() {
+            let mut dir = pkgs_path.clone();
+            dir.push(path);
+            dir.set_extension("pyi");
+            if dir.exists() {
+                let resolved = normalize_path(dir);
+                VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+                return Ok(resolved);
+            }
+            let mut dir = pkgs_path.clone();
+            dir.push(path);
+            dir.push("__init__.pyi");
+            if dir.exists() {
+                let resolved = normalize_path(dir);
+                VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+                return Ok(resolved);
+            }
+            // {module}-stubs/__init__.pyi (PEP 561)
+            let stub_name = format!("{}-stubs", path.display());
+            let mut dir = pkgs_path.clone();
+            dir.push(&stub_name);
+            dir.push("__init__.pyi");
+            if dir.exists() {
+                let resolved = normalize_path(dir);
+                VFS.cache_path(self.clone(), path.to_path_buf(), Some(resolved.clone()));
+                return Ok(resolved);
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("cannot find .pyi stub for `{}`", path.display()),
         ))
     }
 
@@ -674,15 +776,19 @@ impl Input {
                 return Some(resolved);
             }
         }
-        if PYTHON_MODE {
-            if let Ok(resolved) = self.resolve_py(path) {
-                if cfg.respect_pyi && resolved.with_extension("pyi").exists() {
-                    return Some(resolved.with_extension("pyi"));
-                }
+        // .pyi stub fallback (works in all modes, not just PYTHON_MODE)
+        if cfg.respect_pyi {
+            if let Ok(resolved) = self.resolve_pyi(path) {
+                // VFS cache is already set inside resolve_pyi
                 return Some(resolved);
             }
         }
-        VFS.cache_path(self.clone(), path.to_path_buf(), None);
+        if PYTHON_MODE {
+            if let Ok(resolved) = self.resolve_py(path) {
+                return Some(resolved);
+            }
+        }
+        // Don't cache None here: resolve_py may find a .py file for untyped pyimport later
         None
     }
 

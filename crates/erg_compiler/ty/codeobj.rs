@@ -441,13 +441,15 @@ impl CodeObj {
                 .into_iter()
                 .filter(|n| !freevars.contains(n) && !cellvars.contains(n))
                 .collect::<Vec<_>>();
+            // NOTE: freevars must come last: COPY_FREE_VARS copies the closure into
+            // the trailing `nfreevars` slots of localsplus
             let localspluskinds = [
                 vec![FastKind::Local as u8; varnames.len()],
-                vec![FastKind::Free as u8; freevars.len()],
                 vec![FastKind::Cell as u8 + FastKind::Local as u8; cellvars.len()],
+                vec![FastKind::Free as u8; freevars.len()],
             ]
             .concat();
-            let localsplusnames = [varnames, freevars, cellvars].concat();
+            let localsplusnames = [varnames, cellvars, freevars].concat();
             bytes.append(&mut strs_into_bytes(localsplusnames));
             bytes.append(&mut raw_string_into_bytes(localspluskinds));
         } else {
@@ -497,6 +499,7 @@ impl CodeObj {
     pub fn exec(self, cfg: &ErgConfig) -> std::io::Result<ExitStatus> {
         exec_pyc_code(
             &self.into_bytecode(cfg.py_magic_num),
+            cfg.py_command,
             &cfg.runtime_args,
             cfg.output.clone(),
         )

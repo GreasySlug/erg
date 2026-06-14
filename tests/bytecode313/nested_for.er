@@ -1,0 +1,5 @@
+total = !0
+for! [1, 2], i =>
+    for! [10, 20], j =>
+        total.update! t -> t + i * j
+assert total == 90

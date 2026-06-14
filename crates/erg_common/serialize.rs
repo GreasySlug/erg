@@ -25,6 +25,12 @@ pub const fn get_magic_num_from_bytes(bytes: &[u8; 4]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], 0, 0])
 }
 
+/// Maps the 2-byte version number (from .pyc magic) to PythonVersion.
+/// Ranges follow CPython's Include/internal/pycore_magic_number.h:
+/// - 3.11: 3450–3495 (final 3.11b4: 3495)
+/// - 3.12: 3500–3531 (final 3.12b1: 3531)
+/// - 3.13: 3550–3571+ (3.13a1: 3550, 3.13b1: 3571)
+/// - 3.14: 3600–3627+ (3.14a1: 3600, 3.14rc3: 3627)
 pub const fn get_ver_from_magic_num(magic_num: u32) -> PythonVersion {
     match magic_num {
         3360..=3379 => PythonVersion::new(3, Some(6), Some(0)),
@@ -32,8 +38,10 @@ pub const fn get_ver_from_magic_num(magic_num: u32) -> PythonVersion {
         3400..=3413 => PythonVersion::new(3, Some(8), Some(0)),
         3420..=3425 => PythonVersion::new(3, Some(9), Some(0)),
         3430..=3439 => PythonVersion::new(3, Some(10), Some(0)), // main: 3439
-        3495 => PythonVersion::new(3, Some(11), Some(0)),
-        3531 => PythonVersion::new(3, Some(12), Some(0)),
+        3450..=3495 => PythonVersion::new(3, Some(11), Some(0)), // 3.11a1–3.11b4
+        3500..=3531 => PythonVersion::new(3, Some(12), Some(0)), // 3.12a1–3.12b1
+        3550..=3599 => PythonVersion::new(3, Some(13), Some(0)), // 3.13a1–
+        3600..=3649 => PythonVersion::new(3, Some(14), Some(0)), // 3.14a1–
         _ => panic!("unknown magic number (unsupported Python version)"),
     }
 }

@@ -1,6 +1,11 @@
-//! generates `CodeObj` (equivalent to PyCodeObject of CPython) from `AST`.
+//! Generates `CodeObj` (equivalent to PyCodeObject of CPython) from `AST`.
 //!
 //! ASTからPythonバイトコード(コードオブジェクト)を生成する
+//!
+//! Version-specific opcodes are selected via [`erg_common::opcode_set::OpcodeSetVersion`].
+//! Use `self.opcode_set` instead of branching on `self.py_version.minor` so that adding
+//! new CPython versions (3.12, 3.13, 3.14, …) only requires updating `opcode_set.rs` and
+//! adding `opcodeNNN.rs` in `erg_common`.
 use std::fmt;
 use std::process;
 
@@ -11,10 +16,7 @@ use erg_common::error::{ErrorDisplay, Location};
 use erg_common::fresh::SharedFreshNameGenerator;
 use erg_common::io::Input;
 use erg_common::opcode::{CommonOpcode, CompareOp};
-use erg_common::opcode308::Opcode308;
-use erg_common::opcode309::Opcode309;
-use erg_common::opcode310::Opcode310;
-use erg_common::opcode311::{BinOpCode, Opcode311};
+use erg_common::opcode_set::OpcodeSetVersion;
 use erg_common::option_enum_unwrap;
 use erg_common::python_util::{env_python_version, PythonVersion};
 use erg_common::traits::{Locational, Stream};
@@ -95,6 +97,14 @@ fn escape_name(
     def_col: u32,
     is_attr: bool,
 ) -> Str {
+    // Raw identifiers ('name' or 'name'!): use exact Python name without mangling
+    if name.starts_with('\'') {
+        let inner = name
+            .trim_start_matches('\'')
+            .trim_end_matches('!')
+            .trim_end_matches('\'');
+        return Str::rc(inner);
+    }
     let name = name.replace('!', "__erg_proc__");
     let name = name.replace('$', "__erg_shared__");
     // For public APIs, mangling is not performed because `hasattr`, etc. cannot be used.
@@ -214,6 +224,7 @@ impl_stream!(PyCodeGenStack, PyCodeGenUnit);
 pub struct PyCodeGenerator {
     pub(crate) cfg: ErgConfig,
     pub(crate) py_version: PythonVersion,
+    pub(crate) opcode_set: OpcodeSetVersion,
     str_cache: CacheSet<str>,
     prelude_loaded: bool,
     mutate_op_loaded: bool,
@@ -228,20 +239,25 @@ pub struct PyCodeGenerator {
     fake_generic_loaded: bool,
     abc_loaded: bool,
     builtins_loaded: bool,
+    fraction_loaded: bool,
+    true_div_loaded: bool,
     unit_size: usize,
     units: PyCodeGenStack,
-    fresh_gen: SharedFreshNameGenerator,
+    pub(crate) fresh_gen: SharedFreshNameGenerator,
 }
 
 impl PyCodeGenerator {
     pub fn new(cfg: ErgConfig) -> Self {
+        let py_version = cfg.target_version.unwrap_or_else(|| {
+            let Some(version) = env_python_version() else {
+                panic!("Failed to get python version");
+            };
+            version
+        });
+        let opcode_set = OpcodeSetVersion::from_python_version(py_version);
         Self {
-            py_version: cfg.target_version.unwrap_or_else(|| {
-                let Some(version) = env_python_version() else {
-                    panic!("Failed to get python version");
-                };
-                version
-            }),
+            py_version,
+            opcode_set,
             cfg,
             str_cache: CacheSet::new(),
             prelude_loaded: false,
@@ -257,6 +273,8 @@ impl PyCodeGenerator {
             fake_generic_loaded: false,
             abc_loaded: false,
             builtins_loaded: false,
+            fraction_loaded: false,
+            true_div_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
             fresh_gen: SharedFreshNameGenerator::new("codegen"),
@@ -267,6 +285,7 @@ impl PyCodeGenerator {
         Self {
             cfg: self.cfg.clone(),
             py_version: self.py_version,
+            opcode_set: self.opcode_set,
             str_cache: self.str_cache.clone(),
             prelude_loaded: false,
             mutate_op_loaded: false,
@@ -281,6 +300,8 @@ impl PyCodeGenerator {
             fake_generic_loaded: false,
             abc_loaded: false,
             builtins_loaded: false,
+            fraction_loaded: false,
+            true_div_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
             fresh_gen: self.fresh_gen.clone(),
@@ -309,6 +330,8 @@ impl PyCodeGenerator {
         self.fake_generic_loaded = false;
         self.abc_loaded = false;
         self.builtins_loaded = false;
+        self.fraction_loaded = false;
+        self.true_div_loaded = false;
     }
 
     #[inline]
@@ -368,7 +391,7 @@ impl PyCodeGenerator {
     }
 
     #[inline]
-    fn lasti(&self) -> usize {
+    pub(crate) fn lasti(&self) -> usize {
         self.cur_block().lasti
     }
 
@@ -382,17 +405,23 @@ impl PyCodeGenerator {
     #[inline]
     #[allow(dead_code)]
     fn emit_print_expr(&mut self) {
-        self.write_instr(Opcode311::PRINT_EXPR);
-        self.write_arg(0);
+        if self.opcode_set.is_3_12_plus() {
+            self.write_instr(self.opcode_set.call_intrinsic_1());
+            self.write_arg(1); // Intrinsic1::PrintExpr
+        } else {
+            self.write_instr(self.opcode_set.print_expr());
+            self.write_arg(0);
+        }
         self.stack_dec();
     }
 
     fn _emit_compare_op(&mut self, op: CompareOp) {
-        self.write_instr(Opcode311::COMPARE_OP);
-        self.write_arg(op as usize);
+        self.write_instr(self.opcode_set.compare_op());
+        self.write_arg(self.opcode_set.encode_compare_arg(op as usize));
         self.stack_dec();
-        if self.py_version.minor >= Some(11) {
-            self.write_bytes(&[0; 4]);
+        if self.opcode_set.is_3_11_plus() {
+            let cache = self.opcode_set.cache_entries_compare_op() * 2;
+            self.write_bytes(&vec![0; cache]); // CACHE
         }
     }
 
@@ -401,35 +430,31 @@ impl PyCodeGenerator {
     fn terminate(&mut self) {
         self.emit_push_null();
         self.emit_load_name_instr(Identifier::static_public("exit"));
+        self.fixup_push_null_order();
         self.emit_load_const(1);
-        if self.py_version.minor >= Some(11) {
-            self.emit_precall_and_call(1);
-        } else {
-            self.write_instr(Opcode310::CALL_FUNCTION);
-            self.write_arg(1);
-        }
+        self.emit_call_instr(1, Name);
         self.stack_dec();
     }
 
     /// swap TOS and TOS1
     #[allow(unused)]
     fn rot2(&mut self) {
-        if self.py_version.minor >= Some(11) {
-            self.write_instr(Opcode311::SWAP);
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.swap());
             self.write_arg(2);
         } else {
-            self.write_instr(Opcode310::ROT_TWO);
+            self.write_instr(self.opcode_set.rot_two());
             self.write_arg(0);
         }
     }
 
     #[allow(unused)]
     fn dup_top(&mut self) {
-        if self.py_version.minor >= Some(11) {
-            self.write_instr(Opcode311::COPY);
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.copy());
             self.write_arg(1);
         } else {
-            self.write_instr(Opcode310::DUP_TOP);
+            self.write_instr(self.opcode_set.dup_top());
             self.write_arg(0);
         }
         self.stack_inc();
@@ -438,11 +463,11 @@ impl PyCodeGenerator {
     /// COPY(1) == DUP_TOP
     fn copy(&mut self, i: usize) {
         debug_power_assert!(i, >, 0);
-        if self.py_version.minor >= Some(11) {
-            self.write_instr(Opcode311::COPY);
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.copy());
             self.write_arg(i);
         } else if i == 1 {
-            self.write_instr(Opcode310::DUP_TOP);
+            self.write_instr(self.opcode_set.dup_top());
             self.write_arg(0);
         } else {
             todo!()
@@ -457,24 +482,16 @@ impl PyCodeGenerator {
         self.emit_print_expr();
     }
 
-    fn fill_jump(&mut self, idx: usize, jump_to: usize) {
-        let arg = if self.py_version.minor >= Some(10) {
-            jump_to / 2
-        } else {
-            jump_to
-        };
+    pub(crate) fn fill_jump(&mut self, idx: usize, jump_to: usize) {
+        let arg = jump_to / self.opcode_set.jump_unit_size();
         let bytes = u16::try_from(arg).unwrap().to_be_bytes();
         *self.mut_cur_block_codeobj().code.get_mut(idx).unwrap() = bytes[0];
         *self.mut_cur_block_codeobj().code.get_mut(idx + 2).unwrap() = bytes[1];
     }
 
     /// returns: shift bytes
-    fn calc_edit_jump(&mut self, idx: usize, jump_to: usize) -> usize {
-        let arg = if self.py_version.minor >= Some(10) {
-            jump_to / 2
-        } else {
-            jump_to
-        };
+    pub(crate) fn calc_edit_jump(&mut self, idx: usize, jump_to: usize) -> usize {
+        let arg = jump_to / self.opcode_set.jump_unit_size();
         if idx == 0
             || !CommonOpcode::is_jump_op(*self.cur_block_codeobj().code.get(idx - 1).unwrap())
         {
@@ -485,7 +502,7 @@ impl PyCodeGenerator {
 
     /// returns: shift bytes
     #[inline]
-    fn edit_code(&mut self, idx: usize, arg: usize) -> usize {
+    pub(crate) fn edit_code(&mut self, idx: usize, arg: usize) -> usize {
         log!(err "editing: {idx} {arg}");
         match u8::try_from(arg) {
             Ok(u8code) => {
@@ -514,27 +531,41 @@ impl PyCodeGenerator {
     #[inline]
     fn extend_arg(&mut self, before_instr: usize, bytes: &[u8]) -> usize {
         let mut shift_bytes = 0;
+        let ext_arg = self.common_byte(CommonOpcode::EXTENDED_ARG);
         for byte in bytes.iter().rev().skip(1) {
             self.mut_cur_block_codeobj()
                 .code
                 .insert(before_instr, *byte);
             self.mut_cur_block_codeobj()
                 .code
-                .insert(before_instr, CommonOpcode::EXTENDED_ARG as u8);
+                .insert(before_instr, ext_arg);
             self.mut_cur_block().lasti += 2;
             shift_bytes += 2;
         }
         shift_bytes
     }
 
-    fn write_instr<C: Into<u8>>(&mut self, code: C) {
+    pub(crate) fn write_instr<C: Into<u8>>(&mut self, code: C) {
         self.mut_cur_block_codeobj().code.push(code.into());
         self.mut_cur_block().lasti += 1;
-        // log!(info "wrote: {}", code);
+    }
+
+    /// Write a CommonOpcode, translating it to the target Python version's value.
+    /// For 3.12 and below, this is identity. For 3.13+, opcodes are renumbered.
+    pub(crate) fn write_opcode(&mut self, code: CommonOpcode) {
+        let byte = self.opcode_set.translate_common(code as u8);
+        self.mut_cur_block_codeobj().code.push(byte);
+        self.mut_cur_block().lasti += 1;
+    }
+
+    /// Translate a CommonOpcode value to the target version's byte.
+    /// Use this when comparing against bytecode or storing for later emission.
+    fn common_byte(&self, code: CommonOpcode) -> u8 {
+        self.opcode_set.translate_common(code as u8)
     }
 
     /// returns: shift bytes
-    fn write_arg(&mut self, code: usize) -> usize {
+    pub(crate) fn write_arg(&mut self, code: usize) -> usize {
         match u8::try_from(code) {
             Ok(u8code) => {
                 self.mut_cur_block_codeobj().code.push(u8code);
@@ -575,19 +606,19 @@ impl PyCodeGenerator {
         }
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) {
+    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) {
         self.mut_cur_block_codeobj().code.extend_from_slice(bytes);
         self.mut_cur_block().lasti += bytes.len();
     }
 
-    fn stack_inc(&mut self) {
+    pub(crate) fn stack_inc(&mut self) {
         self.mut_cur_block().stack_len += 1;
         if self.stack_len() > self.cur_block_codeobj().stacksize {
             self.mut_cur_block_codeobj().stacksize = self.stack_len();
         }
     }
 
-    fn stack_dec(&mut self) {
+    pub(crate) fn stack_dec(&mut self) {
         if self.stack_len() == 0 {
             let lasti = self.lasti();
             let last = self.cur_block_codeobj().code.last().unwrap();
@@ -601,14 +632,14 @@ impl PyCodeGenerator {
 
     /// NOTE: For example, an operation that increases the stack by 2 and decreases it by 1 should be `stack_inc_n(2); stack_dec();` not `stack_inc(1);`.
     /// This is because the stack size will not increase correctly.
-    fn stack_inc_n(&mut self, n: usize) {
+    pub(crate) fn stack_inc_n(&mut self, n: usize) {
         self.mut_cur_block().stack_len += n as u32;
         if self.stack_len() > self.cur_block_codeobj().stacksize {
             self.mut_cur_block_codeobj().stacksize = self.stack_len();
         }
     }
 
-    fn stack_dec_n(&mut self, n: usize) {
+    pub(crate) fn stack_dec_n(&mut self, n: usize) {
         if n as u32 > self.stack_len() {
             let lasti = self.lasti();
             let last = self.cur_block_codeobj().code.last().unwrap();
@@ -620,7 +651,7 @@ impl PyCodeGenerator {
         }
     }
 
-    fn emit_load_const<C: Into<ValueObj>>(&mut self, cons: C) {
+    pub(crate) fn emit_load_const<C: Into<ValueObj>>(&mut self, cons: C) {
         let value: ValueObj = cons.into();
         let idx = self
             .mut_cur_block_codeobj()
@@ -631,7 +662,7 @@ impl PyCodeGenerator {
                 self.mut_cur_block_codeobj().consts.push(value);
                 self.mut_cur_block_codeobj().consts.len() - 1
             });
-        self.write_instr(LOAD_CONST);
+        self.write_opcode(LOAD_CONST);
         self.write_arg(idx);
         self.stack_inc();
     }
@@ -649,7 +680,7 @@ impl PyCodeGenerator {
     }
 
     fn local_search(&self, name: &str, acc_kind: AccessKind) -> Option<Name> {
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             if let Some(idx) = self
                 .cur_block_codeobj()
                 .cellvars
@@ -667,6 +698,16 @@ impl PyCodeGenerator {
                     .iter()
                     .position(|f| &**f == name)
                 {
+                    // in 3.11+ deref args index into the unified varnames (localsplus)
+                    let idx = if self.opcode_set.is_3_11_plus() {
+                        self.cur_block_codeobj()
+                            .varnames
+                            .iter()
+                            .position(|v| &**v == name)
+                            .unwrap_or(idx)
+                    } else {
+                        idx
+                    };
                     Some(Name::deref(idx))
                 } else if let Some(idx) = self
                     .cur_block_codeobj()
@@ -706,26 +747,59 @@ impl PyCodeGenerator {
     // local_searchで見つからなかった変数を探索する
     fn rec_search(&mut self, name: &str) -> Option<StoreLoadKind> {
         // search_name()を実行した後なのでcur_blockはskipする
-        for (nth_from_toplevel, block) in self.units.iter_mut().enumerate().rev().skip(1) {
+        let mut found: Option<usize> = None;
+        for (nth_from_toplevel, block) in self.units.iter().enumerate().rev().skip(1) {
             let block_is_toplevel = nth_from_toplevel == 0;
             if block.codeobj.cellvars.iter().any(|c| &**c == name) {
-                return Some(StoreLoadKind::Deref);
-            } else if let Some(idx) = block.codeobj.varnames.iter().position(|v| &**v == name) {
+                found = Some(nth_from_toplevel);
+                break;
+            }
+            // a variable that is passed through this block (already a freevar here)
+            if !block_is_toplevel && block.codeobj.freevars.iter().any(|f| &**f == name) {
+                found = Some(nth_from_toplevel);
+                break;
+            }
+            if block.codeobj.varnames.iter().any(|v| &**v == name) {
                 if block_is_toplevel {
                     return Some(StoreLoadKind::Global);
                 } else {
                     // the outer scope variable
-                    let cellvar_name = block.codeobj.varnames.get(idx).unwrap().clone();
-                    block.codeobj.cellvars.push(cellvar_name);
-                    return Some(StoreLoadKind::Deref);
+                    found = Some(nth_from_toplevel);
+                    break;
                 }
             }
             if block_is_toplevel && block.codeobj.names.iter().any(|n| &**n == name) {
                 return Some(StoreLoadKind::Global);
             }
         }
-        // 見つからなかった変数(前方参照変数など)はグローバル
-        Some(StoreLoadKind::Global)
+        let Some(def_idx) = found else {
+            // 見つからなかった変数(前方参照変数など)はグローバル
+            return Some(StoreLoadKind::Global);
+        };
+        let cur_idx = self.units.len() - 1;
+        let is_3_11_plus = self.opcode_set.is_3_11_plus();
+        for (nth, block) in self.units.iter_mut().enumerate() {
+            if nth == def_idx {
+                if !block.codeobj.cellvars.iter().any(|c| &**c == name)
+                    && !block.codeobj.freevars.iter().any(|f| &**f == name)
+                {
+                    block.codeobj.cellvars.push(Str::rc(name));
+                }
+            } else if is_3_11_plus && def_idx < nth && nth < cur_idx {
+                // Variables captured from a scope further out than the immediate parent
+                // must be passed through every intermediate function as a freevar
+                // (3.11+: closure values are copied with COPY_FREE_VARS,
+                // so each level needs its own slot)
+                if !block.codeobj.freevars.iter().any(|f| &**f == name)
+                    && !block.codeobj.varnames.iter().any(|v| &**v == name)
+                {
+                    block.codeobj.freevars.push(Str::rc(name));
+                    // in 3.11 freevars are unified with varnames
+                    block.codeobj.varnames.push(Str::rc(name));
+                }
+            }
+        }
+        Some(StoreLoadKind::Deref)
     }
 
     fn register_name(&mut self, name: Str, kind: RegisterNameKind) -> Name {
@@ -747,7 +821,7 @@ impl PyCodeGenerator {
             }
             Some(StoreLoadKind::Deref) => {
                 self.mut_cur_block_codeobj().freevars.push(name.clone());
-                if self.py_version.minor >= Some(11) {
+                if self.opcode_set.is_3_11_plus() {
                     // in 3.11 freevars are unified with varnames
                     self.mut_cur_block_codeobj().varnames.push(name);
                     Name::deref(self.cur_block_codeobj().varnames.len() - 1)
@@ -784,49 +858,39 @@ impl PyCodeGenerator {
 
     fn select_load_instr(&self, kind: StoreLoadKind, acc_kind: AccessKind) -> u8 {
         match kind {
-            StoreLoadKind::Fast | StoreLoadKind::FastConst => LOAD_FAST as u8,
-            StoreLoadKind::Global | StoreLoadKind::GlobalConst => LOAD_NAME as u8, //LOAD_GLOBAL as u8,
-            StoreLoadKind::Deref | StoreLoadKind::DerefConst => {
-                if self.py_version.minor >= Some(11) {
-                    Opcode311::LOAD_DEREF as u8
-                } else {
-                    Opcode310::LOAD_DEREF as u8
-                }
-            }
+            StoreLoadKind::Fast | StoreLoadKind::FastConst => self.common_byte(LOAD_FAST),
+            StoreLoadKind::Global | StoreLoadKind::GlobalConst => self.common_byte(LOAD_NAME),
+            StoreLoadKind::Deref | StoreLoadKind::DerefConst => self.opcode_set.load_deref(),
             StoreLoadKind::Local | StoreLoadKind::LocalConst => match acc_kind {
-                Name => LOAD_NAME as u8,
-                UnboundAttr => LOAD_ATTR as u8,
-                BoundAttr => LOAD_METHOD as u8,
+                Name => self.common_byte(LOAD_NAME),
+                UnboundAttr => self.common_byte(LOAD_ATTR),
+                // 3.12+: LOAD_METHOD merged into LOAD_ATTR (namei << 1 | 1)
+                BoundAttr if self.opcode_set.has_load_method() => self.common_byte(LOAD_METHOD),
+                BoundAttr => self.common_byte(LOAD_ATTR),
             },
         }
     }
 
     fn select_store_instr(&self, kind: StoreLoadKind, acc_kind: AccessKind) -> u8 {
         match kind {
-            StoreLoadKind::Fast => STORE_FAST as u8,
-            StoreLoadKind::FastConst => STORE_FAST as u8, // ERG_STORE_FAST_IMMUT,
+            StoreLoadKind::Fast => self.common_byte(STORE_FAST),
+            StoreLoadKind::FastConst => self.common_byte(STORE_FAST),
             // NOTE: First-time variables are treated as GLOBAL, but they are always first-time variables when assigned, so they are just NAME
             // NOTE: 初見の変数はGLOBAL扱いになるが、代入時は必ず初見であるので単なるNAME
-            StoreLoadKind::Global | StoreLoadKind::GlobalConst => STORE_NAME as u8,
-            StoreLoadKind::Deref | StoreLoadKind::DerefConst => {
-                if self.py_version.minor >= Some(11) {
-                    Opcode311::STORE_DEREF as u8
-                } else {
-                    Opcode310::STORE_DEREF as u8
-                }
-            }
+            StoreLoadKind::Global | StoreLoadKind::GlobalConst => self.common_byte(STORE_NAME),
+            StoreLoadKind::Deref | StoreLoadKind::DerefConst => self.opcode_set.store_deref(),
             StoreLoadKind::Local | StoreLoadKind::LocalConst => {
                 match acc_kind {
-                    Name => STORE_NAME as u8,
-                    UnboundAttr => STORE_ATTR as u8,
+                    Name => self.common_byte(STORE_NAME),
+                    UnboundAttr => self.common_byte(STORE_ATTR),
                     // cannot overwrite methods directly
-                    BoundAttr => STORE_ATTR as u8,
+                    BoundAttr => self.common_byte(STORE_ATTR),
                 }
             }
         }
     }
 
-    fn emit_load_name_instr(&mut self, ident: Identifier) {
+    pub(crate) fn emit_load_name_instr(&mut self, ident: Identifier) {
         log!(info "entered {}({ident})", fn_name!());
         if &ident.inspect()[..] == "#ModuleType" && !self.module_type_loaded {
             self.load_module_type();
@@ -859,6 +923,7 @@ impl PyCodeGenerator {
             "NoneType" => {
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::static_public("type"));
+                self.fixup_push_null_order();
                 let none = Expr::Literal(Literal::new(ValueObj::None, Token::DUMMY));
                 let args = Args::single(PosArg::new(none));
                 self.emit_args_311(args, AccessKind::Name);
@@ -919,20 +984,20 @@ impl PyCodeGenerator {
         self.write_arg(name.idx);
         self.stack_inc();
         self.mut_cur_block_codeobj().stacksize += 2;
-        if instr == LOAD_GLOBAL as u8 && self.py_version.minor >= Some(11) {
-            self.write_bytes(&[0; 2]);
-            self.write_bytes(&[0; 8]);
+        if instr == self.common_byte(LOAD_GLOBAL) && self.opcode_set.is_3_11_plus() {
+            let cache = self.opcode_set.cache_entries_load_global() * 2;
+            self.write_bytes(&vec![0; cache]); // CACHE
         }
     }
 
-    fn emit_load_global_instr(&mut self, ident: Identifier) {
+    pub(crate) fn emit_load_global_instr(&mut self, ident: Identifier) {
         log!(info "entered {} ({ident})", fn_name!());
         let escaped = escape_ident(ident);
         let name = self
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, NonFast));
         let instr = LOAD_GLOBAL;
-        self.write_instr(instr);
+        self.write_opcode(instr);
         self.write_arg(name.idx);
         self.stack_inc();
     }
@@ -943,7 +1008,7 @@ impl PyCodeGenerator {
         let name = self
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, Import));
-        self.write_instr(IMPORT_NAME);
+        self.write_opcode(IMPORT_NAME);
         self.write_arg(name.idx);
         self.stack_inc_n(items_len);
         self.stack_dec(); // (level + from_list) -> module object
@@ -955,7 +1020,7 @@ impl PyCodeGenerator {
         let name = self
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, Import));
-        self.write_instr(IMPORT_FROM);
+        self.write_opcode(IMPORT_FROM);
         self.write_arg(name.idx);
         // self.stack_inc(); (module object) -> attribute
     }
@@ -968,11 +1033,19 @@ impl PyCodeGenerator {
         let name = self
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, Import));
-        self.write_instr(IMPORT_NAME);
+        self.write_opcode(IMPORT_NAME);
         self.write_arg(name.idx);
         self.stack_inc();
-        self.write_instr(IMPORT_STAR);
-        self.write_arg(0);
+        if self.opcode_set.is_3_12_plus() {
+            self.write_instr(self.opcode_set.call_intrinsic_1());
+            self.write_arg(2); // Intrinsic1::ImportStar
+                               // CALL_INTRINSIC_1(ImportStar) pushes None; must POP_TOP to clean up
+            self.write_opcode(POP_TOP);
+            self.write_arg(0);
+        } else {
+            self.write_opcode(IMPORT_STAR);
+            self.write_arg(0);
+        }
         self.stack_dec_n(3);
     }
 
@@ -1010,9 +1083,14 @@ impl PyCodeGenerator {
             .unwrap_or_else(|| self.register_attr(escaped));
         let instr = self.select_load_instr(name.kind, UnboundAttr);
         self.write_instr(instr);
-        self.write_arg(name.idx);
-        if self.py_version.minor >= Some(11) {
-            self.write_bytes(&[0; 8]);
+        if instr == self.common_byte(LOAD_ATTR) && self.opcode_set.is_3_12_plus() {
+            self.write_arg(name.idx * 2); // 3.12: LOAD_ATTR uses namei << 1 for attribute
+            self.write_bytes(&[0; 18]); // 9 CACHE entries
+        } else {
+            self.write_arg(name.idx);
+            if instr == self.common_byte(LOAD_ATTR) && self.opcode_set.is_3_11_plus() {
+                self.write_bytes(&[0; 8]); // 4 CACHE entries
+            }
         }
     }
 
@@ -1024,14 +1102,21 @@ impl PyCodeGenerator {
             .unwrap_or_else(|| self.register_method(escaped));
         let instr = self.select_load_instr(name.kind, acc_kind);
         self.write_instr(instr);
-        self.write_arg(name.idx);
-        if self.py_version.minor >= Some(11) {
-            self.stack_inc(); // instead of PUSH_NULL
-            self.write_bytes(&[0; 20]);
+        if self.opcode_set.is_3_12_plus() {
+            // 3.12: LOAD_ATTR replaces LOAD_METHOD; namei << 1 | 1 = method mode
+            self.write_arg(name.idx * 2 + 1);
+            self.stack_inc(); // pushes self + method
+            self.write_bytes(&[0; 18]); // 9 CACHE entries
+        } else {
+            self.write_arg(name.idx);
+            if self.opcode_set.is_3_11_plus() {
+                self.stack_inc(); // instead of PUSH_NULL
+                self.write_bytes(&[0; 20]); // 10 CACHE entries
+            }
         }
     }
 
-    fn emit_store_instr(&mut self, ident: Identifier, acc_kind: AccessKind) {
+    pub(crate) fn emit_store_instr(&mut self, ident: Identifier, acc_kind: AccessKind) {
         log!(info "entered {} ({ident})", fn_name!());
         let kind = RegisterNameKind::from_ident(&ident);
         let escaped = escape_ident(ident);
@@ -1046,12 +1131,12 @@ impl PyCodeGenerator {
         self.write_instr(instr);
         self.write_arg(name.idx);
         self.stack_dec();
-        if instr == STORE_ATTR as u8 {
-            if self.py_version.minor >= Some(11) {
-                self.write_bytes(&[0; 8]);
+        if instr == self.common_byte(STORE_ATTR) {
+            if self.opcode_set.is_3_11_plus() {
+                self.write_bytes(&[0; 8]); // CACHE
             }
             self.stack_dec();
-        } else if instr == STORE_FAST as u8 {
+        } else if instr == self.common_byte(STORE_FAST) {
             self.mut_cur_block_codeobj().nlocals += 1;
         }
     }
@@ -1065,7 +1150,7 @@ impl PyCodeGenerator {
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, NonFast));
         let instr = STORE_GLOBAL;
-        self.write_instr(instr);
+        self.write_opcode(instr);
         self.write_arg(name.idx);
         self.stack_dec();
     }
@@ -1085,8 +1170,8 @@ impl PyCodeGenerator {
         }
     }
 
-    fn emit_pop_top(&mut self) {
-        self.write_instr(POP_TOP);
+    pub(crate) fn emit_pop_top(&mut self) {
+        self.write_opcode(POP_TOP);
         self.write_arg(0);
         self.stack_dec();
     }
@@ -1096,7 +1181,8 @@ impl PyCodeGenerator {
             return;
         }
         let lasop_t_idx = self.cur_block_codeobj().code.len() - 2;
-        if self.cur_block_codeobj().code.get(lasop_t_idx) == Some(&(POP_TOP as u8)) {
+        let pop_top_byte = self.common_byte(POP_TOP);
+        if self.cur_block_codeobj().code.get(lasop_t_idx) == Some(&pop_top_byte) {
             self.mut_cur_block_codeobj().code.pop();
             self.mut_cur_block_codeobj().code.pop();
             self.mut_cur_block().lasti -= 2;
@@ -1124,7 +1210,7 @@ impl PyCodeGenerator {
         }
     }
 
-    fn gen_param_names(&self, params: &Params) -> Vec<Str> {
+    pub(crate) fn gen_param_names(&self, params: &Params) -> Vec<Str> {
         params
             .non_defaults
             .iter()
@@ -1209,46 +1295,93 @@ impl PyCodeGenerator {
         }
     }
 
-    fn emit_push_null(&mut self) {
-        if self.py_version.minor >= Some(11) {
-            self.write_instr(Opcode311::PUSH_NULL);
+    pub(crate) fn emit_push_null(&mut self) {
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.push_null());
             self.write_arg(0);
             self.stack_inc();
         }
     }
 
-    fn emit_precall_and_call(&mut self, argc: usize) {
-        self.write_instr(Opcode311::PRECALL);
+    /// In 3.13+, CALL expects [callable, NULL, args...] instead of [NULL, callable, args...].
+    /// Call this after loading the callable following an emit_push_null() to fix the order.
+    fn fixup_push_null_order(&mut self) {
+        if self.opcode_set.is_3_13_plus() {
+            self.write_instr(self.opcode_set.swap());
+            self.write_arg(2);
+        }
+    }
+
+    /// Emit TO_BOOL + 3 CACHE entries before POP_JUMP_IF_FALSE/TRUE (3.13+).
+    /// Returns the number of bytes written (0 or 8).
+    fn emit_to_bool(&mut self) -> usize {
+        let to_bool = self.opcode_set.to_bool();
+        if to_bool != 0 {
+            self.write_instr(to_bool);
+            self.write_arg(0);
+            let cache = self.opcode_set.cache_entries_to_bool() * 2; // 6 bytes
+            self.write_bytes(&vec![0; cache]);
+            2 + cache // 8 bytes total
+        } else {
+            0
+        }
+    }
+
+    /// Emit CACHE entries after POP_JUMP_IF_FALSE/TRUE (1 entry for 3.13+).
+    /// Returns the number of bytes written (0 or 2).
+    fn emit_pop_jump_cache(&mut self) -> usize {
+        let cache = self.opcode_set.cache_entries_pop_jump_if_false() * 2;
+        if cache > 0 {
+            self.write_bytes(&vec![0; cache]);
+        }
+        cache
+    }
+
+    /// Emit CACHE entries after JUMP_BACKWARD (1 entry for 3.13+).
+    /// Returns the number of bytes written (0 or 2).
+    fn emit_jump_backward_cache(&mut self) -> usize {
+        let cache = self.opcode_set.cache_entries_jump_backward() * 2;
+        if cache > 0 {
+            self.write_bytes(&vec![0; cache]);
+        }
+        cache
+    }
+
+    pub(crate) fn emit_precall_and_call(&mut self, argc: usize) {
+        if let Some(precall) = self.opcode_set.precall() {
+            self.write_instr(precall);
+            self.write_arg(argc);
+            self.write_arg(0);
+            self.write_arg(0);
+        }
+        self.write_instr(self.opcode_set.call());
         self.write_arg(argc);
-        self.write_arg(0);
-        self.write_arg(0);
-        self.write_instr(Opcode311::CALL);
-        self.write_arg(argc);
-        self.write_bytes(&[0; 8]);
+        let cache = self.opcode_set.cache_entries_call() * 2;
+        self.write_bytes(&vec![0; cache]); // CACHE
         self.stack_dec();
     }
 
-    fn emit_call_instr(&mut self, argc: usize, kind: AccessKind) {
-        if self.py_version.minor >= Some(11) {
+    pub(crate) fn emit_call_instr(&mut self, argc: usize, kind: AccessKind) {
+        if self.opcode_set.is_3_11_plus() {
             self.emit_precall_and_call(argc);
         } else {
             match kind {
-                AccessKind::BoundAttr => self.write_instr(Opcode310::CALL_METHOD),
-                _ => self.write_instr(Opcode310::CALL_FUNCTION),
+                AccessKind::BoundAttr => self.write_instr(self.opcode_set.call_method()),
+                _ => self.write_instr(self.opcode_set.call()),
             }
             self.write_arg(argc);
         }
     }
 
-    fn emit_call_kw_instr(&mut self, argc: usize, kws: Vec<ValueObj>) {
-        if self.py_version.minor >= Some(11) {
+    pub(crate) fn emit_call_kw_instr(&mut self, argc: usize, kws: Vec<ValueObj>) {
+        if self.opcode_set.is_3_11_plus() {
             let idx = self.register_const(kws);
-            self.write_instr(Opcode311::KW_NAMES);
+            self.write_instr(self.opcode_set.kw_names());
             self.write_arg(idx);
             self.emit_precall_and_call(argc);
         } else {
             self.emit_load_const(kws);
-            self.write_instr(Opcode310::CALL_FUNCTION_KW);
+            self.write_instr(self.opcode_set.call_function_kw());
             self.write_arg(argc);
         }
     }
@@ -1259,24 +1392,25 @@ impl PyCodeGenerator {
             self.abc_loaded = true;
         }
         self.emit_push_null();
-        self.write_instr(LOAD_BUILD_CLASS);
+        self.write_opcode(LOAD_BUILD_CLASS);
         self.write_arg(0);
         self.stack_inc();
+        self.fixup_push_null_order();
         let kind = def.def_kind();
         let code = self.emit_trait_block(kind, &def.sig, def.body.block);
         self.emit_load_const(code);
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             self.emit_load_const(def.sig.ident().inspect().clone());
         } else {
             self.stack_inc();
         }
-        self.write_instr(MAKE_FUNCTION);
+        self.write_opcode(MAKE_FUNCTION);
         self.write_arg(0);
         self.emit_load_const(def.sig.ident().inspect().clone());
         self.emit_load_name_instr(Identifier::private("#ABCMeta"));
         let subclasses_len = 1;
         self.emit_call_kw_instr(2 + subclasses_len, vec![ValueObj::from("metaclass")]);
-        let sum = if self.py_version.minor >= Some(11) {
+        let sum = if self.opcode_set.is_3_11_plus() {
             1 + 2 + subclasses_len
         } else {
             1 + 2 + 1 + subclasses_len
@@ -1334,7 +1468,7 @@ impl PyCodeGenerator {
             );
         }
         self.emit_load_const(ValueObj::None);
-        self.write_instr(RETURN_VALUE);
+        self.write_opcode(RETURN_VALUE);
         self.write_arg(0);
         if self.stack_len() > 1 {
             let block_id = self.cur_block().id;
@@ -1378,6 +1512,7 @@ impl PyCodeGenerator {
         let deco_is_some = deco.is_some();
         if let Some(deco) = deco {
             self.emit_load_name_instr(deco);
+            self.fixup_push_null_order();
         }
         let code = {
             self.unit_size += 1;
@@ -1392,7 +1527,7 @@ impl PyCodeGenerator {
                 0,
             ));
             self.emit_load_const(ValueObj::None);
-            self.write_instr(RETURN_VALUE);
+            self.write_opcode(RETURN_VALUE);
             self.write_arg(0);
             let unit = self.units.pop().unwrap();
             if !self.units.is_empty() {
@@ -1409,7 +1544,7 @@ impl PyCodeGenerator {
             unit.codeobj
         };
         self.emit_load_const(code);
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             if let Some(class) = class_name {
                 self.emit_load_const(Str::from(format!("{class}.{}", ident.inspect())));
             } else {
@@ -1418,7 +1553,7 @@ impl PyCodeGenerator {
         } else {
             self.stack_inc();
         }
-        self.write_instr(MAKE_FUNCTION);
+        self.write_opcode(MAKE_FUNCTION);
         self.write_arg(0);
         if deco_is_some {
             self.emit_call_instr(1, Name);
@@ -1435,17 +1570,18 @@ impl PyCodeGenerator {
         let ident = class_def.sig.ident().clone();
         let require_or_sup = class_def.require_or_sup.clone().map(|x| *x);
         let obj = *class_def.obj.clone();
-        self.write_instr(LOAD_BUILD_CLASS);
+        self.write_opcode(LOAD_BUILD_CLASS);
         self.write_arg(0);
         self.stack_inc();
+        self.fixup_push_null_order();
         let code = self.emit_class_block(class_def);
         self.emit_load_const(code);
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             self.emit_load_const(ident.inspect().clone());
         } else {
             self.stack_inc();
         }
-        self.write_instr(MAKE_FUNCTION);
+        self.write_opcode(MAKE_FUNCTION);
         self.write_arg(0);
         self.emit_load_const(ident.inspect().clone());
         // LOAD subclasses
@@ -1532,33 +1668,51 @@ impl PyCodeGenerator {
     ) {
         if var_params.is_some() && !defaults.is_empty() {
             let defaults_len = defaults.len();
-            let names = defaults
-                .iter()
-                .map(|default| {
-                    escape_name(
+            if self.opcode_set.is_3_14_plus() {
+                // 3.14: BUILD_CONST_KEY_MAP removed; use interleaved key-value + BUILD_MAP
+                for default in defaults {
+                    let name = escape_name(
                         default.sig.inspect().map_or("_", |s| &s[..]),
                         &VisibilityModifier::Public,
                         0,
                         0,
                         false,
-                    )
-                })
-                .collect::<Vec<_>>();
-            defaults
-                .into_iter()
-                .for_each(|default| self.emit_expr(default.default_val));
-            self.emit_load_const(names);
-            self.stack_dec();
-            self.write_instr(BUILD_CONST_KEY_MAP);
-            self.write_arg(defaults_len);
-            self.stack_dec_n(defaults_len - 1);
+                    );
+                    self.emit_load_const(name);
+                    self.emit_expr(default.default_val);
+                }
+                self.write_opcode(BUILD_MAP);
+                self.write_arg(defaults_len);
+                self.stack_dec_n(defaults_len * 2 - 1);
+            } else {
+                let names = defaults
+                    .iter()
+                    .map(|default| {
+                        escape_name(
+                            default.sig.inspect().map_or("_", |s| &s[..]),
+                            &VisibilityModifier::Public,
+                            0,
+                            0,
+                            false,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                defaults
+                    .into_iter()
+                    .for_each(|default| self.emit_expr(default.default_val));
+                self.emit_load_const(names);
+                self.stack_dec();
+                self.write_opcode(BUILD_CONST_KEY_MAP);
+                self.write_arg(defaults_len);
+                self.stack_dec_n(defaults_len - 1);
+            }
             *function_flag += MakeFunctionFlags::KwDefaults as usize;
         } else if !defaults.is_empty() {
             let defaults_len = defaults.len();
             defaults
                 .into_iter()
                 .for_each(|default| self.emit_expr(default.default_val));
-            self.write_instr(BUILD_TUPLE);
+            self.write_opcode(BUILD_TUPLE);
             self.write_arg(defaults_len);
             self.stack_dec_n(defaults_len - 1);
             *function_flag += MakeFunctionFlags::Defaults as usize;
@@ -1597,14 +1751,14 @@ impl PyCodeGenerator {
             flags,
         );
         // code.flags += CodeObjFlags::Optimized as u32;
-        self.enclose_vars(&mut make_function_flag);
+        self.enclose_vars(&code, &mut make_function_flag);
         let n_decos = sig.decorators.len();
         for deco in sig.decorators {
             self.emit_expr(deco);
         }
         self.rewrite_captured_fast(&code);
         self.emit_load_const(code);
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             if let Some(class) = class_name {
                 self.emit_load_const(Str::from(format!("{class}.{name}")));
             } else {
@@ -1613,10 +1767,9 @@ impl PyCodeGenerator {
         } else {
             self.stack_inc();
         }
-        self.write_instr(MAKE_FUNCTION);
-        self.write_arg(make_function_flag);
+        self.emit_make_function(make_function_flag);
         for _ in 0..n_decos {
-            let argc = if self.py_version.minor >= Some(11) {
+            let argc = if self.opcode_set.is_3_11_plus() {
                 0
             } else {
                 self.stack_dec();
@@ -1664,16 +1817,15 @@ impl PyCodeGenerator {
             lambda.captured_names.clone(),
             flags,
         );
-        self.enclose_vars(&mut make_function_flag);
+        self.enclose_vars(&code, &mut make_function_flag);
         self.rewrite_captured_fast(&code);
         self.emit_load_const(code);
-        if self.py_version.minor < Some(11) {
+        if !self.opcode_set.is_3_11_plus() {
             self.emit_load_const(format!("<lambda_{}>", lambda.id));
         } else {
             self.stack_inc();
         }
-        self.write_instr(MAKE_FUNCTION);
-        self.write_arg(make_function_flag);
+        self.emit_make_function(make_function_flag);
         // stack_dec: <lambda code obj> + <name "<lambda>"> -> <function>
         self.stack_dec();
         if make_function_flag & MakeFunctionFlags::Defaults as usize != 0 {
@@ -1682,27 +1834,62 @@ impl PyCodeGenerator {
         debug_assert_eq!(self.stack_len(), init_stack_len + 1);
     }
 
-    fn enclose_vars(&mut self, flag: &mut usize) {
-        if !self.cur_block_codeobj().cellvars.is_empty() {
-            let cellvars_len = self.cur_block_codeobj().cellvars.len();
-            let cellvars = self.cur_block_codeobj().cellvars.clone();
-            for (i, name) in cellvars.iter().enumerate() {
-                // Since 3.11, LOAD_CLOSURE is simply an alias for LOAD_FAST.
-                if self.py_version.minor >= Some(11) {
-                    let idx = self
-                        .cur_block_codeobj()
-                        .varnames
-                        .iter()
-                        .position(|n| n == name)
-                        .unwrap();
-                    self.write_instr(Opcode311::LOAD_CLOSURE);
-                    self.write_arg(idx);
-                } else {
-                    self.write_instr(Opcode310::LOAD_CLOSURE);
-                    self.write_arg(i);
+    /// 3.13+: MAKE_FUNCTION no longer takes flags; attributes are attached with
+    /// SET_FUNCTION_ATTRIBUTE in the reverse order of the pushed values
+    /// (e.g. defaults, closure, code -> MAKE_FUNCTION -> closure(8), defaults(1))
+    fn emit_make_function(&mut self, flag: usize) {
+        if self.opcode_set.is_3_13_plus() {
+            self.write_opcode(MAKE_FUNCTION);
+            self.write_arg(0);
+            for attr in [
+                MakeFunctionFlags::Closure,
+                MakeFunctionFlags::Annotations,
+                MakeFunctionFlags::KwDefaults,
+                MakeFunctionFlags::Defaults,
+            ] {
+                if flag & attr as usize != 0 {
+                    self.write_instr(self.opcode_set.set_function_attribute());
+                    self.write_arg(attr as usize);
                 }
             }
-            self.write_instr(BUILD_TUPLE);
+        } else {
+            self.write_opcode(MAKE_FUNCTION);
+            self.write_arg(flag);
+        }
+    }
+
+    fn enclose_vars(&mut self, code: &CodeObj, flag: &mut usize) {
+        if self.opcode_set.is_3_11_plus() {
+            // Since 3.11, LOAD_CLOSURE is simply an alias for LOAD_FAST.
+            // The closure tuple must be built in the order of the child's freevars
+            // (which may include variables passed through this block as its own freevars)
+            let freevars = code.freevars.clone();
+            let mut nloaded = 0;
+            for name in freevars.iter() {
+                let Some(idx) = self
+                    .cur_block_codeobj()
+                    .varnames
+                    .iter()
+                    .position(|n| n == name)
+                else {
+                    continue;
+                };
+                self.write_instr(self.opcode_set.load_closure());
+                self.write_arg(idx);
+                nloaded += 1;
+            }
+            if nloaded > 0 {
+                self.write_opcode(BUILD_TUPLE);
+                self.write_arg(nloaded);
+                *flag += MakeFunctionFlags::Closure as usize;
+            }
+        } else if !self.cur_block_codeobj().cellvars.is_empty() {
+            let cellvars_len = self.cur_block_codeobj().cellvars.len();
+            for i in 0..cellvars_len {
+                self.write_instr(self.opcode_set.load_closure());
+                self.write_arg(i);
+            }
+            self.write_opcode(BUILD_TUPLE);
             self.write_arg(cellvars_len);
             *flag += MakeFunctionFlags::Closure as usize;
         }
@@ -1730,7 +1917,7 @@ impl PyCodeGenerator {
     /// 22 RETURN_VALUE
     /// ```
     fn rewrite_captured_fast(&mut self, code: &CodeObj) {
-        if self.py_version.minor >= Some(11) {
+        if self.opcode_set.is_3_11_plus() {
             return;
         }
         let cellvars = self.cur_block_codeobj().cellvars.clone();
@@ -1749,22 +1936,22 @@ impl PyCodeGenerator {
                     .position(|n| n == &cellvar)
                     .unwrap();
                 self.mut_cur_block().captured_vars.push(cellvar);
+                let load_deref_op = self.opcode_set.load_deref();
+                let store_deref_op = self.opcode_set.store_deref();
+                let load_fast_byte = self.common_byte(LOAD_FAST);
+                let store_fast_byte = self.common_byte(STORE_FAST);
                 let mut op_idx = 0;
                 while let Some([op, arg]) = self
                     .mut_cur_block_codeobj()
                     .code
                     .get_mut(op_idx..=op_idx + 1)
                 {
-                    match Opcode310::try_from(*op) {
-                        Ok(Opcode310::LOAD_FAST) if *arg == old_idx as u8 => {
-                            *op = Opcode310::LOAD_DEREF as u8;
-                            *arg = new_idx as u8;
-                        }
-                        Ok(Opcode310::STORE_FAST) if *arg == old_idx as u8 => {
-                            *op = Opcode310::STORE_DEREF as u8;
-                            *arg = new_idx as u8;
-                        }
-                        _ => {}
+                    if *op == load_fast_byte && *arg == old_idx as u8 {
+                        *op = load_deref_op;
+                        *arg = new_idx as u8;
+                    } else if *op == store_fast_byte && *arg == old_idx as u8 {
+                        *op = store_deref_op;
+                        *arg = new_idx as u8;
                     }
                     op_idx += 2;
                 }
@@ -1791,10 +1978,9 @@ impl PyCodeGenerator {
                 if !self.mutate_op_loaded {
                     self.load_mutate_op();
                 }
-                if self.py_version.minor >= Some(11) {
-                    self.emit_push_null();
-                }
+                self.emit_push_null();
                 self.emit_load_name_instr(Identifier::private("#mutate_operator"));
+                self.fixup_push_null_order();
                 NOP // ERG_MUTATE,
             }
             _ => {
@@ -1810,19 +1996,45 @@ impl PyCodeGenerator {
             }
         };
         self.emit_expr(*unary.expr);
-        if instr != NOP {
-            self.write_instr(instr);
+        if instr == UNARY_POSITIVE && self.opcode_set.is_3_12_plus() {
+            // 3.12: UNARY_POSITIVE removed; use CALL_INTRINSIC_1(UnaryPositive=5)
+            self.write_instr(self.opcode_set.call_intrinsic_1());
+            self.write_arg(5);
+        } else if instr != NOP {
+            self.write_opcode(instr);
             self.write_arg(tycode as usize);
         } else {
-            if self.py_version.minor >= Some(11) {
-                self.emit_precall_and_call(1);
-            } else {
-                self.write_instr(Opcode310::CALL_FUNCTION);
-                self.write_arg(1);
-            }
+            self.emit_call_instr(1, Name);
             self.stack_dec();
         }
         debug_assert_eq!(self.stack_len(), init_stack_len + 1);
+    }
+
+    /// Emit a literal. `Ratio` literals (e.g. `0.1`, `1.5`, `3.14`) are constructed
+    /// as `fractions.Fraction("<source>")` so that rationals stay exact
+    /// (`0.1 + 0.2 == 0.3` holds, unlike Python `float`). All other literals are
+    /// emitted as plain constants. In `no_std` mode `Ratio` falls back to a float const.
+    fn emit_literal(&mut self, lit: Literal) {
+        if !self.cfg.no_std && lit.is(TokenKind::RatioLit) {
+            self.emit_ratio(lit.token.content);
+        } else {
+            self.emit_load_const(lit.value);
+        }
+    }
+
+    /// Emit `Fraction("<source>")`. `Fraction`'s string constructor parses decimals
+    /// and scientific notation exactly (`Fraction("0.1") == 1/10`), so the original
+    /// literal text is passed through verbatim (underscores included).
+    fn emit_ratio(&mut self, content: Str) {
+        if !self.fraction_loaded {
+            self.load_fraction();
+        }
+        self.emit_push_null();
+        self.emit_load_name_instr(Identifier::private("#Fraction"));
+        self.fixup_push_null_order();
+        let arg = Expr::Literal(Literal::new(ValueObj::Str(content), Token::DUMMY));
+        let args = Args::single(PosArg::new(arg));
+        self.emit_args_311(args, Name);
     }
 
     fn emit_binop(&mut self, bin: BinOp) {
@@ -1835,18 +2047,22 @@ impl PyCodeGenerator {
             TokenKind::RightOpen => {
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::static_public("RightOpenRange"));
+                self.fixup_push_null_order();
             }
             TokenKind::LeftOpen => {
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::static_public("LeftOpenRange"));
+                self.fixup_push_null_order();
             }
             TokenKind::Closed => {
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::static_public("ClosedRange"));
+                self.fixup_push_null_order();
             }
             TokenKind::Open => {
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::static_public("OpenRange"));
+                self.fixup_push_null_order();
             }
             // From 3.10, `or` can be used for types.
             // But Erg supports Python 3.7~, so we should use `typing.Union`.
@@ -1855,40 +2071,83 @@ impl PyCodeGenerator {
                 let args = Args::pos_only(vec![PosArg::new(*bin.lhs), PosArg::new(*bin.rhs)], None);
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::private("#UnionType"));
+                self.fixup_push_null_order();
                 self.emit_args_311(args, Name);
                 return;
             }
             // short circuiting
             TokenKind::OrOp => {
                 self.emit_expr(*bin.lhs);
-                let idx = self.lasti();
-                self.write_instr(EXTENDED_ARG);
-                self.write_arg(0);
-                self.write_instr(Opcode311::JUMP_IF_TRUE_OR_POP);
-                self.write_arg(0);
-                self.emit_expr(*bin.rhs);
-                let arg = match self.py_version.minor {
-                    Some(11) => self.lasti() - idx - 4,
-                    _ => self.lasti(),
-                };
-                self.fill_jump(idx + 1, arg);
-                self.stack_dec();
+                if self.opcode_set.is_3_12_plus() {
+                    // 3.12: JUMP_IF_TRUE_OR_POP removed
+                    // → COPY(1) + TO_BOOL (3.13+) + POP_JUMP_IF_TRUE + POP_TOP
+                    self.write_instr(self.opcode_set.copy());
+                    self.write_arg(1);
+                    self.stack_inc();
+                    self.emit_to_bool();
+                    let idx = self.lasti();
+                    self.write_opcode(EXTENDED_ARG);
+                    self.write_arg(0);
+                    self.write_instr(self.opcode_set.pop_jump_forward_if_true());
+                    self.write_arg(0);
+                    let pjc = self.emit_pop_jump_cache();
+                    self.stack_dec(); // POP_JUMP pops the copy
+                    self.emit_pop_top(); // pop the original (falsy) value
+                    self.emit_expr(*bin.rhs);
+                    let arg = self.lasti() - idx - 4 - pjc;
+                    self.fill_jump(idx + 1, arg);
+                } else {
+                    let idx = self.lasti();
+                    self.write_opcode(EXTENDED_ARG);
+                    self.write_arg(0);
+                    self.write_instr(self.opcode_set.jump_if_true_or_pop());
+                    self.write_arg(0);
+                    self.emit_expr(*bin.rhs);
+                    let arg = if self.opcode_set.is_3_11_plus() {
+                        self.lasti() - idx - 4
+                    } else {
+                        self.lasti()
+                    };
+                    self.fill_jump(idx + 1, arg);
+                    self.stack_dec();
+                }
                 return;
             }
             TokenKind::AndOp => {
                 self.emit_expr(*bin.lhs);
-                let idx = self.lasti();
-                self.write_instr(EXTENDED_ARG);
-                self.write_arg(0);
-                self.write_instr(Opcode311::JUMP_IF_FALSE_OR_POP);
-                self.write_arg(0);
-                self.emit_expr(*bin.rhs);
-                let arg = match self.py_version.minor {
-                    Some(11) => self.lasti() - idx - 4,
-                    _ => self.lasti(),
-                };
-                self.fill_jump(idx + 1, arg);
-                self.stack_dec();
+                if self.opcode_set.is_3_12_plus() {
+                    // 3.12: JUMP_IF_FALSE_OR_POP removed
+                    // → COPY(1) + TO_BOOL (3.13+) + POP_JUMP_IF_FALSE + POP_TOP
+                    self.write_instr(self.opcode_set.copy());
+                    self.write_arg(1);
+                    self.stack_inc();
+                    self.emit_to_bool();
+                    let idx = self.lasti();
+                    self.write_opcode(EXTENDED_ARG);
+                    self.write_arg(0);
+                    self.write_instr(self.opcode_set.pop_jump_forward_if_false());
+                    self.write_arg(0);
+                    let pjc = self.emit_pop_jump_cache();
+                    self.stack_dec(); // POP_JUMP pops the copy
+                    self.emit_pop_top(); // pop the original (truthy) value
+                    self.emit_expr(*bin.rhs);
+                    let arg = self.lasti() - idx - 4 - pjc;
+                    self.fill_jump(idx + 1, arg);
+                } else {
+                    let idx = self.lasti();
+                    self.write_opcode(EXTENDED_ARG);
+                    self.write_arg(0);
+                    self.write_instr(self.opcode_set.jump_if_false_or_pop());
+                    self.write_arg(0);
+                    self.emit_expr(*bin.rhs);
+                    let arg = if self.opcode_set.is_3_11_plus() {
+                        self.lasti() - idx - 4
+                    } else {
+                        self.lasti()
+                    };
+                    self.fill_jump(idx + 1, arg);
+                    self.stack_dec();
+                }
                 return;
             }
             TokenKind::ContainsOp => {
@@ -1902,6 +2161,7 @@ impl PyCodeGenerator {
                 }
                 self.emit_push_null();
                 self.emit_load_name_instr(Identifier::private("#contains_operator"));
+                self.fixup_push_null_order();
             }
             _ => {}
         }
@@ -1918,260 +2178,63 @@ impl PyCodeGenerator {
             .and_then(|tys| tys.get(1).map(|pt| pt.typ()))
             .unwrap_or(Type::FAILURE);
         let type_pair = TypePair::new(lhs_t, rhs_t);
-        self.emit_expr(*bin.lhs);
-        self.emit_expr(*bin.rhs);
+        // Polymorphic division (e.g. `f x = x / 2`) has the projected result type
+        // `L.Output`, so the concrete operand types aren't known here. Defer to the
+        // runtime `true_div` helper, which keeps integer division exact while
+        // leaving `Float`/`Complex` untouched.
+        if !self.cfg.no_std
+            && bin.op.is(TokenKind::Slash)
+            && matches!(bin.ref_t(), Type::Proj { .. })
+        {
+            if !self.true_div_loaded {
+                self.load_true_div();
+            }
+            self.emit_push_null();
+            self.emit_load_name_instr(Identifier::private("#true_div"));
+            self.fixup_push_null_order();
+            let args = Args::pos_only(vec![PosArg::new(*bin.lhs), PosArg::new(*bin.rhs)], None);
+            self.emit_args_311(args, Name);
+            debug_assert_eq!(self.stack_len(), init_stack_len + 1);
+            return;
+        }
+        // `a / b : Ratio` is exact: emit `Fraction(a) / b` so that integer
+        // division (`1 / 3`) yields `Fraction(1, 3)` rather than a lossy float.
+        // When `a` is already a `Ratio` (`Fraction` at runtime), `Fraction(a)` is
+        // idempotent. `Fraction(a) / b` propagates exactness whatever `b` is.
+        // `derefine()` so a refined result (e.g. `{R: Ratio | R >= 0}` from interval
+        // arithmetic) is still recognized as `Ratio` and emitted exactly via `Fraction`.
+        let ratio_div = !self.cfg.no_std
+            && bin.op.is(TokenKind::Slash)
+            && bin.ref_t().derefine() == Type::Ratio;
+        if ratio_div {
+            if !self.fraction_loaded {
+                self.load_fraction();
+            }
+            self.emit_push_null();
+            self.emit_load_name_instr(Identifier::private("#Fraction"));
+            self.fixup_push_null_order();
+            let args = Args::single(PosArg::new(*bin.lhs));
+            self.emit_args_311(args, Name);
+            self.emit_expr(*bin.rhs);
+        } else {
+            self.emit_expr(*bin.lhs);
+            self.emit_expr(*bin.rhs);
+        }
         self.emit_binop_instr(bin.op, type_pair);
         debug_assert_eq!(self.stack_len(), init_stack_len + 1);
     }
 
-    fn emit_binop_instr(&mut self, binop: Token, type_pair: TypePair) {
-        if self.py_version.minor >= Some(11) {
+    pub(crate) fn emit_binop_instr(&mut self, binop: Token, type_pair: TypePair) {
+        if self.opcode_set.is_3_11_plus() {
             self.emit_binop_instr_311(binop, type_pair);
-        } else if self.py_version.minor >= Some(9) {
+        } else if self.opcode_set.is_3_9_plus() {
             self.emit_binop_instr_309(binop, type_pair);
         } else {
             self.emit_binop_instr_307(binop, type_pair);
         }
     }
 
-    fn emit_binop_instr_307(&mut self, binop: Token, type_pair: TypePair) {
-        let instr = match &binop.kind {
-            TokenKind::Plus => Opcode308::BINARY_ADD,
-            TokenKind::Minus => Opcode308::BINARY_SUBTRACT,
-            TokenKind::Star => Opcode308::BINARY_MULTIPLY,
-            TokenKind::Slash => Opcode308::BINARY_TRUE_DIVIDE,
-            TokenKind::FloorDiv => Opcode308::BINARY_FLOOR_DIVIDE,
-            TokenKind::Pow => Opcode308::BINARY_POWER,
-            TokenKind::Mod => Opcode308::BINARY_MODULO,
-            TokenKind::AndOp | TokenKind::BitAnd => Opcode308::BINARY_AND,
-            TokenKind::OrOp | TokenKind::BitOr => Opcode308::BINARY_OR,
-            TokenKind::BitXor => Opcode308::BINARY_XOR,
-            TokenKind::Less
-            | TokenKind::LessEq
-            | TokenKind::DblEq
-            | TokenKind::NotEq
-            | TokenKind::Gre
-            | TokenKind::GreEq
-            | TokenKind::InOp
-            | TokenKind::NotInOp
-            | TokenKind::IsOp
-            | TokenKind::IsNotOp => Opcode308::COMPARE_OP,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => Opcode308::CALL_FUNCTION, // ERG_BINARY_RANGE,
-            _ => {
-                CompileError::feature_error(
-                    self.cfg.input.clone(),
-                    line!() as usize,
-                    binop.loc(),
-                    &binop.inspect().clone(),
-                    String::from(binop.content),
-                )
-                .write_to_stderr();
-                Opcode308::NOT_IMPLEMENTED
-            }
-        };
-        let arg = match &binop.kind {
-            TokenKind::Less => 0,
-            TokenKind::LessEq => 1,
-            TokenKind::DblEq => 2,
-            TokenKind::NotEq => 3,
-            TokenKind::Gre => 4,
-            TokenKind::GreEq => 5,
-            TokenKind::InOp => 6,
-            TokenKind::NotInOp => 7,
-            TokenKind::IsOp => 8,
-            TokenKind::IsNotOp => 9,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => 2,
-            _ => type_pair as usize,
-        };
-        self.write_instr(instr);
-        self.write_arg(arg);
-        self.stack_dec();
-        match &binop.kind {
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Open
-            | TokenKind::Closed
-            | TokenKind::ContainsOp => {
-                self.stack_dec();
-            }
-            _ => {}
-        }
-    }
-
-    fn emit_binop_instr_309(&mut self, binop: Token, type_pair: TypePair) {
-        let instr = match &binop.kind {
-            TokenKind::Plus => Opcode309::BINARY_ADD,
-            TokenKind::Minus => Opcode309::BINARY_SUBTRACT,
-            TokenKind::Star => Opcode309::BINARY_MULTIPLY,
-            TokenKind::Slash => Opcode309::BINARY_TRUE_DIVIDE,
-            TokenKind::FloorDiv => Opcode309::BINARY_FLOOR_DIVIDE,
-            TokenKind::Pow => Opcode309::BINARY_POWER,
-            TokenKind::Mod => Opcode309::BINARY_MODULO,
-            TokenKind::AndOp | TokenKind::BitAnd => Opcode309::BINARY_AND,
-            TokenKind::OrOp | TokenKind::BitOr => Opcode309::BINARY_OR,
-            TokenKind::BitXor => Opcode309::BINARY_XOR,
-            TokenKind::IsOp | TokenKind::IsNotOp => Opcode309::IS_OP,
-            TokenKind::Less
-            | TokenKind::LessEq
-            | TokenKind::DblEq
-            | TokenKind::NotEq
-            | TokenKind::Gre
-            | TokenKind::GreEq => Opcode309::COMPARE_OP,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => Opcode309::CALL_FUNCTION, // ERG_BINARY_RANGE,
-            _ => {
-                CompileError::feature_error(
-                    self.cfg.input.clone(),
-                    line!() as usize,
-                    binop.loc(),
-                    &binop.inspect().clone(),
-                    String::from(binop.content),
-                )
-                .write_to_stderr();
-                Opcode309::NOT_IMPLEMENTED
-            }
-        };
-        let arg = match &binop.kind {
-            TokenKind::Less => 0,
-            TokenKind::LessEq => 1,
-            TokenKind::DblEq => 2,
-            TokenKind::NotEq => 3,
-            TokenKind::Gre => 4,
-            TokenKind::GreEq => 5,
-            TokenKind::IsOp => 0,
-            TokenKind::IsNotOp => 1,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => 2,
-            _ => type_pair as usize,
-        };
-        self.write_instr(instr);
-        self.write_arg(arg);
-        self.stack_dec();
-        match &binop.kind {
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Open
-            | TokenKind::Closed
-            | TokenKind::ContainsOp => {
-                self.stack_dec();
-            }
-            _ => {}
-        }
-    }
-
-    fn emit_binop_instr_311(&mut self, binop: Token, type_pair: TypePair) {
-        let instr = match &binop.kind {
-            TokenKind::Plus
-            | TokenKind::Minus
-            | TokenKind::Star
-            | TokenKind::Slash
-            | TokenKind::FloorDiv
-            | TokenKind::Pow
-            | TokenKind::Mod
-            | TokenKind::AndOp
-            | TokenKind::OrOp
-            | TokenKind::BitAnd
-            | TokenKind::BitOr
-            | TokenKind::BitXor => Opcode311::BINARY_OP,
-            TokenKind::IsOp | TokenKind::IsNotOp => Opcode311::IS_OP,
-            TokenKind::Less
-            | TokenKind::LessEq
-            | TokenKind::DblEq
-            | TokenKind::NotEq
-            | TokenKind::Gre
-            | TokenKind::GreEq => Opcode311::COMPARE_OP,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => {
-                self.write_instr(Opcode311::PRECALL);
-                self.write_arg(2);
-                self.write_arg(0);
-                self.write_arg(0);
-                Opcode311::CALL
-            }
-            _ => {
-                CompileError::feature_error(
-                    self.cfg.input.clone(),
-                    line!() as usize,
-                    binop.loc(),
-                    &binop.inspect().clone(),
-                    String::from(binop.content),
-                )
-                .write_to_stderr();
-                Opcode311::NOT_IMPLEMENTED
-            }
-        };
-        let arg = match &binop.kind {
-            TokenKind::Plus => BinOpCode::Add as usize,
-            TokenKind::Minus => BinOpCode::Subtract as usize,
-            TokenKind::Star => BinOpCode::Multiply as usize,
-            TokenKind::Slash => BinOpCode::TrueDivide as usize,
-            TokenKind::FloorDiv => BinOpCode::FloorDiv as usize,
-            TokenKind::Pow => BinOpCode::Power as usize,
-            TokenKind::Mod => BinOpCode::Remainder as usize,
-            TokenKind::AndOp | TokenKind::BitAnd => BinOpCode::And as usize,
-            TokenKind::OrOp | TokenKind::BitOr => BinOpCode::Or as usize,
-            TokenKind::BitXor => BinOpCode::Xor as usize,
-            TokenKind::Less => 0,
-            TokenKind::LessEq => 1,
-            TokenKind::DblEq => 2,
-            TokenKind::NotEq => 3,
-            TokenKind::Gre => 4,
-            TokenKind::GreEq => 5,
-            TokenKind::IsOp => 0,
-            TokenKind::IsNotOp => 1,
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Closed
-            | TokenKind::Open
-            | TokenKind::ContainsOp => 2,
-            _ => type_pair as usize,
-        };
-        self.write_instr(instr);
-        self.write_arg(arg);
-        match instr {
-            Opcode311::CALL => {
-                self.write_bytes(&[0; 8]);
-            }
-            Opcode311::BINARY_OP => {
-                self.write_bytes(&[0; 2]);
-            }
-            Opcode311::COMPARE_OP => {
-                self.write_bytes(&[0; 4]);
-            }
-            _ => {}
-        }
-        self.stack_dec();
-        match &binop.kind {
-            TokenKind::LeftOpen
-            | TokenKind::RightOpen
-            | TokenKind::Open
-            | TokenKind::Closed
-            | TokenKind::ContainsOp => {
-                self.stack_dec();
-                if self.py_version.minor >= Some(11) {
-                    self.stack_dec();
-                }
-            }
-            _ => {}
-        }
-    }
+    // Binop implementations are in codegen_v307.rs, codegen_v309.rs, codegen_v311.rs
 
     fn emit_del_instr(&mut self, mut args: Args) {
         let Some(Expr::Accessor(Accessor::Ident(ident))) = args.remove_left_or_key("obj") else {
@@ -2183,7 +2246,7 @@ impl PyCodeGenerator {
         let name = self
             .local_search(&escaped, Name)
             .unwrap_or_else(|| self.register_name(escaped, Fast));
-        self.write_instr(DELETE_NAME);
+        self.write_opcode(DELETE_NAME);
         self.write_arg(name.idx);
         self.emit_load_const(ValueObj::None);
     }
@@ -2192,7 +2255,8 @@ impl PyCodeGenerator {
         log!(info "entered {}", fn_name!());
         let expr = args.remove_left_or_key("b").unwrap();
         self.emit_expr(expr);
-        self.write_instr(UNARY_NOT);
+        self.emit_to_bool();
+        self.write_opcode(UNARY_NOT);
         self.write_arg(0);
     }
 
@@ -2205,7 +2269,7 @@ impl PyCodeGenerator {
         self.emit_load_const(ValueObj::None);
     }
 
-    fn deopt_instr(&mut self, kind: ControlKind, args: Args) {
+    pub(crate) fn deopt_instr(&mut self, kind: ControlKind, args: Args) {
         if !self.control_loaded {
             self.load_control();
         }
@@ -2226,13 +2290,14 @@ impl PyCodeGenerator {
         let init_stack_len = self.stack_len();
         let cond = args.remove(0);
         self.emit_expr(cond);
+        self.emit_to_bool();
         let idx_pop_jump_if_false = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        // Opcode310::POP_JUMP_IF_FALSE == Opcode311::POP_JUMP_FORWARD_IF_FALSE
-        self.write_instr(Opcode310::POP_JUMP_IF_FALSE);
+        self.write_instr(self.opcode_set.pop_jump_if_false());
         // cannot detect where to jump to at this moment, so put as 0
         self.write_arg(0);
+        let pjc = self.emit_pop_jump_cache();
         match args.remove(0) {
             // then block
             Expr::Lambda(lambda) => {
@@ -2245,15 +2310,15 @@ impl PyCodeGenerator {
         }
         if args.get(0).is_some() {
             let idx_jump_forward = self.lasti();
-            self.write_instr(EXTENDED_ARG);
+            self.write_opcode(EXTENDED_ARG);
             self.write_arg(0);
-            self.write_instr(Opcode308::JUMP_FORWARD); // jump to end
+            self.write_instr(self.opcode_set.jump_forward()); // jump to end
             self.write_arg(0);
             // else block
-            let idx_else_begin = match self.py_version.minor {
-                Some(11) => self.lasti() - idx_pop_jump_if_false - 4,
-                Some(7..=10) => self.lasti(),
-                _ => self.lasti(),
+            let idx_else_begin = if self.opcode_set.is_3_11_plus() {
+                self.lasti() - idx_pop_jump_if_false - 4 - pjc
+            } else {
+                self.lasti()
             };
             self.fill_jump(idx_pop_jump_if_false + 1, idx_else_begin);
             match args.remove(0) {
@@ -2272,15 +2337,12 @@ impl PyCodeGenerator {
                 self.stack_dec();
             }
         } else {
-            self.write_instr(Opcode311::JUMP_FORWARD);
-            let jump_to = match self.py_version.minor {
-                Some(11 | 10) => 1,
-                _ => 2,
-            };
+            self.write_instr(self.opcode_set.jump_forward());
+            let jump_to = if self.opcode_set.is_3_10_plus() { 1 } else { 2 };
             self.write_arg(jump_to);
             // no else block
-            let idx_end = if self.py_version.minor >= Some(11) {
-                self.lasti() - idx_pop_jump_if_false - 3
+            let idx_end = if self.opcode_set.is_3_11_plus() {
+                self.lasti() - idx_pop_jump_if_false - 3 - pjc
             } else {
                 self.lasti()
             };
@@ -2301,17 +2363,23 @@ impl PyCodeGenerator {
         let _init_stack_len = self.stack_len();
         let iterable = args.remove(0);
         self.emit_expr(iterable);
-        self.write_instr(GET_ITER);
+        self.write_opcode(GET_ITER);
         self.write_arg(0);
         let idx_for_iter = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        self.write_instr(FOR_ITER);
+        self.write_opcode(FOR_ITER);
         self.stack_inc();
         // FOR_ITER pushes a value onto the stack, but we can't know how many
         // but after executing this instruction, stack_len should be 1
         // cannot detect where to jump to at this moment, so put as 0
         self.write_arg(0);
+        // 3.12+: FOR_ITER has 1 inline cache entry that the interpreter skips.
+        // Without this, the next instruction (STORE_NAME) gets eaten as CACHE data.
+        if self.opcode_set.is_3_12_plus() {
+            let cache = self.opcode_set.cache_entries_for_iter() * 2;
+            self.write_bytes(&vec![0; cache]);
+        }
         let Expr::Lambda(lambda) = args.remove(0) else {
             unreachable!()
         };
@@ -2324,23 +2392,46 @@ impl PyCodeGenerator {
         }
         debug_assert_eq!(self.stack_len(), init_stack_len - 1); // the iterator is remained
         let idx = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        match self.py_version.minor {
-            Some(11) => {
-                self.write_instr(Opcode311::JUMP_BACKWARD);
-                self.write_arg(0);
-                self.fill_jump(idx + 1, self.lasti() - idx_for_iter);
-            }
-            Some(7..=10) => {
-                self.write_instr(Opcode309::JUMP_ABSOLUTE);
-                self.write_arg(0);
-                self.fill_jump(idx + 1, idx_for_iter);
-            }
-            _ => todo!("not supported Python version"),
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.jump_backward());
+            self.write_arg(0);
+            let jbc = self.emit_jump_backward_cache();
+            self.fill_jump(idx + 1, self.lasti() - idx_for_iter);
+            let _ = jbc; // cache included in lasti
+        } else {
+            self.write_instr(self.opcode_set.jump_absolute());
+            self.write_arg(0);
+            self.fill_jump(idx + 1, idx_for_iter);
         }
+        // 3.12+: emit END_FOR after the loop (FOR_ITER's exhausted path jumps to END_FOR)
+        if self.opcode_set.is_3_12_plus() {
+            self.write_instr(self.opcode_set.end_for());
+            self.write_arg(0);
+        }
+        // Record idx_end BEFORE POP_ITER: FOR_ITER should jump to END_FOR, not past POP_ITER
         let idx_end = self.lasti();
-        self.fill_jump(idx_for_iter + 1, idx_end - idx_for_iter - 2 - 2);
+        if self.opcode_set.is_3_14_plus() {
+            // 3.14+: POP_ITER pops the exhausted iterator after END_FOR
+            self.write_instr(self.opcode_set.pop_iter());
+            self.write_arg(0);
+        } else if self.opcode_set.is_3_13_plus() {
+            // 3.13: END_FOR pops only the yielded value (in 3.12 it popped both
+            // the value and the iterator). A trailing POP_TOP is needed to pop
+            // the exhausted iterator. See CPython gh-121399.
+            self.write_opcode(POP_TOP);
+            self.write_arg(0);
+        }
+        if self.opcode_set.is_3_12_plus() {
+            // 3.12: FOR_ITER exhausted does JUMPBY(oparg+1) from after CACHE.
+            // next_instr = idx_for_iter + 6 (EXTENDED_ARG + FOR_ITER + CACHE)
+            // target = idx_end (END_FOR), so (oparg+1)*2 = idx_end - idx_for_iter - 6
+            // fill_jump value = oparg * 2 = idx_end - idx_for_iter - 6 - 2 = idx_end - idx_for_iter - 8
+            self.fill_jump(idx_for_iter + 1, idx_end - idx_for_iter - 2 - 2 - 4);
+        } else {
+            self.fill_jump(idx_for_iter + 1, idx_end - idx_for_iter - 2 - 2);
+        }
         self.stack_dec();
         self.emit_load_const(ValueObj::None);
         debug_assert_eq!(self.stack_len(), _init_stack_len + 1);
@@ -2361,11 +2452,13 @@ impl PyCodeGenerator {
         };
         // Evaluate again at the end of the loop
         self.emit_expr(cond.clone());
+        self.emit_to_bool();
         let idx_while = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        self.write_instr(Opcode310::POP_JUMP_IF_FALSE);
+        self.write_instr(self.opcode_set.pop_jump_if_false());
         self.write_arg(0);
+        let pjc1 = self.emit_pop_jump_cache();
         self.stack_dec();
         let Expr::Lambda(lambda) = args.remove(0) else {
             unreachable!()
@@ -2376,26 +2469,44 @@ impl PyCodeGenerator {
             self.emit_pop_top();
         }
         self.emit_expr(cond);
+        self.emit_to_bool();
         let idx = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        let arg = if self.py_version.minor >= Some(11) {
+        if self.opcode_set.is_3_12_plus() {
+            // 3.12: POP_JUMP_BACKWARD_IF_TRUE was removed.
+            // Use POP_JUMP_IF_FALSE (forward → end) + JUMP_BACKWARD (back → body).
+            self.write_instr(self.opcode_set.pop_jump_if_false());
+            self.write_arg(0);
+            let pjc2 = self.emit_pop_jump_cache();
+            self.stack_dec();
+            let idx_jb = self.lasti();
+            self.write_opcode(EXTENDED_ARG);
+            self.write_arg(0);
+            self.write_instr(self.opcode_set.jump_backward());
+            self.write_arg(0);
+            self.emit_jump_backward_cache();
+            // Fill JUMP_BACKWARD: backward to body start (idx_while + 4 + pjc1)
+            self.fill_jump(idx_jb + 1, self.lasti() - idx_while - 4 - pjc1);
+            // Fill second POP_JUMP_IF_FALSE: forward to end (self.lasti())
+            self.fill_jump(idx + 1, self.lasti() - idx - 4 - pjc2);
+            // Fill first POP_JUMP_IF_FALSE: forward to end (self.lasti())
+            self.fill_jump(idx_while + 1, self.lasti() - idx_while - 4 - pjc1);
+        } else if self.opcode_set.is_3_11_plus() {
             let arg = self.lasti() - (idx_while + 2);
-            self.write_instr(Opcode311::POP_JUMP_BACKWARD_IF_TRUE);
+            self.write_instr(self.opcode_set.pop_jump_backward_if_true());
             self.write_arg(0);
-            arg
+            self.fill_jump(idx + 1, arg);
+            self.stack_dec();
+            let idx_end = self.lasti() - idx_while - 3;
+            self.fill_jump(idx_while + 1, idx_end);
         } else {
-            self.write_instr(Opcode310::POP_JUMP_IF_TRUE);
+            self.write_instr(self.opcode_set.pop_jump_if_true());
             self.write_arg(0);
-            idx_while + 4
-        };
-        self.fill_jump(idx + 1, arg);
-        self.stack_dec();
-        let idx_end = match self.py_version.minor {
-            Some(11) => self.lasti() - idx_while - 3,
-            _ => self.lasti(),
-        };
-        self.fill_jump(idx_while + 1, idx_end);
+            self.fill_jump(idx + 1, idx_while + 4);
+            self.stack_dec();
+            self.fill_jump(idx_while + 1, self.lasti());
+        }
         self.emit_load_const(ValueObj::None);
         debug_assert_eq!(self.stack_len(), _init_stack_len + 1);
     }
@@ -2425,25 +2536,22 @@ impl PyCodeGenerator {
             // so `self.stack_dec();` for now (+1 at the end).
             self.stack_dec();
             for pop_jump_point in pop_jump_points {
-                let idx = match self.py_version.minor {
-                    Some(11) => self.lasti() - pop_jump_point,
-                    Some(10) => self.lasti() + 4,
-                    _ => self.lasti() + 4,
+                let idx = if self.opcode_set.is_3_11_plus() {
+                    self.lasti() - pop_jump_point
+                } else {
+                    self.lasti() + 4
                 };
                 self.fill_jump(pop_jump_point + 1, idx); // jump to POP_TOP
             }
             jump_forward_points.push(self.lasti());
-            self.write_instr(EXTENDED_ARG);
+            self.write_opcode(EXTENDED_ARG);
             self.write_arg(0);
-            self.write_instr(Opcode308::JUMP_FORWARD); // jump to the end
+            self.write_instr(self.opcode_set.jump_forward()); // jump to the end
             self.write_arg(0);
         }
         let lasti = self.lasti();
         for jump_point in jump_forward_points.into_iter() {
-            let jump_to = match self.py_version.minor {
-                Some(11 | 10) => lasti - jump_point - 2 - 2,
-                _ => lasti - jump_point - 2 - 2,
-            };
+            let jump_to = lasti - jump_point - 2 - 2;
             self.fill_jump(jump_point + 1, jump_to);
         }
         self.stack_inc();
@@ -2499,16 +2607,18 @@ impl PyCodeGenerator {
                     if is_last_arm {
                         self.emit_pop_top();
                     } else {
+                        self.emit_to_bool();
                         pop_jump_points.push(self.lasti());
                         // HACK: match branches often jump very far (beyond the u8 range),
                         // so the jump destination should be reserved as the u16 range.
                         // Other jump instructions may need to be replaced by this way.
-                        self.write_instr(EXTENDED_ARG);
+                        self.write_opcode(EXTENDED_ARG);
                         self.write_arg(0);
                         // in 3.11, POP_JUMP_IF_FALSE is replaced with POP_JUMP_FORWARD_IF_FALSE
                         // but the numbers are the same, only the way the jumping points are calculated is different.
-                        self.write_instr(Opcode310::POP_JUMP_IF_FALSE); // jump to the next case
+                        self.write_instr(self.opcode_set.pop_jump_if_false()); // jump to the next case
                         self.write_arg(0);
+                        self.emit_pop_jump_cache();
                         // if matched, pop original
                         if i == last {
                             self.emit_pop_top();
@@ -2522,233 +2632,7 @@ impl PyCodeGenerator {
         pop_jump_points
     }
 
-    fn emit_with_instr_311(&mut self, mut args: Args) {
-        log!(info "entered {}", fn_name!());
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
-            return self.deopt_instr(ControlKind::With, args);
-        }
-        let expr = args.remove(0);
-        let Expr::Lambda(lambda) = args.remove(0) else {
-            unreachable!()
-        };
-        let params = self.gen_param_names(&lambda.params);
-        self.emit_expr(expr);
-        self.write_instr(Opcode311::BEFORE_WITH);
-        self.write_arg(0);
-        // push __exit__, __enter__() to the stack
-        self.stack_inc_n(2);
-        let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
-        let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
-        self.emit_store_instr(stash.clone(), Name);
-        self.emit_load_const(ValueObj::None);
-        self.emit_load_const(ValueObj::None);
-        self.emit_load_const(ValueObj::None);
-        self.emit_precall_and_call(2);
-        self.emit_pop_top();
-        let idx_jump_forward = self.lasti();
-        self.write_instr(Opcode311::JUMP_FORWARD);
-        self.write_arg(0);
-        self.write_instr(Opcode311::PUSH_EXC_INFO);
-        self.write_arg(0);
-        self.write_instr(Opcode309::WITH_EXCEPT_START);
-        self.write_arg(0);
-        self.write_instr(Opcode311::POP_JUMP_FORWARD_IF_TRUE);
-        self.write_arg(4);
-        self.write_instr(Opcode311::RERAISE);
-        self.write_arg(0);
-        self.write_instr(Opcode311::COPY);
-        self.write_arg(3);
-        self.write_instr(Opcode311::POP_EXCEPT);
-        self.write_arg(0);
-        self.write_instr(Opcode311::RERAISE);
-        self.write_arg(1);
-        self.emit_pop_top();
-        self.write_instr(Opcode311::POP_EXCEPT);
-        self.write_arg(0);
-        self.emit_pop_top();
-        self.emit_pop_top();
-        self.calc_edit_jump(idx_jump_forward + 1, self.lasti() - idx_jump_forward - 2);
-        self.emit_load_name_instr(stash);
-    }
-
-    fn emit_with_instr_310(&mut self, mut args: Args) {
-        log!(info "entered {}", fn_name!());
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
-            return self.deopt_instr(ControlKind::With, args);
-        }
-        let expr = args.remove(0);
-        let Expr::Lambda(lambda) = args.remove(0) else {
-            unreachable!()
-        };
-        let params = self.gen_param_names(&lambda.params);
-        self.emit_expr(expr);
-        let idx_setup_with = self.lasti();
-        self.write_instr(Opcode310::SETUP_WITH);
-        self.write_arg(0);
-        // push __exit__, __enter__() to the stack
-        self.stack_inc_n(2);
-        let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
-        let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
-        self.emit_store_instr(stash.clone(), Name);
-        self.write_instr(POP_BLOCK);
-        self.write_arg(0);
-        self.emit_load_const(ValueObj::None);
-        self.write_instr(Opcode310::DUP_TOP);
-        self.write_arg(0);
-        self.stack_inc();
-        self.write_instr(Opcode310::DUP_TOP);
-        self.write_arg(0);
-        self.stack_inc();
-        self.write_instr(Opcode310::CALL_FUNCTION);
-        self.write_arg(3);
-        self.stack_dec_n((1 + 3) - 1);
-        self.emit_pop_top();
-        let idx_jump_forward = self.lasti();
-        self.write_instr(Opcode310::JUMP_FORWARD);
-        self.write_arg(0);
-        self.edit_code(idx_setup_with + 1, (self.lasti() - idx_setup_with - 2) / 2);
-        self.write_instr(Opcode310::WITH_EXCEPT_START);
-        self.write_arg(0);
-        let idx_pop_jump_if_true = self.lasti();
-        self.write_instr(Opcode310::POP_JUMP_IF_TRUE);
-        self.write_arg(0);
-        self.write_instr(Opcode310::RERAISE);
-        self.write_arg(1);
-        self.edit_code(idx_pop_jump_if_true + 1, self.lasti() / 2);
-        // self.emit_pop_top();
-        // self.emit_pop_top();
-        self.emit_pop_top();
-        self.write_instr(Opcode310::POP_EXCEPT);
-        self.write_arg(0);
-        let idx_end = self.lasti();
-        self.edit_code(idx_jump_forward + 1, (idx_end - idx_jump_forward - 2) / 2);
-        self.emit_load_name_instr(stash);
-    }
-
-    fn emit_with_instr_309(&mut self, mut args: Args) {
-        log!(info "entered {}", fn_name!());
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
-            return self.deopt_instr(ControlKind::With, args);
-        }
-        let expr = args.remove(0);
-        let Expr::Lambda(lambda) = args.remove(0) else {
-            unreachable!()
-        };
-        let params = self.gen_param_names(&lambda.params);
-        self.emit_expr(expr);
-        let idx_setup_with = self.lasti();
-        self.write_instr(Opcode310::SETUP_WITH);
-        self.write_arg(0);
-        // push __exit__, __enter__() to the stack
-        self.stack_inc_n(2);
-        let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
-        let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
-        self.emit_store_instr(stash.clone(), Name);
-        self.write_instr(POP_BLOCK);
-        self.write_arg(0);
-        self.emit_load_const(ValueObj::None);
-        self.write_instr(Opcode310::DUP_TOP);
-        self.write_arg(0);
-        self.stack_inc();
-        self.write_instr(Opcode310::DUP_TOP);
-        self.write_arg(0);
-        self.stack_inc();
-        self.write_instr(Opcode310::CALL_FUNCTION);
-        self.write_arg(3);
-        self.stack_dec_n((1 + 3) - 1);
-        self.emit_pop_top();
-        let idx_jump_forward = self.lasti();
-        self.write_instr(Opcode311::JUMP_FORWARD);
-        self.write_arg(0);
-        self.edit_code(idx_setup_with + 1, self.lasti() - idx_setup_with - 2);
-        self.write_instr(Opcode310::WITH_EXCEPT_START);
-        self.write_arg(0);
-        let idx_pop_jump_if_true = self.lasti();
-        self.write_instr(Opcode310::POP_JUMP_IF_TRUE);
-        self.write_arg(0);
-        self.write_instr(Opcode309::RERAISE);
-        self.write_arg(1);
-        self.edit_code(idx_pop_jump_if_true + 1, self.lasti());
-        // self.emit_pop_top();
-        // self.emit_pop_top();
-        self.emit_pop_top();
-        self.write_instr(Opcode310::POP_EXCEPT);
-        self.write_arg(0);
-        let idx_end = self.lasti();
-        self.edit_code(idx_jump_forward + 1, idx_end - idx_jump_forward - 2);
-        self.emit_load_name_instr(stash);
-    }
-
-    fn emit_with_instr_308(&mut self, mut args: Args) {
-        log!(info "entered {}", fn_name!());
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
-            return self.deopt_instr(ControlKind::With, args);
-        }
-        let expr = args.remove(0);
-        let Expr::Lambda(lambda) = args.remove(0) else {
-            unreachable!()
-        };
-        let params = self.gen_param_names(&lambda.params);
-        self.emit_expr(expr);
-        let idx_setup_with = self.lasti();
-        self.write_instr(Opcode309::SETUP_WITH);
-        self.write_arg(0);
-        // push __exit__, __enter__() to the stack
-        // self.stack_inc_n(2);
-        let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
-        let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
-        self.emit_store_instr(stash.clone(), Name);
-        self.write_instr(POP_BLOCK);
-        self.write_arg(0);
-        self.write_instr(Opcode308::BEGIN_FINALLY);
-        self.write_arg(0);
-        self.write_instr(Opcode308::WITH_CLEANUP_START);
-        self.write_arg(0);
-        self.edit_code(idx_setup_with + 1, (self.lasti() - idx_setup_with - 2) / 2);
-        self.write_instr(Opcode308::WITH_CLEANUP_FINISH);
-        self.write_arg(0);
-        self.write_instr(Opcode308::END_FINALLY);
-        self.write_arg(0);
-        self.emit_load_name_instr(stash);
-    }
-
-    fn emit_with_instr_307(&mut self, mut args: Args) {
-        log!(info "entered {}", fn_name!());
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
-            return self.deopt_instr(ControlKind::With, args);
-        }
-        let expr = args.remove(0);
-        let Expr::Lambda(lambda) = args.remove(0) else {
-            unreachable!()
-        };
-        let params = self.gen_param_names(&lambda.params);
-        self.emit_expr(expr);
-        let idx_setup_with = self.lasti();
-        self.write_instr(Opcode309::SETUP_WITH);
-        self.write_arg(0);
-        // push __exit__, __enter__() to the stack
-        // self.stack_inc_n(2);
-        let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
-        let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
-        self.emit_store_instr(stash.clone(), Name);
-        self.write_instr(POP_BLOCK);
-        self.write_arg(0);
-        self.emit_load_const(ValueObj::None);
-        self.stack_dec();
-        self.write_instr(Opcode308::WITH_CLEANUP_START);
-        self.write_arg(0);
-        self.edit_code(idx_setup_with + 1, (self.lasti() - idx_setup_with - 2) / 2);
-        self.write_instr(Opcode308::WITH_CLEANUP_FINISH);
-        self.write_arg(0);
-        self.write_instr(Opcode308::END_FINALLY);
-        self.write_arg(0);
-        self.emit_load_name_instr(stash);
-    }
+    // WITH implementations are in codegen_v307.rs, codegen_v309.rs, codegen_v311.rs
 
     fn emit_call(&mut self, call: Call) {
         log!(info "entered {} ({call})", fn_name!());
@@ -2768,6 +2652,7 @@ impl PyCodeGenerator {
                 other => {
                     self.emit_push_null();
                     self.emit_expr(other);
+                    self.fixup_push_null_order();
                     self.emit_args_311(call.args, Name);
                 }
             }
@@ -2786,13 +2671,20 @@ impl PyCodeGenerator {
             "while!" => self.emit_while_instr(args),
             "if" | "if!" => self.emit_if_instr(args),
             "match" | "match!" => self.emit_match_instr(args, true),
-            "with!" => match self.py_version.minor {
-                Some(11) => self.emit_with_instr_311(args),
-                Some(10) => self.emit_with_instr_310(args),
-                Some(9) => self.emit_with_instr_309(args),
-                Some(8) => self.emit_with_instr_308(args),
-                Some(7) => self.emit_with_instr_307(args),
-                _ => todo!("not supported Python version"),
+            "with!" => match self.opcode_set {
+                OpcodeSetVersion::V311
+                | OpcodeSetVersion::V312
+                | OpcodeSetVersion::V313
+                | OpcodeSetVersion::V314 => self.emit_with_instr_311(args),
+                OpcodeSetVersion::V310 => self.emit_with_instr_310(args),
+                OpcodeSetVersion::V309 => self.emit_with_instr_309(args),
+                OpcodeSetVersion::V308 => {
+                    if self.py_version.minor == Some(7) {
+                        self.emit_with_instr_307(args)
+                    } else {
+                        self.emit_with_instr_308(args)
+                    }
+                }
             },
             "sum" if self.py_version.minor <= Some(7) && args.get_kw("start").is_some() => {
                 self.load_builtins();
@@ -2840,7 +2732,7 @@ impl PyCodeGenerator {
                 self.emit_call(typ_call);
             }
             other if local.ref_t().is_poly_meta_type() && other != "classof" => {
-                if self.py_version.minor <= Some(9) {
+                if !self.opcode_set.is_3_10_plus() {
                     self.load_fake_generic();
                     self.emit_load_name_instr(Identifier::private("#FakeGenericAlias"));
                     let mut args = args;
@@ -2855,6 +2747,7 @@ impl PyCodeGenerator {
             _ => {
                 self.emit_push_null();
                 self.emit_load_name_instr(local);
+                self.fixup_push_null_order();
                 self.emit_args_311(args, Name);
             }
         }
@@ -2876,7 +2769,7 @@ impl PyCodeGenerator {
             return self.emit_call_fake_method(obj, func_name, method_name, args);
         }
         let is_type = method_name.ref_t().is_poly_meta_type();
-        let kind = if self.py_version.minor >= Some(11)
+        let kind = if self.opcode_set.is_3_11_plus()
             || (method_name.vi.t.is_method() && args.kw_args.is_empty())
         {
             BoundAttr
@@ -2892,53 +2785,10 @@ impl PyCodeGenerator {
         }
     }
 
-    fn emit_var_args_311(&mut self, pos_len: usize, var_args: &PosArg) {
-        if pos_len > 0 {
-            self.write_instr(BUILD_LIST);
-            self.write_arg(pos_len);
-        }
-        self.emit_expr(var_args.expr.clone());
-        if pos_len > 0 {
-            self.write_instr(Opcode310::LIST_EXTEND);
-            self.write_arg(1);
-            self.write_instr(Opcode310::LIST_TO_TUPLE);
-            self.write_arg(0);
-        }
-        self.stack_dec();
-    }
+    // var_args implementations are in codegen_v307.rs (emit_var_args_308, emit_kw_var_args_308)
+    // and codegen_v309.rs (emit_var_args_311, emit_kw_var_args_311)
 
-    fn emit_var_args_308(&mut self, pos_len: usize, var_args: &PosArg) {
-        if pos_len > 0 {
-            self.write_instr(BUILD_TUPLE);
-            self.write_arg(pos_len);
-        }
-        self.emit_expr(var_args.expr.clone());
-        if pos_len > 0 {
-            self.write_instr(Opcode309::BUILD_TUPLE_UNPACK_WITH_CALL);
-            self.write_arg(2);
-        }
-        self.stack_dec();
-    }
-
-    fn emit_kw_var_args_311(&mut self, pos_len: usize, kw_var: &PosArg) {
-        self.write_instr(BUILD_TUPLE);
-        self.write_arg(pos_len);
-        self.stack_dec_n(pos_len.saturating_sub(1));
-        self.write_instr(BUILD_MAP);
-        self.write_arg(0);
-        self.emit_expr(kw_var.expr.clone());
-        self.write_instr(Opcode311::DICT_MERGE);
-        self.write_arg(1);
-    }
-
-    fn emit_kw_var_args_308(&mut self, pos_len: usize, kw_var: &PosArg) {
-        self.write_instr(BUILD_TUPLE);
-        self.write_arg(pos_len);
-        self.emit_expr(kw_var.expr.clone());
-        self.stack_dec_n(pos_len.saturating_sub(1));
-    }
-
-    fn emit_args_311(&mut self, mut args: Args, kind: AccessKind) {
+    pub(crate) fn emit_args_311(&mut self, mut args: Args, kind: AccessKind) {
         let argc = args.len();
         let pos_len = args.pos_args.len();
         let mut kws = Vec::with_capacity(args.kw_len());
@@ -2946,7 +2796,7 @@ impl PyCodeGenerator {
             self.emit_expr(arg.expr);
         }
         if let Some(var_args) = &args.var_args {
-            if self.py_version.minor >= Some(9) {
+            if self.opcode_set.is_3_9_plus() {
                 self.emit_var_args_311(pos_len, var_args);
             } else {
                 self.emit_var_args_308(pos_len, var_args);
@@ -2958,7 +2808,7 @@ impl PyCodeGenerator {
         }
         // FIXME: tests/should_ok/args_expansion.er
         if let Some(kw_var) = &args.kw_var {
-            if self.py_version.minor >= Some(9) {
+            if self.opcode_set.is_3_9_plus() {
                 self.emit_kw_var_args_311(pos_len, kw_var);
             } else {
                 self.emit_kw_var_args_308(pos_len, kw_var);
@@ -2967,19 +2817,19 @@ impl PyCodeGenerator {
         let kwsc = if !kws.is_empty() {
             self.emit_call_kw_instr(argc, kws);
             #[allow(clippy::bool_to_int_with_if)]
-            if self.py_version.minor >= Some(11) {
+            if self.opcode_set.is_3_11_plus() {
                 0
             } else {
                 1
             }
         } else if args.var_args.is_some() || args.kw_var.is_some() {
-            self.write_instr(CALL_FUNCTION_EX);
+            self.write_opcode(CALL_FUNCTION_EX);
             if kws.is_empty() && args.kw_var.is_none() {
                 self.write_arg(0);
             } else {
                 self.write_arg(1);
             }
-            if self.py_version.minor >= Some(11) {
+            if self.opcode_set.is_3_11_plus() {
                 self.stack_dec();
             }
             if args.kw_var.is_some() {
@@ -3001,13 +2851,22 @@ impl PyCodeGenerator {
             self.emit_expr(arg.expr);
         }
         if argc > 1 {
-            self.write_instr(BUILD_TUPLE);
+            self.write_opcode(BUILD_TUPLE);
             self.write_arg(argc);
         }
-        self.write_instr(Opcode311::BINARY_SUBSCR);
-        self.write_arg(0);
-        if self.py_version.minor >= Some(11) {
-            self.write_bytes(&[0; 8]);
+        if self.opcode_set.is_3_14_plus() {
+            // 3.14: BINARY_SUBSCR removed; use BINARY_OP with NB_SUBSCR=26
+            self.write_instr(self.opcode_set.binary_op());
+            self.write_arg(26); // NB_SUBSCR
+            let cache = self.opcode_set.cache_entries_binary_op() * 2;
+            self.write_bytes(&vec![0; cache]);
+        } else {
+            self.write_instr(self.opcode_set.binary_subscr());
+            self.write_arg(0);
+            if self.opcode_set.is_3_11_plus() {
+                let cache = self.opcode_set.cache_entries_binary_subscr() * 2;
+                self.write_bytes(&vec![0; cache]); // CACHE
+            }
         }
         // (1 (subroutine) + argc) input objects -> 1 return object
         self.stack_dec_n((1 + argc) - 1);
@@ -3021,7 +2880,7 @@ impl PyCodeGenerator {
         } else {
             self.emit_expr(args.remove(0));
         }
-        self.write_instr(RETURN_VALUE);
+        self.write_opcode(RETURN_VALUE);
         self.write_arg(0);
     }
 
@@ -3032,7 +2891,7 @@ impl PyCodeGenerator {
         } else {
             self.emit_expr(args.remove(0));
         }
-        self.write_instr(YIELD_VALUE);
+        self.write_opcode(YIELD_VALUE);
         self.write_arg(0);
     }
 
@@ -3049,6 +2908,7 @@ impl PyCodeGenerator {
         method_name.vi.py_name = Some(func_name);
         self.emit_push_null();
         self.emit_load_name_instr(method_name);
+        self.fixup_push_null_order();
         args.insert_pos(0, PosArg::new(obj));
         self.emit_args_311(args, Name);
     }
@@ -3058,14 +2918,21 @@ impl PyCodeGenerator {
         log!(info "entered {}", fn_name!());
         let init_stack_len = self.stack_len();
         self.emit_expr(args.remove(0));
+        self.emit_to_bool();
         let pop_jump_point = self.lasti();
-        self.write_instr(EXTENDED_ARG);
+        self.write_opcode(EXTENDED_ARG);
         self.write_arg(0);
-        self.write_instr(Opcode310::POP_JUMP_IF_TRUE);
+        self.write_instr(self.opcode_set.pop_jump_if_true());
         self.write_arg(0);
+        let pjc = self.emit_pop_jump_cache();
         self.stack_dec();
-        if self.py_version.minor >= Some(10) {
-            self.write_instr(Opcode310::LOAD_ASSERTION_ERROR);
+        if self.opcode_set.is_3_14_plus() {
+            // 3.14: LOAD_ASSERTION_ERROR removed; use LOAD_COMMON_CONSTANT 0
+            self.write_instr(self.opcode_set.load_common_constant());
+            self.write_arg(0); // 0 = AssertionError
+            self.stack_inc();
+        } else if self.opcode_set.is_3_10_plus() {
+            self.write_instr(self.opcode_set.load_assertion_error());
             self.write_arg(0);
             self.stack_inc();
         } else {
@@ -3073,22 +2940,18 @@ impl PyCodeGenerator {
         }
         if let Some(expr) = args.try_remove(0) {
             self.emit_expr(expr);
-            if self.py_version.minor >= Some(11) {
-                self.emit_precall_and_call(0);
-            } else {
-                self.write_instr(Opcode310::CALL_FUNCTION);
-                self.write_arg(1);
+            self.emit_call_instr(if self.opcode_set.is_3_11_plus() { 0 } else { 1 }, Name);
+            if !self.opcode_set.is_3_11_plus() {
                 self.stack_dec();
             }
         }
-        self.write_instr(RAISE_VARARGS);
+        self.write_opcode(RAISE_VARARGS);
         self.write_arg(1);
         self.stack_dec();
-        let idx = match self.py_version.minor {
-            Some(11) => self.lasti() - pop_jump_point - 4,
-            Some(10) => self.lasti(),
-            Some(_) => self.lasti(),
-            _ => todo!(),
+        let idx = if self.opcode_set.is_3_11_plus() {
+            self.lasti() - pop_jump_point - 4 - pjc
+        } else {
+            self.lasti()
         };
         self.fill_jump(pop_jump_point + 1, idx);
         self.emit_load_const(ValueObj::None);
@@ -3105,6 +2968,7 @@ impl PyCodeGenerator {
             } else {
                 self.emit_load_name_instr(Identifier::static_public("List"));
             }
+            self.fixup_push_null_order();
         }
         match list {
             List::Normal(mut lis) => {
@@ -3112,7 +2976,7 @@ impl PyCodeGenerator {
                 while let Some(arg) = lis.elems.try_remove_pos(0) {
                     self.emit_expr(arg.expr);
                 }
-                self.write_instr(BUILD_LIST);
+                self.write_opcode(BUILD_LIST);
                 self.write_arg(len);
                 if len == 0 {
                     self.stack_inc();
@@ -3126,7 +2990,7 @@ impl PyCodeGenerator {
                 ..
             }) => {
                 self.emit_expr(*elem);
-                self.write_instr(BUILD_LIST);
+                self.write_opcode(BUILD_LIST);
                 self.write_arg(1);
                 self.emit_call_instr(1, Name);
                 self.stack_dec();
@@ -3158,7 +3022,7 @@ impl PyCodeGenerator {
                 while let Some(arg) = tup.elems.try_remove_pos(0) {
                     self.emit_expr(arg.expr);
                 }
-                self.write_instr(BUILD_TUPLE);
+                self.write_opcode(BUILD_TUPLE);
                 self.write_arg(len);
                 if len == 0 {
                     self.stack_inc();
@@ -3178,7 +3042,7 @@ impl PyCodeGenerator {
                 while let Some(arg) = set.elems.try_remove_pos(0) {
                     self.emit_expr(arg.expr);
                 }
-                self.write_instr(BUILD_SET);
+                self.write_opcode(BUILD_SET);
                 self.write_arg(len);
                 if len == 0 {
                     self.stack_inc();
@@ -3188,7 +3052,7 @@ impl PyCodeGenerator {
             }
             crate::hir::Set::WithLength(st) => {
                 self.emit_expr(*st.elem);
-                self.write_instr(BUILD_SET);
+                self.write_opcode(BUILD_SET);
                 self.write_arg(1);
             }
         }
@@ -3200,6 +3064,7 @@ impl PyCodeGenerator {
         if !self.cfg.no_std {
             self.emit_push_null();
             self.emit_load_name_instr(Identifier::static_public("Dict"));
+            self.fixup_push_null_order();
         }
         match dict {
             crate::hir::Dict::Normal(dic) => {
@@ -3208,7 +3073,7 @@ impl PyCodeGenerator {
                     self.emit_expr(kv.key);
                     self.emit_expr(kv.value);
                 }
-                self.write_instr(BUILD_MAP);
+                self.write_opcode(BUILD_MAP);
                 self.write_arg(len);
                 if len == 0 {
                     self.stack_inc();
@@ -3234,12 +3099,13 @@ impl PyCodeGenerator {
         // making record type
         let ident = Identifier::private("#NamedTuple");
         self.emit_load_name_instr(ident);
+        self.fixup_push_null_order();
         // record name, let it be anonymous
         self.emit_load_const("Record");
         for field in rec.attrs.iter() {
             self.emit_load_const(ValueObj::Str(field.sig.ident().inspect().clone()));
         }
-        self.write_instr(BUILD_LIST);
+        self.write_opcode(BUILD_LIST);
         self.write_arg(attrs_len);
         if attrs_len == 0 {
             self.stack_inc();
@@ -3255,6 +3121,7 @@ impl PyCodeGenerator {
         let ident = Identifier::private("#rec");
         self.emit_push_null();
         self.emit_load_name_instr(ident);
+        self.fixup_push_null_order();
         for field in rec.attrs.into_iter() {
             self.emit_simple_block(field.body.block);
         }
@@ -3294,7 +3161,7 @@ impl PyCodeGenerator {
         let name = self
             .local_search(&full_name, Name)
             .unwrap_or_else(|| self.register_name(full_name, Import));
-        self.write_instr(IMPORT_NAME);
+        self.write_opcode(IMPORT_NAME);
         self.write_arg(name.idx);
         let root = Self::get_root(&acc);
         self.emit_store_instr(root, Name);
@@ -3386,7 +3253,7 @@ impl PyCodeGenerator {
         log!(info "entered {} ({chunk})", fn_name!());
         self.push_lnotab(&chunk);
         match chunk {
-            Expr::Literal(lit) => self.emit_load_const(lit.value),
+            Expr::Literal(lit) => self.emit_literal(lit),
             Expr::Accessor(acc) => self.emit_acc(acc),
             Expr::Def(def) => self.emit_def(def),
             Expr::ClassDef(class) => self.emit_class_def(class),
@@ -3408,7 +3275,7 @@ impl PyCodeGenerator {
         }
     }
 
-    fn emit_expr(&mut self, expr: Expr) {
+    pub(crate) fn emit_expr(&mut self, expr: Expr) {
         log!(info "entered {} ({expr})", fn_name!());
         self.push_lnotab(&expr);
         let init_stack_len = self.stack_len();
@@ -3418,11 +3285,13 @@ impl PyCodeGenerator {
                 v @ (Bool | Nat | Int | Float | Str) => {
                     self.emit_push_null();
                     self.emit_load_name_instr(Identifier::public(&v.qual_name()));
+                    self.fixup_push_null_order();
                 }
                 other => match &other.qual_name()[..] {
                     t @ ("Bytes" | "List" | "Dict" | "Set") => {
                         self.emit_push_null();
                         self.emit_load_name_instr(Identifier::public(t));
+                        self.fixup_push_null_order();
                     }
                     _ => {
                         wrapped = false;
@@ -3433,7 +3302,7 @@ impl PyCodeGenerator {
             wrapped = false;
         }
         match expr {
-            Expr::Literal(lit) => self.emit_load_const(lit.value),
+            Expr::Literal(lit) => self.emit_literal(lit),
             Expr::Accessor(acc) => self.emit_acc(acc),
             Expr::Def(def) => self.emit_def(def),
             Expr::ClassDef(class) => self.emit_class_def(class),
@@ -3502,7 +3371,7 @@ impl PyCodeGenerator {
         self.cancel_if_pop_top();
     }
 
-    fn emit_with_block(&mut self, block: Block, params: Vec<Str>) {
+    pub(crate) fn emit_with_block(&mut self, block: Block, params: Vec<Str>) {
         log!(info "entered {}", fn_name!());
         let line = block.ln_begin().unwrap_or(0);
         for param in params {
@@ -3548,7 +3417,8 @@ impl PyCodeGenerator {
             .get_def("__init__")
             .or_else(|| methods.get_def("__init__!"))
             .cloned();
-        self.emit_init_method(&class.sig, __init__, class.constructor.clone());
+        let is_subclass = matches!(class.obj.as_ref(), GenTypeObj::Subclass(_));
+        self.emit_init_method(&class.sig, __init__, class.constructor.clone(), is_subclass);
         if class.need_to_gen_new {
             self.emit_new_func(&class.sig, class.constructor);
         }
@@ -3565,7 +3435,7 @@ impl PyCodeGenerator {
         if self.stack_len() == init_stack_len {
             self.emit_load_const(ValueObj::None);
         }
-        self.write_instr(RETURN_VALUE);
+        self.write_opcode(RETURN_VALUE);
         self.write_arg(0);
         if self.stack_len() > 1 {
             let block_id = self.cur_block().id;
@@ -3598,98 +3468,366 @@ impl PyCodeGenerator {
         unit.codeobj
     }
 
-    fn emit_init_method(&mut self, sig: &Signature, __init__: Option<Def>, constructor: Type) {
+    fn emit_init_method(
+        &mut self,
+        sig: &Signature,
+        __init__: Option<Def>,
+        constructor: Type,
+        is_subclass: bool,
+    ) {
         log!(info "entered {}", fn_name!());
-        let new_first_param = constructor.non_default_params().unwrap().first();
         let line = sig.ln_begin().unwrap_or(0);
         let class_name = sig.ident().inspect();
         let mut ident = Identifier::public_with_line(DOT, Str::ever("__init__"), line);
         ident.vi.t = constructor.clone();
-        let self_param = VarName::from_str_and_line(Str::ever("self"), line);
-        let vi = VarInfo::nd_parameter(
-            constructor.return_t().unwrap().clone(),
-            ident.vi.def_loc.clone(),
-            "?".into(),
-        );
-        let raw =
-            erg_parser::ast::NonDefaultParamSignature::new(ParamPattern::VarName(self_param), None);
-        let self_param = NonDefaultParamSignature::new(raw, vi, None);
-        let (param_name, params) = if let Some(new_first_param) = new_first_param {
-            let param_name = new_first_param
-                .name()
-                .cloned()
-                .unwrap_or_else(|| self.fresh_gen.fresh_varname());
-            let param = VarName::from_str_and_line(param_name.clone(), line);
-            let raw =
-                erg_parser::ast::NonDefaultParamSignature::new(ParamPattern::VarName(param), None);
+        let new_first_param = constructor.non_default_params().unwrap().first();
+        // For Inherit classes where the parent has no non-default params (e.g., Python classes
+        // like TestCase whose __init__ only has default params), use *args/**kwargs + super().
+        // For Inherit classes with explicit params (Erg native), keep field-assignment approach.
+        if is_subclass && new_first_param.is_none() {
+            // def __init__(self, *args, **kwargs):
+            //     super(type(self), self).__init__(*args, **kwargs)
+            //     <user __init__ body>
+            let self_param = VarName::from_str_and_line(Str::ever("self"), line);
             let vi = VarInfo::nd_parameter(
-                new_first_param.typ().clone(),
+                constructor.return_t().unwrap().clone(),
                 ident.vi.def_loc.clone(),
                 "?".into(),
             );
-            let param = NonDefaultParamSignature::new(raw, vi, None);
-            let params = Params::new(vec![self_param, param], None, vec![], None, vec![], None);
-            (param_name, params)
+            let raw = erg_parser::ast::NonDefaultParamSignature::new(
+                ParamPattern::VarName(self_param),
+                None,
+            );
+            let self_param = NonDefaultParamSignature::new(raw, vi.clone(), None);
+            // *args
+            let args_var = VarName::from_str_and_line(Str::ever("args"), line);
+            let raw_args = erg_parser::ast::NonDefaultParamSignature::new(
+                ParamPattern::VarName(args_var),
+                None,
+            );
+            let args_param = NonDefaultParamSignature::new(raw_args, vi.clone(), None);
+            // **kwargs
+            let kwargs_var = VarName::from_str_and_line(Str::ever("kwargs"), line);
+            let raw_kwargs = erg_parser::ast::NonDefaultParamSignature::new(
+                ParamPattern::VarName(kwargs_var),
+                None,
+            );
+            let kwargs_param = NonDefaultParamSignature::new(raw_kwargs, vi, None);
+            let params = Params::new(
+                vec![self_param],
+                Some(Box::new(args_param)),
+                vec![],
+                Some(Box::new(kwargs_param)),
+                vec![],
+                None,
+            );
+            let bounds = TypeBoundSpecs::empty();
+            let subr_sig = SubrSignature::new(
+                set! {},
+                ident,
+                bounds,
+                params,
+                sig.t_spec_with_op().cloned(),
+                vec![],
+            );
+            let mut attrs = vec![];
+            if let Some(__init__) = __init__ {
+                attrs.extend(__init__.body.block.clone());
+            }
+            let none = Token::new_fake(TokenKind::NoneLit, "None", line, 0, 0);
+            attrs.push(Expr::Literal(Literal::new(ValueObj::None, none)));
+            let block = Block::new(attrs);
+            let body = DefBody::new(EQUAL, block, DefId(0));
+            self.emit_subclass_init_def(Some(class_name), subr_sig, body);
         } else {
-            ("_".into(), Params::single(self_param))
-        };
-        let bounds = TypeBoundSpecs::empty();
-        let subr_sig = SubrSignature::new(
-            set! {},
-            ident,
-            bounds,
-            params,
-            sig.t_spec_with_op().cloned(),
-            vec![],
-        );
-        let mut attrs = vec![];
-        match new_first_param.map(|pt| pt.typ()) {
-            // namedtupleは仕様上::xなどの名前を使えない
-            // {x = Int; y = Int}
-            //   => self::x = %x.x; self::y = %x.y
-            // {.x = Int; .y = Int}
-            //   => self.x = %x.x; self.y = %x.y
-            // () => pass
-            Some(Type::Record(rec)) => {
-                for field in rec.keys() {
-                    let obj =
+            let self_param = VarName::from_str_and_line(Str::ever("self"), line);
+            let vi = VarInfo::nd_parameter(
+                constructor.return_t().unwrap().clone(),
+                ident.vi.def_loc.clone(),
+                "?".into(),
+            );
+            let raw = erg_parser::ast::NonDefaultParamSignature::new(
+                ParamPattern::VarName(self_param),
+                None,
+            );
+            let self_param = NonDefaultParamSignature::new(raw, vi, None);
+            let (param_name, params) = if let Some(new_first_param) = new_first_param {
+                let param_name = new_first_param
+                    .name()
+                    .cloned()
+                    .unwrap_or_else(|| self.fresh_gen.fresh_varname());
+                let param = VarName::from_str_and_line(param_name.clone(), line);
+                let raw = erg_parser::ast::NonDefaultParamSignature::new(
+                    ParamPattern::VarName(param),
+                    None,
+                );
+                let vi = VarInfo::nd_parameter(
+                    new_first_param.typ().clone(),
+                    ident.vi.def_loc.clone(),
+                    "?".into(),
+                );
+                let param = NonDefaultParamSignature::new(raw, vi, None);
+                let params = Params::new(vec![self_param, param], None, vec![], None, vec![], None);
+                (param_name, params)
+            } else {
+                ("_".into(), Params::single(self_param))
+            };
+            let bounds = TypeBoundSpecs::empty();
+            let subr_sig = SubrSignature::new(
+                set! {},
+                ident,
+                bounds,
+                params,
+                sig.t_spec_with_op().cloned(),
+                vec![],
+            );
+            let mut attrs = vec![];
+            match new_first_param.map(|pt| pt.typ()) {
+                // namedtupleは仕様上::xなどの名前を使えない
+                // {x = Int; y = Int}
+                //   => self::x = %x.x; self::y = %x.y
+                // {.x = Int; .y = Int}
+                //   => self.x = %x.x; self.y = %x.y
+                // () => pass
+                Some(Type::Record(rec)) => {
+                    for field in rec.keys() {
+                        let obj = Expr::Accessor(Accessor::private_with_line(
+                            Str::from(&param_name),
+                            line,
+                        ));
+                        let ident = erg_parser::ast::Identifier::public(field.symbol.clone());
+                        let expr = obj.attr_expr(Identifier::bare(ident));
+                        let obj =
+                            Expr::Accessor(Accessor::private_with_line(Str::ever("self"), line));
+                        let dot = if field.vis.is_private() {
+                            VisModifierSpec::Private
+                        } else {
+                            VisModifierSpec::Public(Location::Unknown)
+                        };
+                        let attr = erg_parser::ast::Identifier::new(
+                            dot,
+                            VarName::from_str(field.symbol.clone()),
+                        );
+                        let attr = obj.attr(Identifier::bare(attr));
+                        let redef = ReDef::new(attr, Block::new(vec![expr]));
+                        attrs.push(Expr::ReDef(redef));
+                    }
+                }
+                // self::base = %x
+                Some(_) => {
+                    let expr =
                         Expr::Accessor(Accessor::private_with_line(Str::from(&param_name), line));
-                    let ident = erg_parser::ast::Identifier::public(field.symbol.clone());
-                    let expr = obj.attr_expr(Identifier::bare(ident));
                     let obj = Expr::Accessor(Accessor::private_with_line(Str::ever("self"), line));
-                    let dot = if field.vis.is_private() {
-                        VisModifierSpec::Private
-                    } else {
-                        VisModifierSpec::Public(Location::Unknown)
-                    };
-                    let attr = erg_parser::ast::Identifier::new(
-                        dot,
-                        VarName::from_str(field.symbol.clone()),
-                    );
-                    let attr = obj.attr(Identifier::bare(attr));
+                    let attr = obj.attr(Identifier::private_with_line(Str::ever("base"), line));
                     let redef = ReDef::new(attr, Block::new(vec![expr]));
                     attrs.push(Expr::ReDef(redef));
                 }
+                None => {}
             }
-            // self::base = %x
-            Some(_) => {
-                let expr =
-                    Expr::Accessor(Accessor::private_with_line(Str::from(&param_name), line));
-                let obj = Expr::Accessor(Accessor::private_with_line(Str::ever("self"), line));
-                let attr = obj.attr(Identifier::private_with_line(Str::ever("base"), line));
-                let redef = ReDef::new(attr, Block::new(vec![expr]));
-                attrs.push(Expr::ReDef(redef));
+            if let Some(__init__) = __init__ {
+                attrs.extend(__init__.body.block.clone());
             }
-            None => {}
+            let none = Token::new_fake(TokenKind::NoneLit, "None", line, 0, 0);
+            attrs.push(Expr::Literal(Literal::new(ValueObj::None, none)));
+            let block = Block::new(attrs);
+            let body = DefBody::new(EQUAL, block, DefId(0));
+            self.emit_subr_def(Some(class_name), subr_sig, body);
         }
-        if let Some(__init__) = __init__ {
-            attrs.extend(__init__.body.block.clone());
+    }
+
+    /// Like `emit_subr_def`, but injects `super().__init__(*args, **kwargs)` at the
+    /// start of the function body. Used for `Inherit` (subclass) `__init__` methods.
+    fn emit_subclass_init_def(
+        &mut self,
+        class_name: Option<&str>,
+        sig: SubrSignature,
+        body: DefBody,
+    ) {
+        log!(info "entered {} ({sig} = {})", fn_name!(), body.block);
+        let name = sig.ident.inspect().clone();
+        let params = self.gen_param_names(&sig.params);
+        // No defaults to emit for *args, **kwargs
+        let make_function_flag = 0;
+        let mut flags = 0;
+        if sig.params.var_params.is_some() {
+            flags += CodeObjFlags::VarArgs as u32;
         }
-        let none = Token::new_fake(TokenKind::NoneLit, "None", line, 0, 0);
-        attrs.push(Expr::Literal(Literal::new(ValueObj::None, none)));
-        let block = Block::new(attrs);
-        let body = DefBody::new(EQUAL, block, DefId(0));
-        self.emit_subr_def(Some(class_name), subr_sig, body);
+        if sig.params.kw_var_params.is_some() {
+            flags += CodeObjFlags::VarKeywords as u32;
+        }
+        let code = self.emit_init_block_with_super(body.block, Some(name.clone()), params, flags);
+        self.emit_load_const(code);
+        if !self.opcode_set.is_3_11_plus() {
+            if let Some(class) = class_name {
+                self.emit_load_const(Str::from(format!("{class}.{name}")));
+            } else {
+                self.emit_load_const(name);
+            }
+        } else {
+            self.stack_inc();
+        }
+        self.emit_make_function(make_function_flag);
+        // stack_dec: <code obj> + <name> -> <function>
+        self.stack_dec();
+        self.emit_store_instr(sig.ident, Name);
+    }
+
+    /// Like `emit_block`, but emits `super().__init__(*args, **kwargs)` before the block body.
+    fn emit_init_block_with_super(
+        &mut self,
+        block: Block,
+        opt_name: Option<Str>,
+        params: Vec<Str>,
+        flags: u32,
+    ) -> CodeObj {
+        log!(info "entered {}", fn_name!());
+        self.unit_size += 1;
+        let name = if let Some(name) = opt_name {
+            name
+        } else {
+            self.fresh_gen.fresh_varname()
+        };
+        let firstlineno = block
+            .first()
+            .and_then(|first| first.ln_begin())
+            .unwrap_or_else(|| {
+                // Fallback: use parent unit's lineno to avoid subtraction overflow
+                self.cur_block().prev_lineno
+            });
+        self.units.push(PyCodeGenUnit::new(
+            self.unit_size,
+            self.py_version,
+            params,
+            0, // kwonlyargcount
+            Str::rc(self.cfg.input.enclosed_name()),
+            name,
+            firstlineno,
+            flags,
+        ));
+        let idx_copy_free_vars = if self.opcode_set.is_3_11_plus() {
+            let idx_copy_free_vars = self.lasti();
+            self.write_instr(self.opcode_set.copy_free_vars());
+            self.write_arg(0);
+            self.write_instr(self.opcode_set.resume());
+            self.write_arg(0);
+            idx_copy_free_vars
+        } else {
+            0
+        };
+        let init_stack_len = self.stack_len();
+        // Inject super().__init__(*args, **kwargs)
+        self.emit_super_init_bytecode();
+        // Emit the rest of the block (user's __init__ body + return None)
+        for chunk in block.into_iter() {
+            self.emit_chunk(chunk);
+            if self.stack_len() > init_stack_len {
+                self.emit_pop_top();
+            }
+        }
+        self.cancel_if_pop_top();
+        if self.stack_len() == init_stack_len {
+            self.emit_load_const(ValueObj::None);
+        } else if self.stack_len() > init_stack_len + 1 {
+            let block_id = self.cur_block().id;
+            let stack_len = self.stack_len();
+            CompileError::stack_bug(
+                self.input().clone(),
+                Location::Unknown,
+                stack_len,
+                block_id,
+                fn_name_full!(),
+            )
+            .write_to_stderr();
+            self.crash("error in emit_init_block_with_super: invalid stack size");
+        }
+        self.write_opcode(RETURN_VALUE);
+        self.write_arg(0);
+        // flagging
+        if !self.cur_block_codeobj().varnames.is_empty() {
+            self.mut_cur_block_codeobj().flags += CodeObjFlags::NewLocals as u32;
+        }
+        let freevars_len = self.cur_block_codeobj().freevars.len();
+        if freevars_len > 0 {
+            self.mut_cur_block_codeobj().flags += CodeObjFlags::Nested as u32;
+            if self.opcode_set.is_3_11_plus() {
+                self.edit_code(idx_copy_free_vars + 1, freevars_len);
+            }
+        } else if self.opcode_set.is_3_11_plus() {
+            let nop = self.opcode_set.translate_common(CommonOpcode::NOP as u8);
+            self.edit_code(idx_copy_free_vars, nop as usize);
+        }
+        // end of flagging
+        let unit = self.units.pop().unwrap();
+        if !self.units.is_empty() {
+            let ld = unit
+                .prev_lineno
+                .saturating_sub(self.cur_block().prev_lineno);
+            if ld != 0 {
+                if let Some(l) = self.mut_cur_block_codeobj().lnotab.last_mut() {
+                    *l += u8::try_from(ld).unwrap_or(0);
+                }
+                self.mut_cur_block().prev_lineno += ld;
+            }
+        }
+        unit.codeobj
+    }
+
+    /// Emit raw bytecode for `super(type(self), self).__init__(*args, **kwargs)`.
+    /// Uses `type(self)` instead of zero-arg `super()` to avoid needing `__class__` cell.
+    /// The function parameters must be (self, *args, **kwargs) with LOAD_FAST indices 0, 1, 2.
+    fn emit_super_init_bytecode(&mut self) {
+        // Step 1: super(type(self), self)
+        // Outer call setup: push super callable
+        self.emit_push_null(); // NULL sentinel for 3.11+
+        let super_ident = Identifier::static_public("super");
+        self.emit_load_name_instr(super_ident);
+        self.fixup_push_null_order();
+        // Inner call: type(self) — first arg to super
+        self.emit_push_null(); // NULL sentinel for type() call
+        let type_ident = Identifier::static_public("type");
+        self.emit_load_name_instr(type_ident);
+        self.fixup_push_null_order();
+        self.write_opcode(LOAD_FAST);
+        self.write_arg(0); // self
+        self.stack_inc();
+        // Call type(self) with argc=1
+        self.emit_call_instr(1, Name);
+        self.stack_dec_n(1); // argc=1 arg consumed
+                             // Stack: [..., super, type_of_self] (NULL consumed by CALL)
+                             // Load self again as second argument to super
+        self.write_opcode(LOAD_FAST);
+        self.write_arg(0); // self
+        self.stack_inc();
+        // Call super(type_of_self, self) with argc=2
+        self.emit_call_instr(2, Name);
+        self.stack_dec_n(2); // argc=2 args consumed
+                             // Stack: [super_instance]
+
+        // Step 2: Load __init__ attribute (NOT method mode — regular attr access)
+        // Returns a bound method suitable for CALL_FUNCTION_EX
+        let init_ident = Identifier::static_public("__init__");
+        self.emit_load_attr_instr(init_ident);
+        // Stack: [bound_init_method]
+
+        // Step 3: Load *args and **kwargs
+        self.write_opcode(LOAD_FAST);
+        self.write_arg(1); // args (index 1, after self=0)
+        self.stack_inc();
+        self.write_opcode(LOAD_FAST);
+        self.write_arg(2); // kwargs (index 2)
+        self.stack_inc();
+        // Stack: [bound_init_method, args_tuple, kwargs_dict]
+
+        // Step 4: CALL_FUNCTION_EX with kwargs (flag=1)
+        self.write_opcode(CALL_FUNCTION_EX);
+        self.write_arg(1); // flag=1: has **kwargs
+                           // CALL_FUNCTION_EX consumes: func + args + kwargs → result
+        self.stack_dec_n(2); // net: 3 consumed, 1 produced → dec by 2
+                             // Stack: [return_value]
+
+        // Step 5: Discard the return value
+        self.emit_pop_top();
+        // Stack: []
     }
 
     /// ```python
@@ -3791,11 +3929,11 @@ impl PyCodeGenerator {
             firstlineno,
             flags,
         ));
-        let idx_copy_free_vars = if self.py_version.minor >= Some(11) {
+        let idx_copy_free_vars = if self.opcode_set.is_3_11_plus() {
             let idx_copy_free_vars = self.lasti();
-            self.write_instr(Opcode311::COPY_FREE_VARS);
+            self.write_instr(self.opcode_set.copy_free_vars());
             self.write_arg(0);
-            self.write_instr(Opcode311::RESUME);
+            self.write_instr(self.opcode_set.resume());
             self.write_arg(0);
             idx_copy_free_vars
         } else {
@@ -3803,11 +3941,16 @@ impl PyCodeGenerator {
         };
         let mut cells = vec![];
         for captured in captured_names {
+            // the same variable can appear multiple times (once per reference),
+            // but MAKE_CELL must be emitted only once per variable
+            if self.cur_block().captured_vars.contains(captured.inspect()) {
+                continue;
+            }
             self.mut_cur_block()
                 .captured_vars
                 .push(captured.inspect().clone());
-            if self.py_version.minor >= Some(11) {
-                self.write_instr(Opcode311::MAKE_CELL);
+            if self.opcode_set.is_3_11_plus() {
+                self.write_instr(self.opcode_set.make_cell());
                 cells.push((captured, self.lasti()));
                 self.write_arg(0);
             }
@@ -3843,7 +3986,7 @@ impl PyCodeGenerator {
             .write_to_stderr();
             self.crash("error in emit_block: invalid stack size");
         }
-        self.write_instr(RETURN_VALUE);
+        self.write_opcode(RETURN_VALUE);
         self.write_arg(0);
         // flagging
         if !self.cur_block_codeobj().varnames.is_empty() {
@@ -3852,14 +3995,16 @@ impl PyCodeGenerator {
         let freevars_len = self.cur_block_codeobj().freevars.len();
         if freevars_len > 0 {
             self.mut_cur_block_codeobj().flags += CodeObjFlags::Nested as u32;
-            if self.py_version.minor >= Some(11) {
+            if self.opcode_set.is_3_11_plus() {
                 self.edit_code(idx_copy_free_vars + 1, freevars_len);
             }
-        } else if self.py_version.minor >= Some(11) {
+        } else if self.opcode_set.is_3_11_plus() {
             // cancel copying
             let code = self.cur_block_codeobj().code.get(idx_copy_free_vars);
-            debug_assert_eq!(code, Some(&(Opcode311::COPY_FREE_VARS as u8)));
-            self.edit_code(idx_copy_free_vars, CommonOpcode::NOP as usize);
+            debug_assert_eq!(code, Some(&self.opcode_set.copy_free_vars()));
+            // Use translated NOP value (3.13+: opcodes are renumbered)
+            let nop = self.opcode_set.translate_common(CommonOpcode::NOP as u8);
+            self.edit_code(idx_copy_free_vars, nop as usize);
         }
         for (cell, placeholder) in cells {
             let name = escape_ident(cell);
@@ -3924,6 +4069,35 @@ impl PyCodeGenerator {
             )],
         );
         self.mutate_op_loaded = true;
+    }
+
+    /// Import `Fraction` from the `fractions` module, bound to `#Fraction`.
+    /// `Ratio` literals and `/` results are constructed as `fractions.Fraction`
+    /// so that rationals stay exact (e.g. `0.1 + 0.2 == 0.3`, `1/3` is not `0.333...`).
+    fn load_fraction(&mut self) {
+        self.emit_global_import_items(
+            Identifier::static_public("fractions"),
+            vec![(
+                Identifier::static_public("Fraction"),
+                Some(Identifier::private("#Fraction")),
+            )],
+        );
+        self.fraction_loaded = true;
+    }
+
+    /// Import the `true_div` helper, bound to `#true_div`. Used for divisions
+    /// whose operand types are only known at runtime (a generic `f x = x / 2`):
+    /// it returns an exact `Fraction` for integers and a `float`/`complex`
+    /// otherwise. Concrete `Ratio` divisions use an inline `Fraction` instead.
+    fn load_true_div(&mut self) {
+        self.emit_global_import_items(
+            Identifier::static_public("_erg_std_prelude"),
+            vec![(
+                Identifier::static_public("true_div"),
+                Some(Identifier::private("#true_div")),
+            )],
+        );
+        self.true_div_loaded = true;
     }
 
     fn load_control(&mut self) {
@@ -4055,8 +4229,8 @@ impl PyCodeGenerator {
             1,
             0,
         ));
-        if self.py_version.minor >= Some(11) {
-            self.write_instr(Opcode311::RESUME);
+        if self.opcode_set.is_3_11_plus() {
+            self.write_instr(self.opcode_set.resume());
             self.write_arg(0);
         }
         if !self.cfg.no_std && !self.prelude_loaded {
@@ -4091,7 +4265,7 @@ impl PyCodeGenerator {
             .write_to_stderr();
             self.crash("error in emit: invalid stack size");
         }
-        self.write_instr(RETURN_VALUE);
+        self.write_opcode(RETURN_VALUE);
         self.write_arg(0);
         // flagging
         if !self.cur_block_codeobj().varnames.is_empty() {

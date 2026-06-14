@@ -1,0 +1,5 @@
+counter = !5
+while! do!(counter > 0), do!:
+    print! counter
+    counter.dec!()
+assert counter == 0

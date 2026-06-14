@@ -302,7 +302,7 @@ impl Deserializer {
             let mut varnames = vec![];
             let mut freevars = vec![];
             let mut cellvars = vec![];
-            for (name, kind) in names.into_iter().zip(kinds.into_iter()) {
+            for (name, kind) in names.into_iter().zip(kinds) {
                 match FastKind::try_from(kind) {
                     Ok(FastKind::Local) => varnames.push(name),
                     Ok(FastKind::Free) => freevars.push(name),

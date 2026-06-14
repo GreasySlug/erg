@@ -1,0 +1,7 @@
+total = !0
+for! [1, 2, 3], i =>
+    total.update! t -> t + i
+assert total == 6
+
+for! [10, 20, 30], x =>
+    print! x

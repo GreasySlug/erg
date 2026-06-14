@@ -1,0 +1,11 @@
+f = x -> x + 1
+assert f(5) == 6
+
+g = (x, y) -> x * y
+assert g(3, 4) == 12
+
+h = x -> if x > 0:
+    do "pos"
+    do "non-pos"
+assert h(1) == "pos"
+assert h(0) == "non-pos"

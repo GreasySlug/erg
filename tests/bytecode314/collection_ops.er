@@ -1,0 +1,8 @@
+l = [1, 2, 3]
+assert l[0] == 1
+assert l[2] == 3
+assert len(l) == 3
+assert [1, 2].concat([3, 4]) == [1, 2, 3, 4]
+
+d = {"a": 1, "b": 2}
+assert d["a"] == 1

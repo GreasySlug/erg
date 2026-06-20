@@ -382,7 +382,28 @@ impl Predicate {
     pub const TRUE: Predicate = Predicate::Value(ValueObj::Bool(true));
     pub const FALSE: Predicate = Predicate::Value(ValueObj::Bool(false));
 
+    /// If a `General*` comparison has the refinement variable (`Const`) on one side
+    /// and a constant (`Value`) on the other, return `(var_is_lhs, var, value)` so it
+    /// can be folded into the canonical `Equal/GreaterEqual/LessEqual/NotEqual` form
+    /// (variable on the left). A literal-left predicate such as `2 <= B` is otherwise
+    /// kept as `GeneralLessEqual { Value(2), Const("B") }`, which downstream subtype
+    /// and interval-bound checks (which only match the canonical forms) cannot read.
+    fn var_value_sides(lhs: &Predicate, rhs: &Predicate) -> Option<(bool, Str, TyParam)> {
+        match (lhs, rhs) {
+            (Predicate::Const(var), Predicate::Value(c)) => {
+                Some((true, var.clone(), TyParam::Value(c.clone())))
+            }
+            (Predicate::Value(c), Predicate::Const(var)) => {
+                Some((false, var.clone(), TyParam::Value(c.clone())))
+            }
+            _ => None,
+        }
+    }
+
     pub fn general_eq(lhs: Predicate, rhs: Predicate) -> Self {
+        if let Some((_, var, val)) = Self::var_value_sides(&lhs, &rhs) {
+            return Self::eq(var, val);
+        }
         Self::GeneralEqual {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
@@ -390,6 +411,14 @@ impl Predicate {
     }
 
     pub fn general_ge(lhs: Predicate, rhs: Predicate) -> Self {
+        // `var >= val` stays `>=`; `val >= var` becomes `var <= val`.
+        if let Some((var_is_lhs, var, val)) = Self::var_value_sides(&lhs, &rhs) {
+            return if var_is_lhs {
+                Self::ge(var, val)
+            } else {
+                Self::le(var, val)
+            };
+        }
         Self::GeneralGreaterEqual {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
@@ -397,6 +426,14 @@ impl Predicate {
     }
 
     pub fn general_le(lhs: Predicate, rhs: Predicate) -> Self {
+        // `var <= val` stays `<=`; `val <= var` becomes `var >= val`.
+        if let Some((var_is_lhs, var, val)) = Self::var_value_sides(&lhs, &rhs) {
+            return if var_is_lhs {
+                Self::le(var, val)
+            } else {
+                Self::ge(var, val)
+            };
+        }
         Self::GeneralLessEqual {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
@@ -404,6 +441,9 @@ impl Predicate {
     }
 
     pub fn general_ne(lhs: Predicate, rhs: Predicate) -> Self {
+        if let Some((_, var, val)) = Self::var_value_sides(&lhs, &rhs) {
+            return Self::ne(var, val);
+        }
         Self::GeneralNotEqual {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),

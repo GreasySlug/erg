@@ -23,4 +23,16 @@ q = 10 / 4
 assert q.numerator == 5
 assert q.denominator == 2
 
+# literal-left / compound comparison predicates (`2 <= B`) are normalized to the
+# canonical form (`B >= 2`), so both the argument check and the interval-bound
+# extraction recognize them: `{B: Nat | 2 <= B and B <= 5} - 1` stays `Nat`.
+litf(x: {B: Nat | 2 <= B and B <= 5}): Nat = x - 1
+assert litf(3) == 2
+assert litf(5) == 4
+# bound order does not matter and a lone literal-left bound also works
+litg(x: {B: Nat | B <= 5 and 2 <= B}): Nat = x - 1
+assert litg(4) == 3
+lith(x: {B: Nat | 2 <= B}): Nat = x - 1
+assert lith(7) == 6
+
 print! "ok"

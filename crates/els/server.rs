@@ -1080,6 +1080,21 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 self.file_cache.incremental_update(params);
                 Ok(())
             }
+            "textDocument/didClose" => {
+                // Accept both a spec `DidCloseTextDocumentParams` (`{textDocument: {uri}}`)
+                // and a bare `TextDocumentIdentifier` (`{uri}`) that some clients send.
+                let td = msg["params"].get("textDocument").unwrap_or(&msg["params"]);
+                let uri_str = td["uri"]
+                    .as_str()
+                    .ok_or("textDocument/didClose: missing uri")?;
+                let uri = NormalizedUrl::parse(uri_str)?;
+                self.send_log(format!("{method}: {uri}"))?;
+                self.file_cache.remove(&uri);
+                // drop diagnostics for the closed document
+                let mut closed = Set::new();
+                closed.insert(uri);
+                self.send_empty_diagnostics(closed)
+            }
             "$/cancelRequest" => {
                 let id = msg["params"]["id"].as_i64().unwrap();
                 let task = self.scheduler.cancel(id);

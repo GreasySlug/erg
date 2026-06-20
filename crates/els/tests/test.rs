@@ -384,6 +384,27 @@ fn test_document_symbol() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// `textDocument/didClose` must be handled (it was previously unhandled despite
+/// `open_close: Some(true)`): the document is dropped from the cache and its
+/// diagnostics are cleared.
+#[test]
+#[exec_new_thread]
+fn test_did_close() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.wait_messages(3)?;
+    client.notify_open(FILE_A)?;
+    client.wait_messages(6)?;
+    client.responses.clear();
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_close(uri.clone().raw())?;
+    let diags = client.wait_diagnostics()?;
+    assert_eq!(NormalizedUrl::new(diags.uri), uri);
+    assert!(diags.diagnostics.is_empty(), "{:?}", diags.diagnostics);
+    Ok(())
+}
+
 #[test]
 fn test_inlay_hint() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Server::bind_fake_client();

@@ -218,6 +218,11 @@ fn exec_import_cyclic() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_import_sugar() -> Result<(), ()> {
+    expect_success("tests/should_ok/import_sugar/import_sugar.er", 0)
+}
+
+#[test]
 fn exec_index() -> Result<(), ()> {
     expect_success("tests/should_ok/index.er", 0)
 }

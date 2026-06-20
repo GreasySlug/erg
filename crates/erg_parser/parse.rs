@@ -1934,6 +1934,13 @@ impl Parser {
 
     /// chunk = expr + def
     fn try_reduce_chunk(&mut self, winding: bool, in_brace: bool) -> ParseResult<Expr> {
+        // `import` / `pyimport` syntactic sugar is only recognized at statement level
+        // (top-level chunks and block bodies, which are parsed with `winding == true`).
+        if winding {
+            if let Some(res) = self.opt_reduce_import_sugar() {
+                return res;
+            }
+        }
         let ctx = ExprCtx {
             chunk: true,
             winding,
@@ -1942,6 +1949,194 @@ impl Parser {
             line_break: false,
         };
         self.try_reduce_expr_prec(0, ctx)
+    }
+
+    /// Detect and parse the `import` / `pyimport` syntactic sugar at statement level.
+    ///
+    /// Returns `None` when the current chunk is not an import statement, so the
+    /// caller falls through to ordinary expression parsing. This keeps the
+    /// historical call form (`foo = import "foo"`) working unchanged, since there
+    /// the leading token is the bound name rather than `import`.
+    ///
+    /// Sugar forms (all desugar to the existing call form):
+    /// - `import foo`                => `foo = import "foo"`
+    /// - `import foo as f`           => `f = import "foo"`
+    /// - `import foo/bar`            => `bar = import "foo/bar"`
+    /// - `pyimport numpy`            => `numpy = pyimport "numpy"`
+    /// - `pyimport numpy as np`      => `np = pyimport "numpy"`
+    /// - `from foo import a, b`      => `{a; b} = import "foo"`
+    /// - `from foo import a as x, b` => `{a as x; b} = import "foo"`
+    /// - `pyfrom typing import T, U` => `{T; U} = pyimport "typing"`
+    fn opt_reduce_import_sugar(&mut self) -> Option<ParseResult<Expr>> {
+        let head = self.peek()?;
+        if !head.is(Symbol) {
+            return None;
+        }
+        // (underlying function name, whether this is a selective `from`-style import)
+        let (func, selective) = match &head.content[..] {
+            "import" => ("import", false),
+            "pyimport" => ("pyimport", false),
+            "from" => ("import", true),
+            "pyfrom" => ("pyimport", true),
+            _ => return None,
+        };
+        // A module path (bare name or string literal) must follow; otherwise this is
+        // an ordinary use of the identifier (e.g. `import = ...`) and we bail out.
+        match self.nth(1) {
+            Some(t) if t.is(Symbol) || t.is(StrLit) => {}
+            _ => return None,
+        }
+        Some(self.reduce_import_sugar(func, selective))
+    }
+
+    fn reduce_import_sugar(&mut self, func: &'static str, selective: bool) -> ParseResult<Expr> {
+        debug_call_info!(self);
+        let kw = self.lpop(); // `import` / `pyimport` / `from` / `pyfrom`
+        let start = kw.loc();
+        let (path, last, path_loc) = self.reduce_module_path();
+        // build the underlying call `<func> "<path>"`
+        let func_tok = Token::new_with_loc(Symbol, Str::ever(func), start);
+        let str_tok = Token::new_with_loc(StrLit, Str::from(format!("\"{path}\"")), path_loc);
+        let call =
+            Expr::Accessor(Accessor::local(func_tok)).call1(Expr::Literal(Literal::new(str_tok)));
+        let sig = if selective {
+            // a literal `import` keyword separates the module from the imported names
+            match self.peek() {
+                Some(t) if t.is(Symbol) && &t.content[..] == "import" => {
+                    self.skip();
+                }
+                _ => {
+                    let loc = self.peek().map(|t| t.loc()).unwrap_or(path_loc);
+                    let got = self.peek_kind().unwrap_or(EOF);
+                    let err = ParseError::unexpected_token(line!() as usize, loc, "import", got);
+                    self.errs.push(err);
+                    debug_exit_info!(self);
+                    return Err(());
+                }
+            }
+            let attrs = self.reduce_import_names().map_err(|_| {
+                self.stack_dec(fn_name!());
+            })?;
+            let end = attrs.last().map(|a| a.loc()).unwrap_or(path_loc);
+            let braces = Location::concat(&start, &end);
+            let pat = VarRecordPattern::new(braces, VarRecordAttrs::new(attrs));
+            Signature::Var(VarSignature::new(VarPattern::Record(pat), None, None))
+        } else {
+            // optional `as <name>` rebinds the module to a different name
+            let name_tok = if self.cur_is(As) {
+                self.skip();
+                match self.peek() {
+                    Some(t) if t.is(Symbol) => self.lpop(),
+                    _ => {
+                        let loc = self.peek().map(|t| t.loc()).unwrap_or(path_loc);
+                        let got = self.peek_kind().unwrap_or(EOF);
+                        let err =
+                            ParseError::unexpected_token(line!() as usize, loc, "identifier", got);
+                        self.errs.push(err);
+                        debug_exit_info!(self);
+                        return Err(());
+                    }
+                }
+            } else {
+                Token::new_with_loc(Symbol, last, path_loc)
+            };
+            let ident = Identifier::private_from_token(name_tok);
+            Signature::Var(VarSignature::new(VarPattern::Ident(ident), None, None))
+        };
+        self.counter.inc();
+        let body = DefBody::new(crate::token::EQUAL, Block::new(vec![call]), self.counter);
+        debug_exit_info!(self);
+        Ok(Expr::Def(Def::new(sig, body)))
+    }
+
+    /// Parse a module path: either a string literal (`"foo/bar"`) or a slash-separated
+    /// chain of identifiers (`foo/bar`). Returns the joined path (without quotes), the
+    /// last path component (used as the default bound name), and the covered location.
+    fn reduce_module_path(&mut self) -> (Str, Str, Location) {
+        if self.cur_is(StrLit) {
+            let tok = self.lpop();
+            let raw = tok.content.replace('\"', "");
+            let last = raw.rsplit('/').next().unwrap_or("").to_string();
+            (Str::from(raw), Str::from(last), tok.loc())
+        } else {
+            let first = self.lpop(); // guaranteed to be a Symbol by the caller
+            let start = first.loc();
+            let mut path = first.content.to_string();
+            let mut last = first.content.to_string();
+            let mut end = start;
+            while self.cur_is(Slash) && self.nth_is(1, Symbol) {
+                self.skip(); // `/`
+                let seg = self.lpop();
+                path.push('/');
+                path.push_str(&seg.content);
+                last = seg.content.to_string();
+                end = seg.loc();
+            }
+            (
+                Str::from(path),
+                Str::from(last),
+                Location::concat(&start, &end),
+            )
+        }
+    }
+
+    /// Parse the comma-separated name list of a `from ... import a, b as c` statement
+    /// into record-destructuring attributes (`a` => `a = a`, `b as c` => `b = c`).
+    fn reduce_import_names(&mut self) -> ParseResult<Vec<VarRecordAttr>> {
+        debug_call_info!(self);
+        let mut attrs = vec![];
+        loop {
+            let attr_tok = match self.peek() {
+                Some(t) if t.is(Symbol) => self.lpop(),
+                _ => {
+                    let loc = self.peek().map(|t| t.loc()).unwrap_or(Location::Unknown);
+                    let got = self.peek_kind().unwrap_or(EOF);
+                    let err =
+                        ParseError::unexpected_token(line!() as usize, loc, "identifier", got);
+                    self.errs.push(err);
+                    debug_exit_info!(self);
+                    return Err(());
+                }
+            };
+            let local_tok = if self.cur_is(As) {
+                self.skip();
+                match self.peek() {
+                    Some(t) if t.is(Symbol) => self.lpop(),
+                    _ => {
+                        let loc = self
+                            .peek()
+                            .map(|t| t.loc())
+                            .unwrap_or_else(|| attr_tok.loc());
+                        let got = self.peek_kind().unwrap_or(EOF);
+                        let err =
+                            ParseError::unexpected_token(line!() as usize, loc, "identifier", got);
+                        self.errs.push(err);
+                        debug_exit_info!(self);
+                        return Err(());
+                    }
+                }
+            } else {
+                attr_tok.clone()
+            };
+            let lhs = Identifier::private_from_token(attr_tok);
+            let rhs = VarSignature::new(
+                VarPattern::Ident(Identifier::private_from_token(local_tok)),
+                None,
+                None,
+            );
+            attrs.push(VarRecordAttr::new(lhs, rhs));
+            if self.cur_is(Comma) {
+                self.skip();
+                // tolerate a trailing comma before the end of the statement
+                if !self.cur_is(Symbol) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        debug_exit_info!(self);
+        Ok(attrs)
     }
 
     /// winding: true => parse paren-less tuple

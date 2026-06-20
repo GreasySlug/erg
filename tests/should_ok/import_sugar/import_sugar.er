@@ -1,0 +1,23 @@
+# `import` / `pyimport` syntactic sugar (desugars to the call form in the parser)
+
+# Erg module imports
+import mod_a                   # mod_a = import "mod_a"
+import mod_a as ma            # ma = import "mod_a"
+from mod_a import x, y        # {x; y} = import "mod_a"
+from mod_a import x as z      # {x as z} = import "mod_a"
+
+assert mod_a.x == 1
+assert ma.y == 2
+assert x == 1
+assert y == 2
+assert z == 1
+
+# Python module imports
+pyimport math                # math = pyimport "math"
+pyimport math as m           # m = pyimport "math"
+pyfrom math import floor     # {floor} = pyimport "math"
+pyfrom math import floor as fl  # {floor as fl} = pyimport "math"
+
+assert floor(math.pi) == 3
+assert fl(m.pi) == 3
+print! "ok"

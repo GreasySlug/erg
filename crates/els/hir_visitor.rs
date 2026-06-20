@@ -463,7 +463,12 @@ impl<'a> HIRVisitor<'a> {
         }
         match lis {
             List::Normal(lis) => self.get_expr_from_args(&lis.elems, pos),
-            _ => None, // todo!(),
+            List::Comprehension(lis) => self
+                .get_expr(&lis.elem, pos)
+                .or_else(|| self.get_expr(&lis.guard, pos)),
+            List::WithLength(lis) => self
+                .get_expr(&lis.elem, pos)
+                .or_else(|| lis.len.as_deref().and_then(|len| self.get_expr(len, pos))),
         }
     }
 
@@ -489,7 +494,10 @@ impl<'a> HIRVisitor<'a> {
                 }
                 None
             }
-            _ => None, // todo!(),
+            Dict::Comprehension(dict) => self
+                .get_expr(&dict.key, pos)
+                .or_else(|| self.get_expr(&dict.value, pos))
+                .or_else(|| self.get_expr(&dict.guard, pos)),
         }
     }
 
@@ -523,7 +531,9 @@ impl<'a> HIRVisitor<'a> {
         }
         match set {
             Set::Normal(set) => self.get_expr_from_args(&set.elems, pos),
-            _ => None, // todo!(),
+            Set::WithLength(set) => self
+                .get_expr(&set.elem, pos)
+                .or_else(|| self.get_expr(&set.len, pos)),
         }
     }
 
@@ -779,7 +789,14 @@ impl HIRVisitor<'_> {
     fn get_list_info(&self, lis: &List, token: &Token) -> Option<VarInfo> {
         match lis {
             List::Normal(lis) => self.get_args_info(&lis.elems, token),
-            _ => None, // todo!(),
+            List::Comprehension(lis) => self
+                .get_expr_info(&lis.elem, token)
+                .or_else(|| self.get_expr_info(&lis.guard, token)),
+            List::WithLength(lis) => self.get_expr_info(&lis.elem, token).or_else(|| {
+                lis.len
+                    .as_deref()
+                    .and_then(|len| self.get_expr_info(len, token))
+            }),
         }
     }
 
@@ -795,7 +812,10 @@ impl HIRVisitor<'_> {
                 }
                 None
             }
-            _ => None, // todo!(),
+            Dict::Comprehension(dict) => self
+                .get_expr_info(&dict.key, token)
+                .or_else(|| self.get_expr_info(&dict.value, token))
+                .or_else(|| self.get_expr_info(&dict.guard, token)),
         }
     }
 
@@ -811,7 +831,9 @@ impl HIRVisitor<'_> {
     fn get_set_info(&self, set: &Set, token: &Token) -> Option<VarInfo> {
         match set {
             Set::Normal(set) => self.get_args_info(&set.elems, token),
-            _ => None, // todo!(),
+            Set::WithLength(set) => self
+                .get_expr_info(&set.elem, token)
+                .or_else(|| self.get_expr_info(&set.len, token)),
         }
     }
 

@@ -12,6 +12,7 @@ const FILE_IMPORTS: &str = "tests/imports.er";
 const FILE_INVALID_SYNTAX: &str = "tests/invalid_syntax.er";
 const FILE_RETRIGGER: &str = "tests/retrigger.er";
 const FILE_TOLERANT_COMPLETION: &str = "tests/tolerant_completion.er";
+const FILE_WITH_LENGTH: &str = "tests/with_length.er";
 
 use els::{NormalizedUrl, Server};
 use erg_proc_macros::exec_new_thread;
@@ -312,6 +313,34 @@ fn test_goto_definition() -> Result<(), Box<dyn std::error::Error>> {
         todo!()
     };
     assert_eq!(&location.range, &oneline_range(0, 0, 1));
+    Ok(())
+}
+
+/// Regression: the HIR visitor must descend into `[elem; len]` (`ListWithLength`),
+/// otherwise hover / goto-definition / references on `m` and `n` inside `a = [m; n]`
+/// return nothing.
+#[test]
+#[exec_new_thread]
+fn test_goto_definition_in_list_with_length() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_WITH_LENGTH).canonicalize()?)?;
+    client.notify_open(FILE_WITH_LENGTH)?;
+    // `m` (the element) used in `a = [m; n]` -> definition at line 0
+    let Some(GotoDefinitionResponse::Scalar(location)) =
+        client.request_goto_definition(uri.clone().raw(), 2, 5)?
+    else {
+        return Err("no definition found for `m` in `[m; n]`".into());
+    };
+    assert_eq!(&location.range, &oneline_range(0, 0, 1));
+    // `n` (the length) used in `a = [m; n]` -> definition at line 1
+    let Some(GotoDefinitionResponse::Scalar(location)) =
+        client.request_goto_definition(uri.raw(), 2, 8)?
+    else {
+        return Err("no definition found for `n` in `[m; n]`".into());
+    };
+    assert_eq!(&location.range, &oneline_range(1, 0, 1));
     Ok(())
 }
 

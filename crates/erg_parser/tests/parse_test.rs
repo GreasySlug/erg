@@ -230,13 +230,23 @@ mod code_completeness_tests {
     #[test]
     fn test_expects_block() {
         // Block-starting constructs: an indented body is expected on the next line
-        for src in ["f x =", "if True:", "for! 0..1, i =>", "@Inheritable"] {
+        for src in ["f x =", "if True:", "for! 0..1, i =>"] {
             assert_eq!(
                 check_code_completeness(src),
                 CodeCompleteness::ExpectsBlock,
                 "{src:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_decorator_continuation() {
+        // A decorator expects a definition at the SAME indent level (a
+        // continuation line), not an indented block.
+        assert_eq!(
+            check_code_completeness("@Inheritable"),
+            CodeCompleteness::Continuation
+        );
     }
 
     #[test]

@@ -40,9 +40,9 @@ use lsp_types::request::{
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
     FoldingRangeRequest, GotoDefinition, GotoImplementation, GotoTypeDefinition, HoverRequest,
-    InlayHintRequest, InlayHintResolveRequest, References, Rename, Request, ResolveCompletionItem,
-    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
-    WorkspaceSymbol,
+    InlayHintRequest, InlayHintResolveRequest, PrepareRenameRequest, References, Rename, Request,
+    ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyServerCapability, CodeActionKind, CodeActionOptions, CodeActionProviderCapability,
@@ -51,7 +51,7 @@ use lsp_types::{
     DocumentLinkOptions, ExecuteCommandOptions, FoldingRangeProviderCapability,
     HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
     InlayHintOptions, InlayHintServerCapabilities, NumberOrString, OneOf, Position, ProgressParams,
-    ProgressParamsValue, SelectionRangeProviderCapability, SemanticTokenModifier,
+    ProgressParamsValue, RenameOptions, SelectionRangeProviderCapability, SemanticTokenModifier,
     SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
     TypeDefinitionProviderCapability, WorkDoneProgress, WorkDoneProgressBegin,
@@ -515,7 +515,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         } else {
             Some(comp_options)
         };
-        capabilities.rename_provider = Some(OneOf::Left(true));
+        capabilities.rename_provider = Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        }));
         capabilities.references_provider = Some(OneOf::Left(true));
         capabilities.definition_provider = Some(OneOf::Left(true));
         capabilities.type_definition_provider =
@@ -985,6 +988,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "initialize" => self.init(msg, id),
             "shutdown" => self.shutdown(id),
             Rename::METHOD => self.rename(msg),
+            PrepareRenameRequest::METHOD => self.prepare_rename(msg),
             Completion::METHOD => self.parse_send::<Completion>(id, msg),
             ResolveCompletionItem::METHOD => self.parse_send::<ResolveCompletionItem>(id, msg),
             GotoDefinition::METHOD => self.parse_send::<GotoDefinition>(id, msg),

@@ -1,9 +1,11 @@
 use std::path::Path;
 
 use erg_common::spawn::safe_yield;
+use lsp_types::request::PrepareRenameRequest;
 use lsp_types::{
     CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse, FoldingRange, FoldingRangeKind,
-    GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString,
+    GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
+    PrepareRenameResponse, TextDocumentIdentifier, TextDocumentPositionParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -13,6 +15,7 @@ const FILE_INVALID_SYNTAX: &str = "tests/invalid_syntax.er";
 const FILE_RETRIGGER: &str = "tests/retrigger.er";
 const FILE_TOLERANT_COMPLETION: &str = "tests/tolerant_completion.er";
 const FILE_WITH_LENGTH: &str = "tests/with_length.er";
+const FILE_PREPARE_RENAME: &str = "tests/prepare_rename.er";
 
 use els::{NormalizedUrl, Server};
 use erg_proc_macros::exec_new_thread;
@@ -297,6 +300,37 @@ fn test_references() -> Result<(), Box<dyn std::error::Error>> {
     let locations = client.request_references(uri_b.raw(), 0, 2)?.unwrap();
     assert_eq!(locations.len(), 1);
     assert_eq!(NormalizedUrl::new(locations[0].uri.clone()), uri_c);
+    Ok(())
+}
+
+/// `textDocument/prepareRename` returns the span of a renameable symbol and
+/// `null` for a position that is not a user-defined symbol.
+#[test]
+#[exec_new_thread]
+fn test_prepare_rename() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_PREPARE_RENAME).canonicalize()?)?;
+    client.notify_open(FILE_PREPARE_RENAME)?;
+    // `x` defined on line 0 is renameable
+    let params = TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+        position: Position::new(0, 0),
+    };
+    let resp = client.request::<PrepareRenameRequest>(params)?;
+    let Some(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder }) = resp else {
+        return Err(format!("expected RangeWithPlaceholder, got {resp:?}").into());
+    };
+    assert_eq!(placeholder, "x");
+    assert_eq!(range, oneline_range(0, 0, 1));
+    // the builtin `abs` (line 1, col 4) cannot be renamed
+    let params = TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier::new(uri.raw()),
+        position: Position::new(1, 4),
+    };
+    let resp = client.request::<PrepareRenameRequest>(params)?;
+    assert!(resp.is_none(), "a builtin must not be renameable: {resp:?}");
     Ok(())
 }
 

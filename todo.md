@@ -17,10 +17,13 @@
 
 ## P1: capabilities 宣言と実装の乖離(体感バグ)
 
-- [ ] **`textDocument/didClose` ハンドラ欠落** — `open_close: Some(true)` 宣言済みだが
+- [x] **`textDocument/didClose` ハンドラ欠落** — `open_close: Some(true)` 宣言済みだが
   notification ハンドラが無く、閉じてもファイルキャッシュが解放されない。
-- [ ] **`prepareRename` 未実装** — `rename_provider = Some(OneOf::Left(true))`(bool)で
+  → **完了 (6153cc64)**: キャッシュ削除 + 診断クリア。uri は spec/bare 両形式を許容。test_did_close。
+- [x] **`prepareRename` 未実装** — `rename_provider = Some(OneOf::Left(true))`(bool)で
   prepareRename ハンドラ無し。
+  → **完了**: `rename_provider` を `RenameOptions{prepare_provider:true}` に。`prepare_rename`
+    でシンボルの range/placeholder を返し、builtin/std/未定義は null。test_prepare_rename。
 - [ ] **Go to Implementation の誤実装** — `implementation.rs` は「定義の定義」を返す
   リダイレクトで、トレイト実装クラス一覧を返す本来の動作でない。
 - [ ] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。

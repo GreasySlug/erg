@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use lsp_types::{
     DocumentChangeOperation, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier,
-    RenameFile, RenameFilesParams, RenameParams, ResourceOp, TextDocumentEdit, TextEdit, Url,
-    WorkspaceEdit,
+    PrepareRenameResponse, RenameFile, RenameFilesParams, RenameParams, ResourceOp,
+    TextDocumentEdit, TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
 };
 
 use erg_common::dict::Dict;
@@ -109,6 +109,44 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 return Ok(());
             }
         }
+        self.send_stdout(&json!({ "jsonrpc": "2.0", "id": id, "result": Value::Null }))
+    }
+
+    /// `textDocument/prepareRename`: validate that the symbol under the cursor can
+    /// be renamed and return the range it spans (so the editor can pre-select it).
+    /// Returns `null` when the position is not a renameable user-defined symbol.
+    pub(crate) fn prepare_rename(&mut self, msg: &Value) -> ELSResult<()> {
+        let params = TextDocumentPositionParams::deserialize(&msg["params"])?;
+        let id = msg["id"].as_i64().unwrap();
+        let uri = NormalizedUrl::new(params.text_document.uri);
+        let pos = params.position;
+        if let Some(tok) = self.file_cache.get_symbol(&uri, pos) {
+            if let Some(vi) = self
+                .get_visitor(&uri)
+                .and_then(|visitor| visitor.get_info(&tok))
+            {
+                let is_std = vi
+                    .def_loc
+                    .module
+                    .as_ref()
+                    .map(|path| path.starts_with(&self.erg_path))
+                    .unwrap_or(false);
+                let renameable = !vi.def_loc.loc.is_unknown()
+                    && !is_std
+                    && !matches!(vi.kind, VarKind::Builtin | VarKind::FixedAuto);
+                if renameable {
+                    if let Some(range) = util::loc_to_range(tok.loc()) {
+                        let result = PrepareRenameResponse::RangeWithPlaceholder {
+                            range,
+                            placeholder: tok.content.to_string(),
+                        };
+                        return self
+                            .send_stdout(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                    }
+                }
+            }
+        }
+        // the position is not a renameable symbol
         self.send_stdout(&json!({ "jsonrpc": "2.0", "id": id, "result": Value::Null }))
     }
 

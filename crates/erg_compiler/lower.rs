@@ -1190,6 +1190,27 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 
+    /// Base type for an ordering-comparison narrowing refinement (`>`, `<`, `>=`, `<=`).
+    ///
+    /// Decimal values are stored as `ValueObj::Float` but are `Ratio` by design
+    /// (only `ratio_t()` in the literal path keeps that straight). A literal/const
+    /// operand must therefore keep the guard in the `Ratio` branch, otherwise a
+    /// `Ratio` target cannot be narrowed against it (`Ratio` is not a subtype of
+    /// `Float`). A genuine `Float` operand is a variable/call, not a value, so it
+    /// keeps its `Float` base and is unaffected.
+    fn cmp_guard_base(&self, rhs: &TyParam) -> Type {
+        let evaled = self
+            .module
+            .context
+            .eval_tp(rhs.clone())
+            .unwrap_or_else(|_| rhs.clone());
+        if matches!(evaled, TyParam::Value(ValueObj::Float(_))) {
+            Type::Ratio
+        } else {
+            self.module.context.get_tp_t(rhs).unwrap_or(Type::Obj)
+        }
+    }
+
     fn get_bin_guard_type(&self, op: &Token, lhs: &ast::Expr, rhs: &ast::Expr) -> Option<Type> {
         match op.kind {
             TokenKind::AndOp => {
@@ -1241,7 +1262,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             }
             TokenKind::Gre => {
                 let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
-                let t = self.module.context.get_tp_t(&rhs).unwrap_or(Type::Obj);
+                let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::gt(varname.clone(), rhs);
                 let refine = refinement(varname, t, pred);
@@ -1249,7 +1270,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             }
             TokenKind::GreEq => {
                 let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
-                let t = self.module.context.get_tp_t(&rhs).unwrap_or(Type::Obj);
+                let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::ge(varname.clone(), rhs);
                 let refine = refinement(varname, t, pred);
@@ -1257,7 +1278,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             }
             TokenKind::Less => {
                 let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
-                let t = self.module.context.get_tp_t(&rhs).unwrap_or(Type::Obj);
+                let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::lt(varname.clone(), rhs);
                 let refine = refinement(varname, t, pred);
@@ -1265,7 +1286,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             }
             TokenKind::LessEq => {
                 let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
-                let t = self.module.context.get_tp_t(&rhs).unwrap_or(Type::Obj);
+                let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::le(varname.clone(), rhs);
                 let refine = refinement(varname, t, pred);
@@ -1323,7 +1344,11 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         if !has_guard {
             let l_t = args[0].expr.ref_t().clone();
             let r_t = args[1].expr.ref_t().clone();
-            if let Some(refined) = self.module.context.refine_num_binop(bin.op.kind, &l_t, &r_t) {
+            if let Some(refined) = self
+                .module
+                .context
+                .refine_num_binop(bin.op.kind, &l_t, &r_t)
+            {
                 if let Some(return_t) = vi.t.mut_return_t() {
                     if self.module.context.subtype_of(&refined, return_t) {
                         *return_t = refined;

@@ -1,0 +1,34 @@
+# Numeric comparison (`>`, `<`, `>=`, `<=`) narrowing must work for
+# `Ratio` and `Float` operands, not just `Int`.
+# (decimal literals like `2.5` are `Ratio`; `2.5f64` is `Float`)
+
+# --- Int (baseline) ---
+n = 5
+assert n > 3
+assert n < 10
+assert n >= 5
+assert n <= 5
+
+# --- Ratio: variable vs literal ---
+x = 2.5
+assert x > 2.0
+assert x < 3.0
+assert x >= 2.5
+assert x <= 2.5
+
+# --- Ratio: variable vs variable ---
+y = 2.0
+assert x > y
+assert y < x
+assert x >= y
+assert y <= x
+
+# --- Float (via f64 suffix): variable vs variable ---
+a = 2.5f64
+b = 1.0f64
+assert a > b
+assert b < a
+assert a >= b
+assert b <= a
+
+print! "num_compare ok"

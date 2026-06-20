@@ -21,7 +21,6 @@ use erg_parser::token::Token;
 use crate::ty::constructors::{
     anon, closed_range, fn_met, free_var, func, mono, poly, proc, proj, ref_, refinement, subr_t,
 };
-use erg_parser::token::TokenKind;
 use crate::ty::free::{Constraint, FreeTyParam, FreeTyVar};
 use crate::ty::typaram::TyParam;
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
@@ -29,6 +28,7 @@ use crate::ty::{
     Field, GuardType, HasType, ParamTy, Predicate, RefinementType, SubrKind, SubrType, Type,
     Visibility, VisibilityModifier,
 };
+use erg_parser::token::TokenKind;
 use Type::*;
 
 use crate::context::instantiate_spec::ConstTemplate;
@@ -1904,17 +1904,20 @@ impl Context {
         }
     }
 
-    fn build_num_refinement(
-        &self,
-        base: Type,
-        lo: Option<i64>,
-        hi: Option<i64>,
-    ) -> Option<Type> {
+    fn build_num_refinement(&self, base: Type, lo: Option<i64>, hi: Option<i64>) -> Option<Type> {
         let in_i32 = |n: i64| i32::try_from(n).ok();
         let var = Str::ever("_v");
         match (lo, hi) {
             (None, None) => None,
-            (Some(a), Some(b)) if a <= b => Some(closed_range(base, in_i32(a)?, in_i32(b)?)),
+            // a single-value interval `[a, a]` is the singleton `{a}`
+            // (`{_v: T | _v == a}`), which displays as `{a}` instead of the verbose
+            // `{_v: T | _v >= a and _v <= a}`.
+            (Some(a), Some(b)) if a == b => Some(refinement(
+                var.clone(),
+                base,
+                Predicate::eq(var, TyParam::value(in_i32(a)?)),
+            )),
+            (Some(a), Some(b)) if a < b => Some(closed_range(base, in_i32(a)?, in_i32(b)?)),
             (Some(a), None) => Some(refinement(
                 var.clone(),
                 base,
@@ -1933,12 +1936,7 @@ impl Context {
     /// concrete operand types. Returns `None` when no refinement applies. This is a *leaf*
     /// computation (it builds the result type directly and never re-enters projection
     /// evaluation), so it cannot cause unbounded recursion.
-    pub(crate) fn refine_num_binop(
-        &self,
-        op: TokenKind,
-        l_t: &Type,
-        r_t: &Type,
-    ) -> Option<Type> {
+    pub(crate) fn refine_num_binop(&self, op: TokenKind, l_t: &Type, r_t: &Type) -> Option<Type> {
         let (llo, lhi) = self.int_interval_bounds(l_t)?;
         let (rlo, rhi) = self.int_interval_bounds(r_t)?;
         let add = |a: Option<i64>, b: Option<i64>| a.zip(b).and_then(|(a, b)| a.checked_add(b));

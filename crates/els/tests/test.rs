@@ -400,7 +400,8 @@ fn test_inlay_hint() -> Result<(), Box<dyn std::error::Error>> {
     let InlayHintLabel::String(label) = &hints[1].label else {
         todo!()
     };
-    assert_eq!(label, ": Nat");
+    // `x + 1` (x: {1}) is refined to the singleton `{2}`
+    assert_eq!(label, ": {2}");
     Ok(())
 }
 

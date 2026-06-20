@@ -49,22 +49,31 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     /// `noun` is the title noun (e.g. "implementations"/"subclasses"); when
     /// `hide_when_empty` is set, returns `None` if there are no such classes
     /// (so a code lens is not shown on every class without subclasses).
+    /// References to `referee` that are class definitions, i.e. the classes that
+    /// implement a trait or inherit from a class.
+    pub(crate) fn get_class_impls(&self, referee: &AbsLocation) -> Vec<Location> {
+        self.get_refs_from_abs_loc(referee)
+            .into_iter()
+            .filter_map(|loc| {
+                let uri = NormalizedUrl::new(loc.uri.clone());
+                let visitor = self.get_visitor(&uri)?;
+                let Expr::ClassDef(class_def) = visitor.get_min_expr(loc.range.start)? else {
+                    return None;
+                };
+                // exclude self-references inside the class's own body
+                // (e.g. `C { .x = x }` in `C`'s own constructor)
+                (&class_def.sig.ident().vi.def_loc != referee).then_some(loc)
+            })
+            .collect()
+    }
+
     pub(crate) fn gen_show_class_refs_command(
         &self,
         referee: AbsLocation,
         noun: &str,
         hide_when_empty: bool,
     ) -> ELSResult<Option<Command>> {
-        let refs = self.get_refs_from_abs_loc(&referee);
-        let filter = |loc: Location| {
-            let uri = NormalizedUrl::new(loc.uri.clone());
-            let opt_visitor = self.get_visitor(&uri);
-            let min_expr = opt_visitor
-                .as_ref()
-                .and_then(|visitor| visitor.get_min_expr(loc.range.start))?;
-            matches!(min_expr, Expr::ClassDef(_)).then_some(loc)
-        };
-        let impls = refs.into_iter().filter_map(filter).collect::<Vec<_>>();
+        let impls = self.get_class_impls(&referee);
         let impl_len = impls.len();
         if hide_when_empty && impl_len == 0 {
             return Ok(None);

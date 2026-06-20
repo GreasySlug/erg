@@ -20,9 +20,16 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         // {x #[ ← this is not the impl ]#;} = import "foo"
         // print! x # ← symbol
         if let Some(vi) = self.get_definition(&uri, &symbol)? {
-            let Some(uri) = vi
+            // classes that implement this trait / inherit from this class
+            let impls = self.get_class_impls(&vi.def_loc);
+            if !impls.is_empty() {
+                return Ok(Some(GotoImplementationResponse::Array(impls)));
+            }
+            // no implementors: fall back to the definition itself
+            let Some(def_uri) = vi
                 .def_loc
                 .module
+                .clone()
                 .and_then(|p| NormalizedUrl::from_file_path(p).ok())
             else {
                 return Ok(None);
@@ -30,7 +37,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let Some(pos) = loc_to_pos(vi.def_loc.loc) else {
                 return Ok(None);
             };
-            if let Some(location) = self.get_definition_location(&uri, pos)? {
+            if let Some(location) = self.get_definition_location(&def_uri, pos)? {
                 return Ok(Some(GotoImplementationResponse::Scalar(location)));
             }
         }

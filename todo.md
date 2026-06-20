@@ -24,8 +24,11 @@
   prepareRename ハンドラ無し。
   → **完了**: `rename_provider` を `RenameOptions{prepare_provider:true}` に。`prepare_rename`
     でシンボルの range/placeholder を返し、builtin/std/未定義は null。test_prepare_rename。
-- [ ] **Go to Implementation の誤実装** — `implementation.rs` は「定義の定義」を返す
+- [x] **Go to Implementation の誤実装** — `implementation.rs` は「定義の定義」を返す
   リダイレクトで、トレイト実装クラス一覧を返す本来の動作でない。
+  → **完了**: `get_class_impls(referee)`(ClassDef 参照、自己参照は除外)で実装/サブクラス
+    一覧を `Array` 返却。0件時は従来の定義リダイレクトにフォールバック。test_goto_implementation。
+    code lens の継承数も同ヘルパーで自己参照を除外し正確化。
 - [ ] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。
 - [ ] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
   → **保留**: 機能自体はコードアクション(quickfix)で動作済み。コマンド経由実装には

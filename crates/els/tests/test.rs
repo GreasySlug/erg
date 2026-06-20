@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use erg_common::spawn::safe_yield;
-use lsp_types::request::PrepareRenameRequest;
+use lsp_types::request::{GotoImplementation, GotoImplementationParams, PrepareRenameRequest};
 use lsp_types::{
     CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse, FoldingRange, FoldingRangeKind,
     GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
@@ -442,6 +442,33 @@ fn test_did_close() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Code lens shows the subclass count above a class that is inherited from
 /// (`send_class_inherits_lens` previously always returned an empty list).
+/// `textDocument/implementation` lists the classes that implement a trait /
+/// inherit a class (it previously only redirected to the definition).
+#[test]
+#[exec_new_thread]
+fn test_goto_implementation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INHERIT_LENS).canonicalize()?)?;
+    client.notify_open(FILE_INHERIT_LENS)?;
+    // `C` (defined on line 1) is inherited by exactly one subclass `D`
+    let params = GotoImplementationParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier::new(uri.raw()),
+            position: Position::new(1, 0),
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    let resp = client.request::<GotoImplementation>(params)?;
+    let Some(GotoDefinitionResponse::Array(locations)) = resp else {
+        return Err(format!("expected Array of implementations, got {resp:?}").into());
+    };
+    assert_eq!(locations.len(), 1, "{locations:?}");
+    Ok(())
+}
+
 #[test]
 #[exec_new_thread]
 fn test_code_lens_inherits() -> Result<(), Box<dyn std::error::Error>> {

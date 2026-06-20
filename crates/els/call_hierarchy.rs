@@ -3,6 +3,7 @@ use std::str::FromStr;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::parse::Parsable;
 
+use erg_common::traits::Locational;
 use erg_compiler::hir::{Accessor, Def, Dict, Expr, KeyValue, List, Set, Tuple};
 use erg_compiler::varinfo::{AbsLocation, VarInfo};
 use lsp_types::{
@@ -13,7 +14,7 @@ use lsp_types::{
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::symbol::symbol_kind;
-use crate::util::{abs_loc_to_lsp_loc, loc_to_pos, NormalizedUrl};
+use crate::util::{abs_loc_to_lsp_loc, loc_to_pos, loc_to_range, NormalizedUrl};
 
 fn hierarchy_item(name: String, vi: &VarInfo) -> Option<CallHierarchyItem> {
     let loc = abs_loc_to_lsp_loc(&vi.def_loc)?;
@@ -61,10 +62,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         else {
                             continue;
                         };
-                        let call = CallHierarchyIncomingCall {
-                            from,
-                            from_ranges: vec![],
-                        };
+                        // the call site within the caller (`from`)
+                        let from_ranges = loc_to_range(referrer_loc.loc).into_iter().collect();
+                        let call = CallHierarchyIncomingCall { from, from_ranges };
                         res.push(call);
                     }
                 }
@@ -119,21 +119,16 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     let Some(to) = hierarchy_item(attr.inspect().to_string(), &attr.vi) else {
                         return calls;
                     };
-                    let call = CallHierarchyOutgoingCall {
-                        to,
-                        from_ranges: vec![],
-                    };
-                    calls.push(call);
+                    // the call site (the callee name) within the current item
+                    let from_ranges = loc_to_range(attr.loc()).into_iter().collect();
+                    calls.push(CallHierarchyOutgoingCall { to, from_ranges });
                 } else if let Expr::Accessor(acc) = call.obj.as_ref() {
                     let Some(to) = hierarchy_item(acc.last_name().to_string(), acc.var_info())
                     else {
                         return calls;
                     };
-                    let call = CallHierarchyOutgoingCall {
-                        to,
-                        from_ranges: vec![],
-                    };
-                    calls.push(call);
+                    let from_ranges = loc_to_range(acc.loc()).into_iter().collect();
+                    calls.push(CallHierarchyOutgoingCall { to, from_ranges });
                 }
                 calls
             }

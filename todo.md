@@ -29,7 +29,9 @@
   → **完了**: `get_class_impls(referee)`(ClassDef 参照、自己参照は除外)で実装/サブクラス
     一覧を `Array` 返却。0件時は従来の定義リダイレクトにフォールバック。test_goto_implementation。
     code lens の継承数も同ヘルパーで自己参照を除外し正確化。
-- [ ] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。
+- [x] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。
+  → **完了**: incoming は referrer の呼び出し箇所、outgoing は呼び出し対象(attr/acc)の
+    ロケーションを `from_ranges` に格納。test_call_hierarchy_outgoing。
 - [ ] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
   → **保留**: 機能自体はコードアクション(quickfix)で動作済み。コマンド経由実装には
     `workspace/applyEdit`(server→client)基盤の新規追加が必要(ELS に未実装)。費用対効果から後回し。

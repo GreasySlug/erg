@@ -1,9 +1,13 @@
 use std::path::Path;
 
 use erg_common::spawn::safe_yield;
-use lsp_types::request::{GotoImplementation, GotoImplementationParams, PrepareRenameRequest};
+use lsp_types::request::{
+    CallHierarchyOutgoingCalls, CallHierarchyPrepare, GotoImplementation, GotoImplementationParams,
+    PrepareRenameRequest,
+};
 use lsp_types::{
-    CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse, FoldingRange, FoldingRangeKind,
+    CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams, CompletionResponse,
+    DiagnosticSeverity, DocumentSymbolResponse, FoldingRange, FoldingRangeKind,
     GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
     PrepareRenameResponse, TextDocumentIdentifier, TextDocumentPositionParams,
 };
@@ -17,6 +21,7 @@ const FILE_TOLERANT_COMPLETION: &str = "tests/tolerant_completion.er";
 const FILE_WITH_LENGTH: &str = "tests/with_length.er";
 const FILE_PREPARE_RENAME: &str = "tests/prepare_rename.er";
 const FILE_INHERIT_LENS: &str = "tests/inherit_lens.er";
+const FILE_CALL_HIERARCHY: &str = "tests/call_hierarchy.er";
 
 use els::{NormalizedUrl, Server};
 use erg_proc_macros::exec_new_thread;
@@ -444,6 +449,46 @@ fn test_did_close() -> Result<(), Box<dyn std::error::Error>> {
 /// (`send_class_inherits_lens` previously always returned an empty list).
 /// `textDocument/implementation` lists the classes that implement a trait /
 /// inherit a class (it previously only redirected to the definition).
+/// Call hierarchy outgoing calls must populate `from_ranges` (the call sites),
+/// which were previously always empty.
+#[test]
+#[exec_new_thread]
+fn test_call_hierarchy_outgoing() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_CALL_HIERARCHY).canonicalize()?)?;
+    client.notify_open(FILE_CALL_HIERARCHY)?;
+    // prepare on `g` (line 1, col 0), which calls `f`
+    let prep = CallHierarchyPrepareParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier::new(uri.raw()),
+            position: Position::new(1, 0),
+        },
+        work_done_progress_params: Default::default(),
+    };
+    let items = client.request::<CallHierarchyPrepare>(prep)?.unwrap();
+    let item = items
+        .into_iter()
+        .next()
+        .ok_or("no call hierarchy item for `g`")?;
+    let out = CallHierarchyOutgoingCallsParams {
+        item,
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    let calls = client.request::<CallHierarchyOutgoingCalls>(out)?.unwrap();
+    let f_call = calls
+        .iter()
+        .find(|c| c.to.name == "f")
+        .ok_or("`g` should have an outgoing call to `f`")?;
+    assert!(
+        !f_call.from_ranges.is_empty(),
+        "from_ranges must contain the call site: {f_call:?}"
+    );
+    Ok(())
+}
+
 #[test]
 #[exec_new_thread]
 fn test_goto_implementation() -> Result<(), Box<dyn std::error::Error>> {

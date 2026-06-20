@@ -2598,6 +2598,15 @@ impl Parser {
 
     /// "LHS" is the smallest unit that can be the left-hand side of an BinOp.
     /// e.g. Call, Name, UnaryOp, Lambda
+    /// Build the `Float(<expr>)` conversion that the `f64` / `f32` literal suffix
+    /// desugars to. Decimal literals (`2.5`) are `Ratio`, so the suffix is the
+    /// canonical way to construct an actual `Float` value in source.
+    fn float_suffix(expr: Expr) -> Expr {
+        let loc = expr.loc();
+        let float_tok = Token::new_with_loc(Symbol, Str::ever("Float"), loc);
+        Expr::Accessor(Accessor::local(float_tok)).call1(expr)
+    }
+
     fn try_reduce_bin_lhs(&mut self, in_type_args: bool, in_brace: bool) -> ParseResult<Expr> {
         debug_call_info!(self);
         match self.peek() {
@@ -2633,6 +2642,19 @@ impl Parser {
                         self.errs.push(err);
                         debug_exit_info!(self);
                         return Err(());
+                    } else if lit.is_number()
+                        && tk.is(Symbol)
+                        && matches!(&tk.inspect()[..], "f64" | "f32")
+                        && lit.col_end() == tk.col_begin()
+                    {
+                        // Float literal suffix: `2.5f64` / `15f32` => `Float(2.5)`.
+                        // Decimal literals are `Ratio`; the adjacent `f64` / `f32`
+                        // unit suffix constructs an actual `Float`
+                        // (see doc/EN/syntax/01_literal.md).
+                        self.skip(); // `f64` / `f32`
+                        let lhs = Expr::Literal(lit);
+                        debug_exit_info!(self);
+                        return Ok(Self::float_suffix(lhs));
                     } else if lit.is_number() && tk.is(Symbol) {
                         // *-less multiplication (e.g. 3x, 3x.y)
                         let rhs = self.try_reduce_call_or_acc(false)?;
@@ -2809,6 +2831,16 @@ impl Parser {
                 };
                 if let Expr::Tuple(Tuple::Normal(tup)) = &mut expr {
                     tup.elems.paren = Some((lparen.loc(), rparen.loc()));
+                }
+                // Float suffix on a parenthesized expression: `(1/2)f64` => `Float(1/2)`
+                if let Some(tk) = self.peek() {
+                    if tk.is(Symbol)
+                        && matches!(&tk.inspect()[..], "f64" | "f32")
+                        && rparen.col_end() == tk.col_begin()
+                    {
+                        self.skip(); // `f64` / `f32`
+                        expr = Self::float_suffix(expr);
+                    }
                 }
                 debug_exit_info!(self);
                 Ok(expr)

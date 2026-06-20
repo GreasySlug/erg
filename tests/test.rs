@@ -408,6 +408,11 @@ fn exec_raw_ident() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_float() -> Result<(), ()> {
+    expect_success("tests/should_ok/float.er", 0)
+}
+
+#[test]
 fn exec_ratio() -> Result<(), ()> {
     expect_success("tests/should_ok/ratio.er", 0)
 }

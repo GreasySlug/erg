@@ -31,4 +31,10 @@ assert b < a
 assert a >= b
 assert b <= a
 
+# --- Float: variable vs f64 literal ---
+assert a > 2.0f64
+assert a < 3.0f64
+assert a >= 2.5f64
+assert a <= 2.5f64
+
 print! "num_compare ok"

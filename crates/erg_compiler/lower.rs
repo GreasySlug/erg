@@ -1211,6 +1211,19 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 
+    /// Convert an ordering-comparison operand to a type parameter for narrowing,
+    /// but refuse to narrow against a *constructed* value such as `Float(2.0)`
+    /// (the desugaring of `2.0f64`): a call is not a compile-time constant, and
+    /// `expr_to_tp` would mis-read `Float(..)` as a type application, producing a
+    /// bogus `ClassType`-based guard. Returning `None` skips the narrowing
+    /// refinement, leaving the comparison as a plain `Bool`.
+    fn cmp_guard_operand(&self, expr: &ast::Expr) -> Option<TyParam> {
+        if matches!(expr, ast::Expr::Call(_)) {
+            return None;
+        }
+        self.module.context.expr_to_tp(expr.clone()).ok()
+    }
+
     fn get_bin_guard_type(&self, op: &Token, lhs: &ast::Expr, rhs: &ast::Expr) -> Option<Type> {
         match op.kind {
             TokenKind::AndOp => {
@@ -1261,7 +1274,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 Some(self.module.context.complement(&ty))
             }
             TokenKind::Gre => {
-                let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
+                let rhs = self.cmp_guard_operand(rhs)?;
                 let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::gt(varname.clone(), rhs);
@@ -1269,7 +1282,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 Some(guard(namespace, target, refine))
             }
             TokenKind::GreEq => {
-                let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
+                let rhs = self.cmp_guard_operand(rhs)?;
                 let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::ge(varname.clone(), rhs);
@@ -1277,7 +1290,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 Some(guard(namespace, target, refine))
             }
             TokenKind::Less => {
-                let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
+                let rhs = self.cmp_guard_operand(rhs)?;
                 let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::lt(varname.clone(), rhs);
@@ -1285,7 +1298,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 Some(guard(namespace, target, refine))
             }
             TokenKind::LessEq => {
-                let rhs = self.module.context.expr_to_tp(rhs.clone()).ok()?;
+                let rhs = self.cmp_guard_operand(rhs)?;
                 let t = self.cmp_guard_base(&rhs);
                 let varname = self.fresh_gen.fresh_varname();
                 let pred = Predicate::le(varname.clone(), rhs);

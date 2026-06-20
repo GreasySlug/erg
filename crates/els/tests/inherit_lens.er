@@ -1,0 +1,11 @@
+@Inheritable
+C = Class { .x = Int }
+C.
+    new x: Int = C { .x = x }
+
+D = Inherit C
+D.
+    @Override
+    new x: Int = D { .x = x }
+
+print! D.new(1)

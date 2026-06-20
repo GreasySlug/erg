@@ -16,6 +16,7 @@ const FILE_RETRIGGER: &str = "tests/retrigger.er";
 const FILE_TOLERANT_COMPLETION: &str = "tests/tolerant_completion.er";
 const FILE_WITH_LENGTH: &str = "tests/with_length.er";
 const FILE_PREPARE_RENAME: &str = "tests/prepare_rename.er";
+const FILE_INHERIT_LENS: &str = "tests/inherit_lens.er";
 
 use els::{NormalizedUrl, Server};
 use erg_proc_macros::exec_new_thread;
@@ -436,6 +437,28 @@ fn test_did_close() -> Result<(), Box<dyn std::error::Error>> {
     let diags = client.wait_diagnostics()?;
     assert_eq!(NormalizedUrl::new(diags.uri), uri);
     assert!(diags.diagnostics.is_empty(), "{:?}", diags.diagnostics);
+    Ok(())
+}
+
+/// Code lens shows the subclass count above a class that is inherited from
+/// (`send_class_inherits_lens` previously always returned an empty list).
+#[test]
+#[exec_new_thread]
+fn test_code_lens_inherits() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INHERIT_LENS).canonicalize()?)?;
+    client.notify_open(FILE_INHERIT_LENS)?;
+    let lenses = client.request_code_lens(uri.raw())?.unwrap();
+    // class `C` is inherited by exactly one subclass `D`
+    assert!(
+        lenses.iter().any(|l| l
+            .command
+            .as_ref()
+            .is_some_and(|c| c.title == "1 subclasses")),
+        "expected a '1 subclasses' lens, got {lenses:?}"
+    );
     Ok(())
 }
 

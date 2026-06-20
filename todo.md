@@ -28,7 +28,12 @@
   リダイレクトで、トレイト実装クラス一覧を返す本来の動作でない。
 - [ ] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。
 - [ ] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
-- [ ] **Code Lens 継承数 `send_class_inherits_lens` 空実装** — `code_lens.rs`。
+  → **保留**: 機能自体はコードアクション(quickfix)で動作済み。コマンド経由実装には
+    `workspace/applyEdit`(server→client)基盤の新規追加が必要(ELS に未実装)。費用対効果から後回し。
+    あるいは形骸化した登録を capabilities から外すのも選択肢。
+- [x] **Code Lens 継承数 `send_class_inherits_lens` 空実装** — `code_lens.rs`。
+  → **完了**: `gen_show_class_refs_command(loc, noun, hide_when_empty)` に共通化し、各 `ClassDef`
+    の上に「N subclasses」レンズ(サブクラス0件は非表示)。test_code_lens_inherits。
 
 ## P2: 完全未実装の LSP 機能
 

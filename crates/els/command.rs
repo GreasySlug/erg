@@ -41,7 +41,21 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         &self,
         trait_loc: AbsLocation,
     ) -> ELSResult<Option<Command>> {
-        let refs = self.get_refs_from_abs_loc(&trait_loc);
+        self.gen_show_class_refs_command(trait_loc, "implementations", false)
+    }
+
+    /// Build an `erg.showReferences` command listing the class definitions that
+    /// reference `referee` (trait implementors, or subclasses of a class).
+    /// `noun` is the title noun (e.g. "implementations"/"subclasses"); when
+    /// `hide_when_empty` is set, returns `None` if there are no such classes
+    /// (so a code lens is not shown on every class without subclasses).
+    pub(crate) fn gen_show_class_refs_command(
+        &self,
+        referee: AbsLocation,
+        noun: &str,
+        hide_when_empty: bool,
+    ) -> ELSResult<Option<Command>> {
+        let refs = self.get_refs_from_abs_loc(&referee);
         let filter = |loc: Location| {
             let uri = NormalizedUrl::new(loc.uri.clone());
             let opt_visitor = self.get_visitor(&uri);
@@ -52,17 +66,20 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         let impls = refs.into_iter().filter_map(filter).collect::<Vec<_>>();
         let impl_len = impls.len();
+        if hide_when_empty && impl_len == 0 {
+            return Ok(None);
+        }
         let locations = serde_json::to_value(impls)?;
-        let Ok(uri) = trait_loc.module.ok_or(()).and_then(Url::from_file_path) else {
+        let Ok(uri) = referee.module.ok_or(()).and_then(Url::from_file_path) else {
             return Ok(None);
         };
         let uri = serde_json::to_value(uri)?;
-        let Some(position) = util::loc_to_pos(trait_loc.loc) else {
+        let Some(position) = util::loc_to_pos(referee.loc) else {
             return Ok(None);
         };
         let position = serde_json::to_value(position)?;
         Ok(Some(Command {
-            title: format!("{impl_len} implementations"),
+            title: format!("{impl_len} {noun}"),
             // the command is defined in: https://github.com/erg-lang/vscode-erg/blob/20e6e2154b045ab56fedbc8769d03633acfd12e0/src/extension.ts#L92-L94
             command: "erg.showReferences".to_string(),
             arguments: Some(vec![uri, position, locations]),

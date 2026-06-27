@@ -25,7 +25,7 @@ use Predicate as Pred;
 use TyParamOrdering::*;
 use Type::*;
 
-use crate::context::{Context, Variance};
+use crate::context::{Context, TypeContext, Variance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Credibility {
@@ -285,7 +285,24 @@ impl Context {
         rhs: &Type,
         get_types: impl Fn(&'c Context) -> &'c [Type],
     ) -> (Credibility, bool) {
-        if let Some(ty_ctx) = self.get_nominal_type_ctx(rhs) {
+        match self.get_nominal_type_ctx(rhs) {
+            Some(ty_ctx) => self._nominal_supertype_of_with_ctx(lhs, rhs, ty_ctx, get_types),
+            None => (Maybe, false),
+        }
+    }
+
+    /// `_nominal_supertype_of` with a pre-resolved `ty_ctx`, so callers that need
+    /// more than one projection of the same `rhs` (see `traits_supertype_of`) don't
+    /// pay for `get_nominal_type_ctx(rhs)` twice. The `Substituter` guards are still
+    /// created here (per call), so their undo timing is unchanged.
+    fn _nominal_supertype_of_with_ctx<'c>(
+        &'c self,
+        lhs: &Type,
+        rhs: &Type,
+        ty_ctx: &'c TypeContext,
+        get_types: impl Fn(&'c Context) -> &'c [Type],
+    ) -> (Credibility, bool) {
+        {
             let typ = &ty_ctx.typ;
             let substitute = typ.has_qvar();
             let overwrite = typ.has_undoable_linked_var();
@@ -343,11 +360,15 @@ impl Context {
         if !self.is_trait(lhs) {
             return (Maybe, false);
         }
-        let (cred, judge) = self._nominal_supertype_of(lhs, rhs, |ty_ctx| &ty_ctx.super_traits[..]);
+        let Some(ty_ctx) = self.get_nominal_type_ctx(rhs) else {
+            return (Maybe, false);
+        };
+        let (cred, judge) =
+            self._nominal_supertype_of_with_ctx(lhs, rhs, ty_ctx, |ty_ctx| &ty_ctx.super_traits[..]);
         if judge {
             return (cred, judge);
         }
-        self._nominal_supertype_of(lhs, rhs, |ty_ctx| &ty_ctx.super_classes[..])
+        self._nominal_supertype_of_with_ctx(lhs, rhs, ty_ctx, |ty_ctx| &ty_ctx.super_classes[..])
     }
 
     /// lhs :> rhs?

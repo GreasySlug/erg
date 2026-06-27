@@ -3660,10 +3660,8 @@ impl Context {
                 }
             }
             Type::Quantified(quant) => {
-                if self
-                    .get_nominal_type_ctx(quant)
-                    .is_some_and(|ctx| &ctx.typ.qual_name() == "ProcMetaType")
-                {
+                let quant_ctx = self.get_nominal_type_ctx(quant);
+                if quant_ctx.is_some_and(|ctx| &ctx.typ.qual_name() == "ProcMetaType") {
                     if let Some(ctx) = self
                         .get_builtins_not_self()
                         .unwrap_or(self)
@@ -3671,10 +3669,7 @@ impl Context {
                     {
                         return Some(ctx);
                     }
-                } else if self
-                    .get_nominal_type_ctx(quant)
-                    .is_some_and(|ctx| &ctx.typ.qual_name() == "FuncMetaType")
-                {
+                } else if quant_ctx.is_some_and(|ctx| &ctx.typ.qual_name() == "FuncMetaType") {
                     if let Some(ctx) = self
                         .get_builtins_not_self()
                         .unwrap_or(self)

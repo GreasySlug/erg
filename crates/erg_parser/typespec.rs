@@ -295,46 +295,42 @@ impl Parser {
         }
     }
 
+    /// Convert a parameter pattern (+ optional type spec) to a `ParamTySpec`,
+    /// or `None` for an unsupported pattern. Shared by the non-default / var-args /
+    /// kw-var-args arms of `lambda_to_subr_type_spec`, which each turn `None` into
+    /// their own diagnostic (a `feature_error` vs. a `todo!`).
+    fn param_pat_to_ty_spec(
+        pat: ParamPattern,
+        t_spec: Option<TypeSpecWithOp>,
+    ) -> Option<ParamTySpec> {
+        match (pat, t_spec) {
+            (ParamPattern::VarName(name), Some(t_spec_with_op)) => {
+                Some(ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec))
+            }
+            (ParamPattern::VarName(name), None) => Some(ParamTySpec::anonymous(TypeSpec::mono(
+                Identifier::private_from_varname(name),
+            ))),
+            (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
+                Some(ParamTySpec::anonymous(t_spec_with_op.t_spec))
+            }
+            _ => None,
+        }
+    }
+
     fn lambda_to_subr_type_spec(mut lambda: Lambda) -> Result<SubrTypeSpec, ParseError> {
         let bounds = lambda.sig.bounds;
         let lparen = lambda.sig.params.parens.map(|(l, _)| l);
         let mut non_defaults = vec![];
         for param in lambda.sig.params.non_defaults.into_iter() {
-            let param = match (param.pat, param.t_spec) {
-                (ParamPattern::VarName(name), Some(t_spec_with_op)) => {
-                    ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
-                }
-                (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                    Identifier::private_from_varname(name),
-                )),
-                (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
-                    ParamTySpec::anonymous(t_spec_with_op.t_spec)
-                }
-                (param, _t_spec) => {
-                    let err =
-                        ParseError::feature_error(line!() as usize, param.loc(), "param pattern");
-                    return Err(err);
-                }
-            };
+            let loc = param.loc();
+            let param = Self::param_pat_to_ty_spec(param.pat, param.t_spec)
+                .ok_or_else(|| ParseError::feature_error(line!() as usize, loc, "param pattern"))?;
             non_defaults.push(param);
         }
-        let var_params =
-            lambda
-                .sig
-                .params
-                .var_params
-                .map(|var_args| match (var_args.pat, var_args.t_spec) {
-                    (ParamPattern::VarName(name), Some(t_spec_with_op)) => {
-                        ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
-                    }
-                    (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                        Identifier::private_from_varname(name),
-                    )),
-                    (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
-                        ParamTySpec::anonymous(t_spec_with_op.t_spec)
-                    }
-                    (param, t_spec) => todo!("{param}: {t_spec:?}"),
-                });
+        let var_params = lambda.sig.params.var_params.map(|var_args| {
+            Self::param_pat_to_ty_spec(var_args.pat, var_args.t_spec)
+                .unwrap_or_else(|| todo!("unsupported var-args parameter pattern"))
+        });
         let mut defaults = vec![];
         for param in lambda.sig.params.defaults.into_iter() {
             let param = match (param.sig.pat, param.sig.t_spec) {
@@ -359,18 +355,8 @@ impl Parser {
             defaults.push(param);
         }
         let kw_var_params = lambda.sig.params.kw_var_params.map(|kw_var_args| {
-            match (kw_var_args.pat, kw_var_args.t_spec) {
-                (ParamPattern::VarName(name), Some(t_spec_with_op)) => {
-                    ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
-                }
-                (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                    Identifier::private_from_varname(name),
-                )),
-                (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
-                    ParamTySpec::anonymous(t_spec_with_op.t_spec)
-                }
-                (param, t_spec) => todo!("{param}: {t_spec:?}"),
-            }
+            Self::param_pat_to_ty_spec(kw_var_args.pat, kw_var_args.t_spec)
+                .unwrap_or_else(|| todo!("unsupported kw-var-args parameter pattern"))
         });
         let return_t = Self::expr_to_type_spec(lambda.body.remove(0))?;
         Ok(SubrTypeSpec::new(

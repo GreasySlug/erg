@@ -305,7 +305,7 @@ impl Parser {
                     ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
                 }
                 (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                    Identifier::new(VisModifierSpec::Private, name),
+                    Identifier::private_from_varname(name),
                 )),
                 (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
                     ParamTySpec::anonymous(t_spec_with_op.t_spec)
@@ -328,7 +328,7 @@ impl Parser {
                         ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
                     }
                     (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                        Identifier::new(VisModifierSpec::Private, name),
+                        Identifier::private_from_varname(name),
                     )),
                     (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
                         ParamTySpec::anonymous(t_spec_with_op.t_spec)
@@ -364,7 +364,7 @@ impl Parser {
                     ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec)
                 }
                 (ParamPattern::VarName(name), None) => ParamTySpec::anonymous(TypeSpec::mono(
-                    Identifier::new(VisModifierSpec::Private, name),
+                    Identifier::private_from_varname(name),
                 )),
                 (ParamPattern::Discard(_), Some(t_spec_with_op)) => {
                     ParamTySpec::anonymous(t_spec_with_op.t_spec)

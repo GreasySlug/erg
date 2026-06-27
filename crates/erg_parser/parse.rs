@@ -1369,30 +1369,8 @@ impl Parser {
                         args.set_parens((lp.unwrap().loc(), rp.loc()));
                         break;
                     }
-                    if !args.kw_is_empty() {
-                        args.push_kw(
-                            self.try_reduce_kw_arg(in_type_args)
-                                .map_err(|_| self.stack_dec(fn_name!()))?,
-                        );
-                    } else {
-                        match self
-                            .try_reduce_arg(in_type_args)
-                            .map_err(|_| self.stack_dec(fn_name!()))?
-                        {
-                            ArgKind::Pos(arg) => {
-                                args.push_pos(arg);
-                            }
-                            ArgKind::Var(var) => {
-                                args.set_var_args(var);
-                            }
-                            ArgKind::Kw(arg) => {
-                                args.push_kw(arg);
-                            }
-                            ArgKind::KwVar(arg) => {
-                                args.set_kw_var(arg);
-                            }
-                        }
-                    }
+                    self.push_next_arg(&mut args, in_type_args)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
                 }
                 Some(RParen) => {
                     if let Some(lp) = lp {
@@ -1440,30 +1418,8 @@ impl Parser {
                     break;
                 }
                 Some(_) if style.is_colon() => {
-                    if !args.kw_is_empty() {
-                        args.push_kw(
-                            self.try_reduce_kw_arg(in_type_args)
-                                .map_err(|_| self.stack_dec(fn_name!()))?,
-                        );
-                    } else {
-                        match self
-                            .try_reduce_arg(in_type_args)
-                            .map_err(|_| self.stack_dec(fn_name!()))?
-                        {
-                            ArgKind::Pos(arg) => {
-                                args.push_pos(arg);
-                            }
-                            ArgKind::Var(var) => {
-                                args.set_var_args(var);
-                            }
-                            ArgKind::Kw(arg) => {
-                                args.push_kw(arg);
-                            }
-                            ArgKind::KwVar(arg) => {
-                                args.set_kw_var(arg);
-                            }
-                        }
-                    }
+                    self.push_next_arg(&mut args, in_type_args)
+                        .map_err(|_| self.stack_dec(fn_name!()))?;
                 }
                 None => {
                     self.errs.push(self.unexpected_none(line!(), caused_by!()));
@@ -1475,6 +1431,31 @@ impl Parser {
         }
         debug_exit_info!(self);
         Ok(args)
+    }
+
+    /// Parse the next argument and append it to `args`, routing to keyword-argument
+    /// parsing once any keyword argument has appeared. Shared by the `Comma` and
+    /// colon-style arms of `try_reduce_args`.
+    fn push_next_arg(&mut self, args: &mut Args, in_type_args: bool) -> ParseResult<()> {
+        debug_call_info!(self);
+        if !args.kw_is_empty() {
+            let kw = self
+                .try_reduce_kw_arg(in_type_args)
+                .map_err(|_| self.stack_dec(fn_name!()))?;
+            args.push_kw(kw);
+        } else {
+            match self
+                .try_reduce_arg(in_type_args)
+                .map_err(|_| self.stack_dec(fn_name!()))?
+            {
+                ArgKind::Pos(arg) => args.push_pos(arg),
+                ArgKind::Var(var) => args.set_var_args(var),
+                ArgKind::Kw(arg) => args.push_kw(arg),
+                ArgKind::KwVar(arg) => args.set_kw_var(arg),
+            }
+        }
+        debug_exit_info!(self);
+        Ok(())
     }
 
     fn try_reduce_arg(&mut self, in_type_args: bool) -> ParseResult<ArgKind> {
@@ -2339,8 +2320,7 @@ impl Parser {
                     let token = self.lpop();
                     match token.kind {
                         Symbol => {
-                            let ident =
-                                Identifier::new(VisModifierSpec::Private, VarName::new(token));
+                            let ident = Identifier::private_from_token(token);
                             if let Some(args) = self
                                 .opt_reduce_args(false)
                                 .transpose()

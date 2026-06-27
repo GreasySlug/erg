@@ -1673,7 +1673,7 @@ impl Desugarer {
                 {
                     guards.extend(Self::type_guard(name.inspect().clone(), t_spec, name));
                 }
-                let ident = Identifier::new(VisModifierSpec::Private, name.clone());
+                let ident = Identifier::private_from_varname(name.clone());
                 let v = VarSignature::new(VarPattern::Ident(ident), sig.t_spec.clone(), None);
                 let def = Def::new(Signature::Var(v), body);
                 guards.push(GuardClause::Bind(def));

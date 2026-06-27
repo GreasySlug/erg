@@ -977,7 +977,7 @@ impl Context {
             }
             And(tys, _) => {
                 let mut new_tys = vec![];
-                for ty in tys.iter().cloned() {
+                for ty in tys {
                     new_tys.push(self.instantiate_t_inner(ty, tmp_tv_cache, loc)?);
                 }
                 Ok(new_tys
@@ -986,7 +986,7 @@ impl Context {
             }
             Or(tys) => {
                 let mut new_tys = vec![];
-                for ty in tys.iter().cloned() {
+                for ty in tys {
                     new_tys.push(self.instantiate_t_inner(ty, tmp_tv_cache, loc)?);
                 }
                 Ok(new_tys.into_iter().fold(Never, |l, r| self.union(&l, &r)))

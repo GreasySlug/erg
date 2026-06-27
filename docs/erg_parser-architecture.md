@@ -226,3 +226,27 @@ parser テスト 37件 / clippy `-D warnings` グリーンで確認済み。
 | `lex.rs:240` | 複数行トークンで `cont.lines().count()` 再走査 | 出現頻度が低い（複数行文字列/コメントのみ）ため効果小 |
 
 > 詳細な行単位の所見は本ドキュメント作成時の各ファイル調査メモに基づく。上記候補は別タスクとして個別に検証・PR 化するのが望ましい。
+
+### 計測ベースライン（criterion）
+
+「効果大」は推測ではなくまず計測する方針。`crates/erg_parser/benches/parser_bench.rs` が
+lex / parse（脱糖なし）/ desugar / end_to_end の4段を3サイズで計測する。
+実行: `cargo bench -p erg_parser --bench parser_bench`。
+
+中央値（release ビルド・`--warm-up-time 1 --measurement-time 3 --sample-size 50`・単一マシン1回。
+絶対値は環境依存、**段間の比率**を見ること）:
+
+| 入力 | bytes | lex | parse | desugar | end_to_end |
+| ---- | ----: | --: | ----: | ------: | ---------: |
+| small (`tests/containers.er`, 50行) | 382 | 14.1 µs | 27.2 µs | 18.0 µs | 40.3 µs |
+| medium (`pystd/builtins.d.er`, 242行) | 9,090 | 56.1 µs | 47.7 µs | 48.2 µs | 165 µs |
+| large (`should_ok/long.er`, 699行) | 11,690 | 307 µs | 634 µs | **725 µs** | 1.41 ms |
+
+**読み取れること**:
+
+- **large では desugar が最も重い段（725 µs ≒ 3段合計の ~43%、parse 634 µs を上回り lex 307 µs の 2倍超）**。
+  small では desugar(18µs) < parse(27µs) だが large で逆転 — 6パス ≈ 6×O(n) の木再構築が規模で効いている。
+  → **次の最有力候補は「desugar パス統合」**（このために計測した）。
+- **lex は一貫して最安**。→ `Vec<char>` → `&str` 書き換え（最高リスク）は**最も後回し**でよい、という判断材料。
+- end_to_end は概ね lex+parse+desugar に近い（large: 合計1.67ms vs 1.41ms。分離計測のセットアップ重複ぶん合計がやや過大）。
+- 注意: 型チェック等の下流コストは未計測。パーサ全体がコンパイル時間に占める割合を別途測ってから着手するのが望ましい。

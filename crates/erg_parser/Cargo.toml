@@ -30,6 +30,9 @@ erg_proc_macros = { workspace = true }
 unicode-xid = "0.2.4"
 pyo3 = { workspace = true, optional = true }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "lib.rs"
@@ -37,3 +40,9 @@ path = "lib.rs"
 [[bin]]
 name = "ergp"
 path = "main.rs"
+
+# stage-isolated lex/parse/desugar benchmarks; `harness = false` so we can
+# drive criterion from a large-stack thread (the parser recurses deeply).
+[[bench]]
+name = "parser_bench"
+harness = false

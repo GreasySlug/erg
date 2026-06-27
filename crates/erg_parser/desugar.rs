@@ -336,7 +336,13 @@ impl Desugarer {
                     chunks.push(desugar(chunk));
                 }
                 if let Some(t_op) = def.sig.t_spec_op_mut() {
-                    *t_op.t_spec_as_expr = desugar(*t_op.t_spec_as_expr.clone());
+                    // move the boxed expr out instead of deep-cloning it: the original
+                    // is overwritten right after, so the clone was pure waste.
+                    let t_spec_as_expr = std::mem::replace(
+                        t_op.t_spec_as_expr.as_mut(),
+                        Expr::Dummy(Dummy::new(None, Vec::new())),
+                    );
+                    *t_op.t_spec_as_expr = desugar(t_spec_as_expr);
                 }
                 if let Signature::Subr(mut subr) = def.sig {
                     subr.params = Self::perform_desugar_params(desugar, subr.params);
@@ -370,7 +376,13 @@ impl Desugarer {
             Expr::ReDef(mut redef) => {
                 let expr = desugar(*redef.expr);
                 if let Some(t_op) = &mut redef.t_spec {
-                    *t_op.t_spec_as_expr = desugar(*t_op.t_spec_as_expr.clone());
+                    // move the boxed expr out instead of deep-cloning it: the original
+                    // is overwritten right after, so the clone was pure waste.
+                    let t_spec_as_expr = std::mem::replace(
+                        t_op.t_spec_as_expr.as_mut(),
+                        Expr::Dummy(Dummy::new(None, Vec::new())),
+                    );
+                    *t_op.t_spec_as_expr = desugar(t_spec_as_expr);
                 }
                 let attr = Self::perform_desugar_acc(desugar, redef.attr);
                 Expr::ReDef(ReDef::new(attr, redef.t_spec.map(|x| *x), expr))
@@ -381,7 +393,13 @@ impl Desugarer {
                     chunks.push(desugar(chunk));
                 }
                 if let Some(t_op) = &mut lambda.sig.return_t_spec {
-                    *t_op.t_spec_as_expr = desugar(*t_op.t_spec_as_expr.clone());
+                    // move the boxed expr out instead of deep-cloning it: the original
+                    // is overwritten right after, so the clone was pure waste.
+                    let t_spec_as_expr = std::mem::replace(
+                        t_op.t_spec_as_expr.as_mut(),
+                        Expr::Dummy(Dummy::new(None, Vec::new())),
+                    );
+                    *t_op.t_spec_as_expr = desugar(t_spec_as_expr);
                 }
                 lambda.sig.params = Self::perform_desugar_params(desugar, lambda.sig.params);
                 let body = Block::new(chunks);

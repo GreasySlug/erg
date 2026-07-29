@@ -1,21 +1,27 @@
-//! Generates Erg type declarations from Python type stubs (`.pyi`).
+//! Generates Erg type declarations from Python type stubs (`.pyi`)
+//! and annotated Python sources (`.py`).
 //!
-//! The entry point is [`convert_pyi_to_decl`], which parses Python stub
-//! source with a real Python parser and emits Erg declaration source
-//! (the same syntax used by `.d.er` files, without leading-dot visibility
-//! markers since all symbols in `.pyi` modules are treated as public).
+//! The entry points are [`convert_pyi_to_decl`] and [`convert_py_to_decl`],
+//! which parse Python source with a real Python parser and emit Erg
+//! declaration source (the same syntax used by `.d.er` files, without
+//! leading-dot visibility markers since all symbols are treated as public).
 //!
 //! Every generated declaration is validated with the Erg parser; items
 //! that fail to parse are dropped instead of poisoning the whole module.
 //!
-//! Conversion policy:
-//! - Functions are declared pure (`->`). Purity cannot be inferred from
-//!   stubs; declarations are trusted unconditionally anyway.
+//! Conversion policy (both modes):
+//! - Functions are declared pure (`->`). Purity cannot be inferred;
+//!   declarations are trusted unconditionally anyway.
 //! - Unknown or unsupported annotations map to `Obj`.
 //! - `@overload`: the first overload wins.
 //! - `if` blocks (e.g. `sys.version_info` guards): the first definition
 //!   of a name wins, so the `if` branch takes precedence over `else`.
 //! - Private names (leading `_`) are skipped; dunder methods are kept.
+//!
+//! `.py` mode additionally declares every public name it cannot type as
+//! `Obj` (see [`convert_py_to_decl`]): a partial declaration set would turn
+//! the module "typed" and make its undeclared attributes unresolvable,
+//! which would be a regression from the untyped-import `Obj` fallback.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -29,21 +35,82 @@ pub struct ConvertError(pub String);
 
 impl fmt::Display for ConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "failed to convert .pyi: {}", self.0)
+        write!(f, "failed to convert Python source: {}", self.0)
     }
 }
 
 impl std::error::Error for ConvertError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SrcKind {
+    /// type stub: everything is annotated, bodies are `...`
+    #[default]
+    Pyi,
+    /// ordinary source: partially annotated, must be declared exhaustively
+    Py,
+}
+
 /// Convert Python type stub (`.pyi`) source into Erg declaration source.
 pub fn convert_pyi_to_decl(src: &str) -> Result<String, ConvertError> {
-    let suite = ast::Suite::parse(src, "<pyi>").map_err(|e| ConvertError(e.to_string()))?;
-    let mut conv = Converter::default();
+    convert(src, SrcKind::Pyi)
+}
+
+/// Convert annotated Python source (`.py`) into Erg declaration source.
+///
+/// Annotations are converted like in `.pyi` mode; every other public
+/// binding (unannotated assignments, imports, `self.attr` assignments in
+/// `__init__`) is declared as `Obj`. Modules whose exports cannot be
+/// enumerated statically (`from x import *`, module-level `__getattr__`)
+/// yield an error; callers should fall back to untyped import.
+pub fn convert_py_to_decl(src: &str) -> Result<String, ConvertError> {
+    convert(src, SrcKind::Py)
+}
+
+fn convert(src: &str, kind: SrcKind) -> Result<String, ConvertError> {
+    let suite = ast::Suite::parse(src, "<pydecl>").map_err(|e| ConvertError(e.to_string()))?;
+    if kind == SrcKind::Py && has_dynamic_exports(&suite) {
+        return Err(ConvertError(
+            "module has dynamic exports (star import or module-level __getattr__)".into(),
+        ));
+    }
+    let mut conv = Converter::new(kind);
     conv.collect(&suite);
     let mut chunks = vec![];
     let mut seen = HashSet::new();
     conv.emit_stmts(&suite, &mut chunks, &mut seen);
+    conv.emit_imported(&mut chunks, &mut seen);
     Ok(assemble(chunks))
+}
+
+/// Ordinary modules can create exports the converter cannot see
+/// (`from x import *`, module-level `__getattr__`). Declaring such a
+/// module would make the invisible attributes unresolvable, so conversion
+/// is aborted instead.
+fn has_dynamic_exports(stmts: &[ast::Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        ast::Stmt::ImportFrom(imp) => imp.names.iter().any(|a| a.name.as_str() == "*"),
+        ast::Stmt::FunctionDef(d) => d.name.as_str() == "__getattr__",
+        ast::Stmt::If(s) => has_dynamic_exports(&s.body) || has_dynamic_exports(&s.orelse),
+        ast::Stmt::Try(s) => {
+            has_dynamic_exports(&s.body)
+                || has_dynamic_exports(&s.orelse)
+                || has_dynamic_exports(&s.finalbody)
+                || s.handlers.iter().any(|h| {
+                    let ast::ExceptHandler::ExceptHandler(h) = h;
+                    has_dynamic_exports(&h.body)
+                })
+        }
+        ast::Stmt::TryStar(s) => {
+            has_dynamic_exports(&s.body)
+                || has_dynamic_exports(&s.orelse)
+                || has_dynamic_exports(&s.finalbody)
+                || s.handlers.iter().any(|h| {
+                    let ast::ExceptHandler::ExceptHandler(h) = h;
+                    has_dynamic_exports(&h.body)
+                })
+        }
+        _ => false,
+    })
 }
 
 /// One generated declaration (a function/variable line or a whole class block).
@@ -96,6 +163,7 @@ struct FuncView<'a> {
     args: &'a ast::Arguments,
     returns: Option<&'a ast::Expr>,
     decorators: &'a [ast::Expr],
+    body: &'a [ast::Stmt],
     is_async: bool,
 }
 
@@ -107,6 +175,7 @@ impl<'a> FuncView<'a> {
                 args: &d.args,
                 returns: d.returns.as_deref(),
                 decorators: &d.decorator_list,
+                body: &d.body,
                 is_async: false,
             }),
             ast::Stmt::AsyncFunctionDef(d) => Some(FuncView {
@@ -114,6 +183,7 @@ impl<'a> FuncView<'a> {
                 args: &d.args,
                 returns: d.returns.as_deref(),
                 decorators: &d.decorator_list,
+                body: &d.body,
                 is_async: true,
             }),
             _ => None,
@@ -204,8 +274,78 @@ fn is_simple_str_literal(s: &str) -> bool {
         .all(|c| c.is_ascii() && !c.is_ascii_control() && c != '"' && c != '\\')
 }
 
+fn expr_is_yield(expr: &ast::Expr) -> bool {
+    matches!(expr, ast::Expr::Yield(_) | ast::Expr::YieldFrom(_))
+}
+
+/// Whether a function body can produce a non-`None` value: a `return`
+/// with a value, or any `yield` (generator). Nested functions/classes
+/// have their own scope and are not descended into. Only statement-level
+/// yields are detected; a yield buried deep inside an expression slips
+/// through (acceptable: it only widens `NoneType` to a false negative
+/// in rare hand-written generators).
+fn body_returns_value(body: &[ast::Stmt]) -> bool {
+    body.iter().any(|stmt| match stmt {
+        ast::Stmt::Return(r) => r.value.is_some(),
+        ast::Stmt::Expr(e) => expr_is_yield(&e.value),
+        ast::Stmt::Assign(a) => expr_is_yield(&a.value),
+        ast::Stmt::AnnAssign(a) => a.value.as_deref().is_some_and(expr_is_yield),
+        ast::Stmt::AugAssign(a) => expr_is_yield(&a.value),
+        ast::Stmt::If(s) => body_returns_value(&s.body) || body_returns_value(&s.orelse),
+        ast::Stmt::While(s) => body_returns_value(&s.body) || body_returns_value(&s.orelse),
+        ast::Stmt::For(s) => body_returns_value(&s.body) || body_returns_value(&s.orelse),
+        ast::Stmt::AsyncFor(s) => body_returns_value(&s.body) || body_returns_value(&s.orelse),
+        ast::Stmt::With(s) => body_returns_value(&s.body),
+        ast::Stmt::AsyncWith(s) => body_returns_value(&s.body),
+        ast::Stmt::Try(s) => {
+            body_returns_value(&s.body)
+                || body_returns_value(&s.orelse)
+                || body_returns_value(&s.finalbody)
+                || s.handlers.iter().any(|h| {
+                    let ast::ExceptHandler::ExceptHandler(h) = h;
+                    body_returns_value(&h.body)
+                })
+        }
+        ast::Stmt::TryStar(s) => {
+            body_returns_value(&s.body)
+                || body_returns_value(&s.orelse)
+                || body_returns_value(&s.finalbody)
+                || s.handlers.iter().any(|h| {
+                    let ast::ExceptHandler::ExceptHandler(h) = h;
+                    body_returns_value(&h.body)
+                })
+        }
+        ast::Stmt::Match(m) => m.cases.iter().any(|c| body_returns_value(&c.body)),
+        _ => false,
+    })
+}
+
+/// Collect the plain names bound by an assignment target
+/// (`a`, `a, b = ...`, `[a, b] = ...`, `a, *rest = ...`).
+fn target_names(target: &ast::Expr, out: &mut Vec<String>) {
+    match target {
+        ast::Expr::Name(n) => out.push(n.id.to_string()),
+        ast::Expr::Tuple(t) => t.elts.iter().for_each(|e| target_names(e, out)),
+        ast::Expr::List(l) => l.elts.iter().for_each(|e| target_names(e, out)),
+        ast::Expr::Starred(s) => target_names(&s.value, out),
+        _ => {}
+    }
+}
+
+/// `self.attr` target → `attr`
+fn self_attr_name(target: &ast::Expr) -> Option<&str> {
+    let ast::Expr::Attribute(attr) = target else {
+        return None;
+    };
+    let ast::Expr::Name(base) = attr.value.as_ref() else {
+        return None;
+    };
+    (base.id.as_str() == "self").then(|| attr.attr.as_str())
+}
+
 #[derive(Default)]
 struct Converter {
+    kind: SrcKind,
     /// locally defined (public) class names
     classes: HashSet<String>,
     /// TypeVar/ParamSpec name -> optional `bound=` expression
@@ -217,9 +357,22 @@ struct Converter {
     typing_mods: HashSet<String>,
     /// local type aliases: name -> aliased type expression
     aliases: HashMap<String, ast::Expr>,
+    /// public names bound by import statements, in source order
+    /// (Py mode only: declared as `Obj` after everything else)
+    imported: Vec<String>,
 }
 
 impl Converter {
+    fn new(kind: SrcKind) -> Self {
+        Converter {
+            kind,
+            ..Default::default()
+        }
+    }
+
+    fn is_py(&self) -> bool {
+        self.kind == SrcKind::Py
+    }
     /// Pass 1: collect classes, type variables, imports and aliases
     /// (recursing into `if` blocks) so that forward references resolve.
     fn collect(&mut self, stmts: &[ast::Stmt]) {
@@ -242,6 +395,17 @@ impl Converter {
                             self.known_imports
                                 .insert(local.to_string(), name.to_string());
                         }
+                    } else if self.is_py() && module != "__future__" {
+                        for alias in &imp.names {
+                            let name = alias.name.as_str();
+                            if name == "*" {
+                                continue;
+                            }
+                            let local = alias.asname.as_ref().map(|n| n.as_str()).unwrap_or(name);
+                            if !local.starts_with('_') {
+                                self.imported.push(local.to_string());
+                            }
+                        }
                     }
                 }
                 ast::Stmt::Import(imp) => {
@@ -250,6 +414,17 @@ impl Converter {
                         if matches!(name, "typing" | "typing_extensions") {
                             let local = alias.asname.as_ref().map(|n| n.as_str()).unwrap_or(name);
                             self.typing_mods.insert(local.to_string());
+                        }
+                        if self.is_py() {
+                            // `import a.b` binds `a`; `import a.b as c` binds `c`
+                            let local = alias
+                                .asname
+                                .as_ref()
+                                .map(|n| n.as_str())
+                                .unwrap_or_else(|| name.split('.').next().unwrap_or(name));
+                            if !local.starts_with('_') {
+                                self.imported.push(local.to_string());
+                            }
                         }
                     }
                 }
@@ -294,6 +469,24 @@ impl Converter {
                 ast::Stmt::If(if_) => {
                     self.collect(&if_.body);
                     self.collect(&if_.orelse);
+                }
+                ast::Stmt::Try(s) => {
+                    self.collect(&s.body);
+                    for h in &s.handlers {
+                        let ast::ExceptHandler::ExceptHandler(h) = h;
+                        self.collect(&h.body);
+                    }
+                    self.collect(&s.orelse);
+                    self.collect(&s.finalbody);
+                }
+                ast::Stmt::TryStar(s) => {
+                    self.collect(&s.body);
+                    for h in &s.handlers {
+                        let ast::ExceptHandler::ExceptHandler(h) = h;
+                        self.collect(&h.body);
+                    }
+                    self.collect(&s.orelse);
+                    self.collect(&s.finalbody);
                 }
                 _ => {}
             }
@@ -665,10 +858,15 @@ impl Converter {
         let ret = if f.is_async {
             // async functions return coroutine objects
             "Obj".into()
+        } else if let Some(r) = f.returns {
+            self.map_type(r, &mut used, ctx, 0)
+        } else if self.is_py() && body_returns_value(f.body) {
+            // unannotated function that returns/yields something
+            "Obj".into()
         } else {
-            f.returns
-                .map(|r| self.map_type(r, &mut used, ctx, 0))
-                .unwrap_or_else(|| "NoneType".into())
+            // stubs: unannotated return conventionally means None;
+            // sources: no value-returning statement in the body
+            "NoneType".into()
         };
         let quant = self.render_quant(&used);
         format!("{}: {quant}({params}) -> {ret}", f.name)
@@ -717,9 +915,15 @@ impl Converter {
                         continue;
                     }
                     let mut used = vec![];
-                    let ty = self.map_type(&ann.annotation, &mut used, None, 0);
+                    let mut ty = self.map_type(&ann.annotation, &mut used, None, 0);
                     if !used.is_empty() {
-                        continue;
+                        // a variable annotated with a type variable cannot
+                        // be quantified in Erg
+                        if self.is_py() {
+                            ty = "Obj".into();
+                        } else {
+                            continue;
+                        }
                     }
                     seen.insert(name.to_string());
                     chunks.push(Chunk {
@@ -728,32 +932,87 @@ impl Converter {
                     });
                 }
                 ast::Stmt::Assign(assign) => {
-                    let [ast::Expr::Name(target)] = &assign.targets[..] else {
-                        continue;
-                    };
-                    let name = target.id.as_str();
-                    if name.starts_with('_') || seen.contains(name) {
-                        continue;
+                    if let [ast::Expr::Name(target)] = &assign.targets[..] {
+                        let name = target.id.as_str();
+                        if name.starts_with('_') || seen.contains(name) {
+                            continue;
+                        }
+                        // TypeVars and aliases were collected in pass 1;
+                        // in Py mode aliases still get an `Obj` declaration
+                        // (the name exists as a module attribute at runtime)
+                        if self.typevars.contains_key(name)
+                            || (!self.is_py() && self.aliases.contains_key(name))
+                        {
+                            continue;
+                        }
+                        let ty = match literal_type(&assign.value) {
+                            Some(ty) => ty,
+                            None if self.is_py() => "Obj",
+                            None => continue,
+                        };
+                        seen.insert(name.to_string());
+                        chunks.push(Chunk {
+                            text: format!("{name}: {ty}\n"),
+                            fallback: None,
+                        });
+                    } else if self.is_py() {
+                        // chained / unpacking assignments: element types unknown
+                        let mut names = vec![];
+                        for target in &assign.targets {
+                            target_names(target, &mut names);
+                        }
+                        for name in names {
+                            if name.starts_with('_') || seen.contains(&name) {
+                                continue;
+                            }
+                            seen.insert(name.clone());
+                            chunks.push(Chunk {
+                                text: format!("{name}: Obj\n"),
+                                fallback: None,
+                            });
+                        }
                     }
-                    // TypeVars and aliases were collected in pass 1
-                    if self.typevars.contains_key(name) || self.aliases.contains_key(name) {
-                        continue;
-                    }
-                    let Some(ty) = literal_type(&assign.value) else {
-                        continue;
-                    };
-                    seen.insert(name.to_string());
-                    chunks.push(Chunk {
-                        text: format!("{name}: {ty}\n"),
-                        fallback: None,
-                    });
                 }
                 ast::Stmt::If(if_) => {
                     self.emit_stmts(&if_.body, chunks, seen);
                     self.emit_stmts(&if_.orelse, chunks, seen);
                 }
+                ast::Stmt::Try(s) => {
+                    self.emit_stmts(&s.body, chunks, seen);
+                    for h in &s.handlers {
+                        let ast::ExceptHandler::ExceptHandler(h) = h;
+                        self.emit_stmts(&h.body, chunks, seen);
+                    }
+                    self.emit_stmts(&s.orelse, chunks, seen);
+                    self.emit_stmts(&s.finalbody, chunks, seen);
+                }
+                ast::Stmt::TryStar(s) => {
+                    self.emit_stmts(&s.body, chunks, seen);
+                    for h in &s.handlers {
+                        let ast::ExceptHandler::ExceptHandler(h) = h;
+                        self.emit_stmts(&h.body, chunks, seen);
+                    }
+                    self.emit_stmts(&s.orelse, chunks, seen);
+                    self.emit_stmts(&s.finalbody, chunks, seen);
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Py mode: declare public import-bound names as `Obj` so that
+    /// accessing them does not become a missing-attribute error.
+    /// Emitted last so that real definitions win.
+    fn emit_imported(&self, chunks: &mut Vec<Chunk>, seen: &mut HashSet<String>) {
+        for name in &self.imported {
+            if seen.contains(name) {
+                continue;
+            }
+            seen.insert(name.clone());
+            chunks.push(Chunk {
+                text: format!("{name}: Obj\n"),
+                fallback: None,
+            });
         }
     }
 
@@ -805,6 +1064,9 @@ impl Converter {
                     continue;
                 }
                 if name == "__init__" || name == "__new__" {
+                    if self.is_py() && name == "__init__" {
+                        self.scan_init_attrs(view.body, members, seen, class_name);
+                    }
                     let slot = if name == "__init__" {
                         &mut *init
                     } else {
@@ -863,8 +1125,10 @@ impl Converter {
                     if name.starts_with('_') || seen.contains(name) {
                         continue;
                     }
-                    let Some(ty) = literal_type(&assign.value) else {
-                        continue;
+                    let ty = match literal_type(&assign.value) {
+                        Some(ty) => ty,
+                        None if self.is_py() => "Obj",
+                        None => continue,
                     };
                     seen.insert(name.to_string());
                     members.push(format!("{name}: {ty}"));
@@ -872,6 +1136,55 @@ impl Converter {
                 ast::Stmt::If(if_) => {
                     self.walk_class_body(&if_.body, class_name, members, seen, init, new_);
                     self.walk_class_body(&if_.orelse, class_name, members, seen, init, new_);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Py mode: collect `self.attr = ...` / `self.attr: T = ...` bindings
+    /// from an `__init__` body as attribute declarations.
+    fn scan_init_attrs(
+        &self,
+        body: &[ast::Stmt],
+        members: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+        class_name: &str,
+    ) {
+        let ctx = Some(class_name);
+        for stmt in body {
+            match stmt {
+                ast::Stmt::AnnAssign(ann) => {
+                    let Some(name) = self_attr_name(&ann.target) else {
+                        continue;
+                    };
+                    if name.starts_with('_') || seen.contains(name) {
+                        continue;
+                    }
+                    let mut used = vec![];
+                    let mut ty = self.map_type(&ann.annotation, &mut used, ctx, 0);
+                    if !used.is_empty() {
+                        ty = "Obj".into();
+                    }
+                    seen.insert(name.to_string());
+                    members.push(format!("{name}: {ty}"));
+                }
+                ast::Stmt::Assign(assign) => {
+                    for target in &assign.targets {
+                        let Some(name) = self_attr_name(target) else {
+                            continue;
+                        };
+                        if name.starts_with('_') || seen.contains(name) {
+                            continue;
+                        }
+                        let ty = literal_type(&assign.value).unwrap_or("Obj");
+                        seen.insert(name.to_string());
+                        members.push(format!("{name}: {ty}"));
+                    }
+                }
+                ast::Stmt::If(s) => {
+                    self.scan_init_attrs(&s.body, members, seen, class_name);
+                    self.scan_init_attrs(&s.orelse, members, seen, class_name);
                 }
                 _ => {}
             }
@@ -1118,6 +1431,180 @@ from os import PathLike
 def f(p: PathLike) -> SomeUnknown: ...
 ";
         assert_eq!(conv(src), "f: (p: Obj) -> Obj\n");
+    }
+
+    fn conv_py(src: &str) -> String {
+        convert_py_to_decl(src).unwrap()
+    }
+
+    #[test]
+    fn py_annotated_function_with_body() {
+        let src = "\
+def add(a: int, b: int) -> int:
+    return a + b
+";
+        assert_eq!(conv_py(src), "add: (a: Int, b: Int) -> Int\n");
+    }
+
+    #[test]
+    fn py_unannotated_return() {
+        let src = "\
+def log(msg):
+    print(msg)
+
+def add1(x):
+    return x + 1
+";
+        assert_eq!(
+            conv_py(src),
+            "log: (msg: Obj) -> NoneType\nadd1: (x: Obj) -> Obj\n"
+        );
+    }
+
+    #[test]
+    fn py_generator_returns_obj() {
+        let src = "\
+def gen(n: int):
+    for i in range(n):
+        yield i
+";
+        assert_eq!(conv_py(src), "gen: (n: Int) -> Obj\n");
+    }
+
+    #[test]
+    fn py_unannotated_module_vars() {
+        let src = "\
+MAX = 100
+data = load()
+a, b = 1, 2
+";
+        assert_eq!(conv_py(src), "MAX: Int\ndata: Obj\na: Obj\nb: Obj\n");
+    }
+
+    #[test]
+    fn py_imports_declared_obj() {
+        let src = "\
+from __future__ import annotations
+import os
+import os.path
+import numpy as np
+from collections import OrderedDict
+from typing import List
+
+def f(xs: List[int]) -> int:
+    return xs[0]
+";
+        // typing/__future__ imports are omitted; `import os.path` re-binds `os`
+        assert_eq!(
+            conv_py(src),
+            "f: (xs: [Int; _]) -> Int\nos: Obj\nnp: Obj\nOrderedDict: Obj\n"
+        );
+    }
+
+    #[test]
+    fn py_try_import_fallback() {
+        let src = "\
+try:
+    import ujson as json
+except ImportError:
+    import json
+
+def dumps(obj: object) -> str:
+    return json.dumps(obj)
+";
+        assert_eq!(conv_py(src), "dumps: (obj: Obj) -> Str\njson: Obj\n");
+    }
+
+    #[test]
+    fn py_alias_still_declared() {
+        let src = "\
+from typing import Union
+Num = Union[int, float]
+def f(x: Num) -> Num:
+    return x
+";
+        // the alias resolves inline in annotations, but the name itself
+        // also exists as a module attribute at runtime
+        assert_eq!(
+            conv_py(src),
+            "Num: Obj\nf: (x: Int or Float) -> Int or Float\n"
+        );
+    }
+
+    #[test]
+    fn py_init_self_attrs() {
+        let src = "\
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x: int = x
+        self.y = y
+        self._priv = 0
+
+    def norm(self) -> float:
+        return (self.x ** 2 + self.y ** 2) ** 0.5
+";
+        let expected = "\
+Point: ClassType
+Point.
+    __call__: (x: Int, y: Int) -> Point
+    x: Int
+    y: Obj
+    norm: (self: Point) -> Float
+";
+        assert_eq!(conv_py(src), expected);
+    }
+
+    #[test]
+    fn py_star_import_bails() {
+        assert!(convert_py_to_decl("from os.path import *\nX = 1\n").is_err());
+    }
+
+    #[test]
+    fn py_module_getattr_bails() {
+        let src = "\
+def __getattr__(name):
+    return 0
+";
+        assert!(convert_py_to_decl(src).is_err());
+    }
+
+    #[test]
+    fn py_output_is_valid_erg() {
+        let src = "\
+import re
+from typing import Optional
+
+PATTERN = re.compile(r\"x\")
+LIMIT = 8
+
+class Cache:
+    version = 2
+
+    def __init__(self, size: int = 64) -> None:
+        self.size = size
+        self.entries = {}
+
+    def get(self, key: str) -> Optional[bytes]:
+        return self.entries.get(key)
+
+    def clear(self):
+        self.entries = {}
+
+def helper(x, y=1):
+    return x + y
+";
+        let out = conv_py(src);
+        assert!(parses_ok(&out), "generated decl does not parse:\n{out}");
+        assert!(out.contains("PATTERN: Obj"));
+        assert!(out.contains("LIMIT: Int"));
+        assert!(out.contains("__call__: (size := Int) -> Cache"));
+        assert!(out.contains("version: Int"));
+        assert!(out.contains("size: Obj"));
+        assert!(out.contains("entries: Obj"));
+        assert!(out.contains("get: (self: Cache, key: Str) -> Bytes or NoneType"));
+        assert!(out.contains("clear: (self: Cache) -> NoneType"));
+        assert!(out.contains("helper: (x: Obj, y := Obj) -> Obj"));
+        assert!(out.contains("re: Obj"));
     }
 
     #[test]

@@ -68,7 +68,7 @@ large_thread = [
 ]
 py_compat = ["erg_compiler/py_compat", "els/py_compat"]
 gal = ["erg_common/gal", "erg_compiler/gal"]
-pydecl = ["erg_compiler/pydecl"]
+pydecl = ["erg_compiler/pydecl", "dep:erg_pydecl"]
 els = ["erg_common/els", "erg_compiler/els", "dep:els"]
 full-repl = ["erg_common/full-repl"]
 full = ["els", "full-repl", "unicode", "pretty"]
@@ -91,6 +91,7 @@ erg_common = { workspace = true }
 erg_parser = { workspace = true }
 erg_compiler = { workspace = true }
 erg_linter = { workspace = true }
+erg_pydecl = { workspace = true, optional = true }
 els = { workspace = true, optional = true, features = ["lint"] }
 
 [build-dependencies]

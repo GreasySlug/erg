@@ -31,6 +31,20 @@ fn run() {
         Read => Deserializer::run(cfg),
         Pack => PackageManagerRunner::run(cfg),
         Lint => Linter::run(cfg),
+        PyDecl => {
+            #[cfg(feature = "pydecl")]
+            {
+                erg::pydecl::run(cfg)
+            }
+            #[cfg(not(feature = "pydecl"))]
+            {
+                let _ = cfg;
+                eprintln!(
+                    "This version of the build does not support the pydecl subcommand (rebuild with `--features pydecl`)"
+                );
+                ExitStatus::ERR1
+            }
+        }
         LanguageServer => {
             #[cfg(feature = "els")]
             {

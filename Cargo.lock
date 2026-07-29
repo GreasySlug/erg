@@ -424,6 +424,7 @@ dependencies = [
  "erg_compiler",
  "erg_linter",
  "erg_parser",
+ "erg_pydecl",
 ]
 
 [[package]]

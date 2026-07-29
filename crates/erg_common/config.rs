@@ -35,6 +35,8 @@ pub enum ErgMode {
     Lint,
     Read,
     Pack,
+    /// generate Erg declarations (.d.er) from Python sources/stubs
+    PyDecl,
 }
 
 impl TryFrom<&str> for ErgMode {
@@ -53,6 +55,7 @@ impl TryFrom<&str> for ErgMode {
             "lint" | "linter" => Ok(Self::Lint),
             "byteread" | "read" | "reader" | "dis" => Ok(Self::Read),
             "pack" | "package" => Ok(Self::Pack),
+            "pydecl" | "py-decl" => Ok(Self::PyDecl),
             _ => Err(()),
         }
     }
@@ -73,6 +76,7 @@ impl From<ErgMode> for &str {
             ErgMode::Lint => "lint",
             ErgMode::Read => "read",
             ErgMode::Pack => "pack",
+            ErgMode::PyDecl => "pydecl",
         }
     }
 }

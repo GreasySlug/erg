@@ -34,7 +34,8 @@ COMMAND
     run|exec                             実行(デフォルト)
     server                               言語サーバーを起動
     lint                                 Lintを実行
-    pack                                 パッケージング管理",
+    pack                                 パッケージング管理
+    pydecl                               Pythonソース/スタブから型宣言(.d.er)を生成",
 
     "simplified_chinese" =>
     "\
@@ -67,7 +68,8 @@ COMMAND
     run|exec                             执行(默认模式)
     server                               执行语言服务器
     lint                                 执行 Lint
-    pack                                 执行打包管理",
+    pack                                 执行打包管理
+    pydecl                               从 Python 源码/存根生成类型声明(.d.er)",
 
     "traditional_chinese" =>
         "\
@@ -100,7 +102,8 @@ COMMAND
     run|exec                             執行(預設模式)
     server                               執行語言伺服器
     lint                                 執行 Lint
-    pack                                 執行打包管理",
+    pack                                 執行打包管理
+    pydecl                               從 Python 源碼/存根生成型別聲明(.d.er)",
 
     "english" =>
         "\
@@ -133,7 +136,8 @@ COMMAND
     run|exec                             execute (default mode)
     server                               start Erg language server
     lint                                 lint
-    pack                                 run package manager",
+    pack                                 run package manager
+    pydecl                               generate type declarations (.d.er) from Python sources/stubs",
     )
 }
 
@@ -347,4 +351,5 @@ pub const OPTIONS: &[&str] = &[
     "--version",
     "-V",
     "--verbose",
+    "--decls-from-py",
 ];

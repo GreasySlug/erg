@@ -616,10 +616,7 @@ impl Context {
                     // const evaluator.
                     let local_name = local.inspect().trim_start_matches([':', '.']);
                     let is_const_type_fn = self.get_type_ctx(local_name).is_none()
-                        && matches!(
-                            self.rec_get_const_obj(local_name),
-                            Some(ValueObj::Subr(_))
-                        );
+                        && matches!(self.rec_get_const_obj(local_name), Some(ValueObj::Subr(_)));
                     if res.is_err() && is_const_type_fn {
                         // Evaluate the call `local(args)` and use its resulting type.
                         let app = ast::ConstExpr::App(ast::ConstApp::new(
@@ -2964,13 +2961,15 @@ impl Context {
         &self,
         spec: &VisModifierSpec,
     ) -> TyCheckResult<VisibilityModifier> {
-        // .pyi files: all symbols are public (Python has no private/public visibility)
+        // .pyi files (and .py files converted to declarations by
+        // `decls_from_py`): all symbols are public (Python has no
+        // private/public visibility)
         if self
             .cfg
             .input
             .path()
             .extension()
-            .is_some_and(|ext| ext == "pyi")
+            .is_some_and(|ext| ext == "pyi" || (ext == "py" && self.cfg.decls_from_py))
         {
             return Ok(VisibilityModifier::Public);
         }

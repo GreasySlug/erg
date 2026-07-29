@@ -783,7 +783,9 @@ impl Input {
                 return Some(resolved);
             }
         }
-        if PYTHON_MODE {
+        // decls_from_py: `.py` sources are treated as declaration sources
+        // (their annotations are converted to Erg declarations at parse time)
+        if PYTHON_MODE || cfg.decls_from_py {
             if let Ok(resolved) = self.resolve_py(path) {
                 return Some(resolved);
             }

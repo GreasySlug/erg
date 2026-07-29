@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use erg_common::config::ErgMode;
 
 use erg_common::config::ErgConfig;
-use erg_common::consts::{ELS, ERG_MODE, PARALLEL};
+use erg_common::consts::{ELS, ERG_MODE, PARALLEL, PYTHON_MODE};
 use erg_common::debug_power_assert;
 use erg_common::dict::Dict;
 use erg_common::env::is_std_decl_path;
@@ -196,6 +196,21 @@ fn convert_pyi(src: &str) -> String {
         return decl;
     }
     preprocess_pyi(src)
+}
+
+/// Convert annotated `.py` source to Erg declarations (`decls_from_py`).
+/// Returns an empty declaration set when the module cannot be converted
+/// (dynamic exports, parse error, or the `pydecl` feature is off): the
+/// resulting empty module context preserves the untyped-pyimport behavior
+/// (every attribute resolves to `Obj`).
+fn convert_py(src: &str) -> String {
+    #[cfg(feature = "pydecl")]
+    if let Ok(decl) = erg_pydecl::convert_py_to_decl(src) {
+        return decl;
+    }
+    #[cfg(not(feature = "pydecl"))]
+    let _ = src;
+    String::new()
 }
 
 /// Strip `: ...` or `: pass` body suffix from a `.pyi` line.
@@ -967,6 +982,12 @@ impl<ASTBuilder: ASTBuildable, HIRBuilder: Buildable>
         };
         let src = if import_path.extension() == Some(OsStr::new("pyi")) {
             convert_pyi(&src)
+        } else if !PYTHON_MODE
+            && self.cfg.decls_from_py
+            && import_path.extension() == Some(OsStr::new("py"))
+        {
+            // in PYTHON_MODE (pylyzer) the generic parser handles `.py` itself
+            convert_py(&src)
         } else {
             src
         };
@@ -1117,6 +1138,7 @@ impl<ASTBuilder: ASTBuildable, HIRBuilder: Buildable>
         let shared = self.shared.inherit(path.clone());
         let mode = if _path.to_string_lossy().ends_with(".d.er")
             || _path.to_string_lossy().ends_with(".pyi")
+            || (!PYTHON_MODE && self.cfg.decls_from_py && _path.to_string_lossy().ends_with(".py"))
         {
             "declare"
         } else {

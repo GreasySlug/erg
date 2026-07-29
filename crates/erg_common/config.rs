@@ -185,6 +185,9 @@ pub struct ErgConfig {
     pub fast_error_report: bool,
     pub do_not_show_ext_errors: bool,
     pub respect_pyi: bool,
+    /// generate Erg declarations from annotated `.py` sources when no
+    /// `.d.er`/`.pyi` stub is found (requires the `pydecl` feature)
+    pub decls_from_py: bool,
 }
 
 impl Default for ErgConfig {
@@ -217,6 +220,7 @@ impl Default for ErgConfig {
             fast_error_report: false,
             do_not_show_ext_errors: false,
             respect_pyi: true,
+            decls_from_py: false,
         }
     }
 }
@@ -353,6 +357,9 @@ impl ErgConfig {
                 }
                 "--use-pylyzer" => {
                     cfg.use_pylyzer = true;
+                }
+                "--decls-from-py" => {
+                    cfg.decls_from_py = true;
                 }
                 "--use-local-package" => {
                     let name = args

@@ -4090,7 +4090,7 @@ impl Type {
             Self::Not(t) => vec![TyParam::t(*t.clone())],
             Self::Subr(subr) => subr.typarams(),
             Self::Quantified(quant) => quant.typarams(),
-            Self::Callable { param_ts: _, .. } => todo!(),
+            Self::Callable { .. } => todo!(),
             Self::NamedTuple(r) => r.iter().map(|(_, t)| TyParam::t(t.clone())).collect(),
             Self::Poly { params, .. } => params.clone(),
             Self::Proj { lhs, .. } => lhs.typarams(),
@@ -4137,7 +4137,7 @@ impl Type {
                 non_default_params, ..
             }) => Some(non_default_params),
             Self::Quantified(quant) => quant.non_default_params(),
-            Self::Callable { param_ts: _, .. } => todo!(),
+            Self::Callable { .. } => todo!(),
             _ => None,
         }
     }
@@ -4153,7 +4153,7 @@ impl Type {
                 ..
             }) => var_args.as_deref(),
             Self::Quantified(quant) => quant.var_params(),
-            Self::Callable { param_ts: _, .. } => todo!(),
+            Self::Callable { .. } => todo!(),
             _ => None,
         }
     }
@@ -4178,7 +4178,7 @@ impl Type {
             Self::Refinement(refine) => refine.t.kw_var_params(),
             Self::Subr(SubrType { kw_var_params, .. }) => kw_var_params.as_deref(),
             Self::Quantified(quant) => quant.kw_var_params(),
-            Self::Callable { param_ts: _, .. } => todo!(),
+            Self::Callable { .. } => todo!(),
             _ => None,
         }
     }

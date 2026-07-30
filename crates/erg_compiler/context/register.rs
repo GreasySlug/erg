@@ -484,9 +484,7 @@ impl Context {
                 // to the current scope: searching the outer scope (which `is_const = true` does)
                 // would wrongly flag e.g. a `match` catch-all branch variable as reassigning the
                 // enclosing const function's parameter (recursive const functions with 3+ arms).
-                if self
-                    .registered_info(name.inspect(), false)
-                    .is_some()
+                if self.registered_info(name.inspect(), false).is_some()
                     && &name.inspect()[..] != "_"
                 {
                     Err(TyCheckErrors::from(TyCheckError::reassign_error(

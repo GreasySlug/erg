@@ -590,7 +590,7 @@ fn format_context<E: ErrorDisplay + ?Sized>(
     let final_step = ln_end - ln_begin;
     let max_digit = ln_end.to_string().len();
     let (vbreak, vbar) = chars.gutters();
-    let offset = format!("{} {} ", &" ".repeat(max_digit), vbreak);
+    let offset = format!("{} {} ", " ".repeat(max_digit), vbreak);
     for (i, lineno) in (ln_begin..=ln_end).enumerate() {
         context.push_str_with_color(format!("{lineno:<max_digit$} {vbar} "), gutter_color);
         let not_found = "???".to_string();
@@ -761,7 +761,7 @@ impl SubMessage {
                     cxt.push_str(codes.get(i).unwrap_or(&String::new()));
                     cxt.push_str("\n");
                     cxt.push_str_with_color(
-                        format!("{} {}", &" ".repeat(lineno.to_string().len()), vbreak),
+                        format!("{} {}", " ".repeat(lineno.to_string().len()), vbreak),
                         gutter_color,
                     );
                     cxt.push_str(&" ".repeat(lineno.to_string().len()));
@@ -1069,7 +1069,7 @@ pub trait ErrorDisplay {
             write!(
                 f,
                 "{}",
-                &sub_msg.format_code_and_pointer(self, color, gutter_color, mark, chars)
+                sub_msg.format_code_and_pointer(self, color, gutter_color, mark, chars)
             )?;
         }
         write!(f, "{}\n\n", core.main_message)?;

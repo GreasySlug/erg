@@ -363,8 +363,8 @@ impl Context {
         let Some(ty_ctx) = self.get_nominal_type_ctx(rhs) else {
             return (Maybe, false);
         };
-        let (cred, judge) =
-            self._nominal_supertype_of_with_ctx(lhs, rhs, ty_ctx, |ty_ctx| &ty_ctx.super_traits[..]);
+        let (cred, judge) = self
+            ._nominal_supertype_of_with_ctx(lhs, rhs, ty_ctx, |ty_ctx| &ty_ctx.super_traits[..]);
         if judge {
             return (cred, judge);
         }
@@ -1687,10 +1687,9 @@ impl Context {
             (TyParam::List(l), TyParam::List(r)) => {
                 let mut tps = vec![];
                 for (l, r) in l.iter().zip(r.iter()) {
-                    if let Some(tp) = self.union_tp(l, r) {
+                    {
+                        let tp = self.union_tp(l, r)?;
                         tps.push(tp);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::List(tps))
@@ -1698,10 +1697,9 @@ impl Context {
             (TyParam::Tuple(l), TyParam::Tuple(r)) => {
                 let mut tps = vec![];
                 for (l, r) in l.iter().zip(r.iter()) {
-                    if let Some(tp) = self.union_tp(l, r) {
+                    {
+                        let tp = self.union_tp(l, r)?;
                         tps.push(tp);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::Tuple(tps))
@@ -1717,14 +1715,12 @@ impl Context {
             (TyParam::Record(l), TyParam::Record(r)) if l.len() == 1 && r.len() == 1 => {
                 let mut tps = Dict::new();
                 for (l_k, l_v) in l.iter() {
-                    if let Some(r_v) = r.get(l_k) {
-                        if let Some(tp) = self.union_tp(l_v, r_v) {
+                    {
+                        let r_v = r.get(l_k)?;
+                        {
+                            let tp = self.union_tp(l_v, r_v)?;
                             tps.insert(l_k.clone(), tp);
-                        } else {
-                            return None;
                         }
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::Record(tps))
@@ -1757,10 +1753,9 @@ impl Context {
                 debug_assert_eq!(las.len(), ras.len());
                 let mut unified_args = vec![];
                 for (lp, rp) in las.iter().zip(ras.iter()) {
-                    if let Some(union) = self.union_tp(lp, rp) {
+                    {
+                        let union = self.union_tp(lp, rp)?;
                         unified_args.push(union);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::app(ln.clone(), unified_args))
@@ -2000,10 +1995,9 @@ impl Context {
             (TyParam::List(l), TyParam::List(r)) => {
                 let mut tps = vec![];
                 for (l, r) in l.iter().zip(r.iter()) {
-                    if let Some(tp) = self.intersection_tp(l, r) {
+                    {
+                        let tp = self.intersection_tp(l, r)?;
                         tps.push(tp);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::List(tps))
@@ -2011,10 +2005,9 @@ impl Context {
             (TyParam::Tuple(l), TyParam::Tuple(r)) => {
                 let mut tps = vec![];
                 for (l, r) in l.iter().zip(r.iter()) {
-                    if let Some(tp) = self.intersection_tp(l, r) {
+                    {
+                        let tp = self.intersection_tp(l, r)?;
                         tps.push(tp);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::Tuple(tps))
@@ -2030,14 +2023,12 @@ impl Context {
             (TyParam::Record(l), TyParam::Record(r)) if l.len() == 1 && r.len() == 1 => {
                 let mut tps = Dict::new();
                 for (l_k, l_v) in l.iter() {
-                    if let Some(r_v) = r.get(l_k) {
-                        if let Some(tp) = self.intersection_tp(l_v, r_v) {
+                    {
+                        let r_v = r.get(l_k)?;
+                        {
+                            let tp = self.intersection_tp(l_v, r_v)?;
                             tps.insert(l_k.clone(), tp);
-                        } else {
-                            return None;
                         }
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::Record(tps))
@@ -2075,10 +2066,9 @@ impl Context {
                 debug_assert_eq!(las.len(), ras.len());
                 let mut unified_args = vec![];
                 for (lp, rp) in las.iter().zip(ras.iter()) {
-                    if let Some(intersec) = self.intersection_tp(lp, rp) {
+                    {
+                        let intersec = self.intersection_tp(lp, rp)?;
                         unified_args.push(intersec);
-                    } else {
-                        return None;
                     }
                 }
                 Some(TyParam::app(ln.clone(), unified_args))

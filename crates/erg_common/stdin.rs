@@ -48,7 +48,10 @@ pub enum CodeCompleteness {
 impl CodeCompleteness {
     /// Returns true if more input lines are needed to complete the code
     pub const fn is_incomplete(&self) -> bool {
-        matches!(self, Self::ExpectsBlock | Self::Continuation | Self::Unclosed)
+        matches!(
+            self,
+            Self::ExpectsBlock | Self::Continuation | Self::Unclosed
+        )
     }
 }
 

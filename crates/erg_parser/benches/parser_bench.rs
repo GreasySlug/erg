@@ -23,7 +23,10 @@ use erg_parser::parse::{Parser, SimpleParser};
 /// Paths are relative to this file (`crates/erg_parser/benches/`).
 const INPUTS: &[(&str, &str)] = &[
     ("small", include_str!("../tests/containers.er")), // 50 lines, container syntax
-    ("medium", include_str!("../../erg_compiler/lib/pystd/builtins.d.er")), // 242 lines, declarations
+    (
+        "medium",
+        include_str!("../../erg_compiler/lib/pystd/builtins.d.er"),
+    ), // 242 lines, declarations
     ("large", include_str!("../../../tests/should_ok/long.er")), // 699 lines, many definitions
 ];
 

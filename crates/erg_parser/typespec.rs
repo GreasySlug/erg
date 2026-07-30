@@ -304,9 +304,10 @@ impl Parser {
         t_spec: Option<TypeSpecWithOp>,
     ) -> Option<ParamTySpec> {
         match (pat, t_spec) {
-            (ParamPattern::VarName(name), Some(t_spec_with_op)) => {
-                Some(ParamTySpec::new(Some(name.into_token()), t_spec_with_op.t_spec))
-            }
+            (ParamPattern::VarName(name), Some(t_spec_with_op)) => Some(ParamTySpec::new(
+                Some(name.into_token()),
+                t_spec_with_op.t_spec,
+            )),
             (ParamPattern::VarName(name), None) => Some(ParamTySpec::anonymous(TypeSpec::mono(
                 Identifier::private_from_varname(name),
             ))),

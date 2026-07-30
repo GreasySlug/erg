@@ -838,7 +838,7 @@ impl Predicate {
         max: Option<&'a TyParam>,
     ) -> (Option<&'a TyParam>, Option<&'a TyParam>) {
         match self {
-            Predicate::Equal { rhs: _, .. } => todo!(),
+            Predicate::Equal { .. } => todo!(),
             // {I | I <= 1; I <= 2}
             Predicate::LessEqual { rhs, .. } => (
                 min,

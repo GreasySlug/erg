@@ -1350,10 +1350,9 @@ impl JsonGenerator {
             Expr::List(List::Normal(lis)) => {
                 let mut vals = vec![];
                 for elem in lis.elems.pos_args {
-                    if let Some(val) = self.expr_into_value(elem.expr) {
+                    {
+                        let val = self.expr_into_value(elem.expr)?;
                         vals.push(val);
-                    } else {
-                        return None;
                     }
                 }
                 Some(ValueObj::List(vals.into()))
@@ -1369,10 +1368,9 @@ impl JsonGenerator {
             Expr::Tuple(Tuple::Normal(tup)) => {
                 let mut vals = vec![];
                 for elem in tup.elems.pos_args {
-                    if let Some(val) = self.expr_into_value(elem.expr) {
+                    {
+                        let val = self.expr_into_value(elem.expr)?;
                         vals.push(val);
-                    } else {
-                        return None;
                     }
                 }
                 Some(ValueObj::Tuple(vals.into()))

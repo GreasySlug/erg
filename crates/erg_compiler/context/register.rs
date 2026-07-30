@@ -22,10 +22,10 @@ use erg_parser::ast::{self, ClassAttr, RecordAttrOrIdent, TypeSpecWithOp};
 use erg_parser::Parser;
 
 use crate::ty::constructors::{
-    func, func0, func1, module, proc, py_module, ref_, ref_mut, str_dict_t, subr_t, tp_enum,
-    unknown_len_list_t, v_enum,
+    func, func0, func1, module, named_free_var, poly, proc, py_module, ref_, ref_mut, str_dict_t,
+    subr_t, tp_enum, unknown_len_list_t, v_enum,
 };
-use crate::ty::free::HasLevel;
+use crate::ty::free::{Constraint, HasLevel};
 use crate::ty::typaram::TyParam;
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{
@@ -1044,14 +1044,27 @@ impl Context {
         Ok(())
     }
 
+    /// Instantiate the class specification of a methods block (e.g. `C` of `C.` / `C(T)` of `C(T).`).
+    /// For a polymorphic class spec, undefined type variables (e.g. `T` of `Wrapper(T).`)
+    /// are registered into `tv_cache` as fresh type variables, so that the caller can
+    /// bind them in the methods context.
     pub(crate) fn get_class_and_impl_trait<'c>(
         &mut self,
         class_spec: &'c ast::TypeSpec,
+        tv_cache: &mut TyVarCache,
     ) -> Result<ClassTrait<'c>, ClassTraitErrors<'c>> {
         let mut errs = TyCheckErrors::empty();
-        let mut dummy_tv_cache = TyVarCache::new(self.level, self);
+        // e.g. `Wrapper(T).`: `T` is not defined at this point,
+        // so it must be instantiated as a fresh type variable
+        let is_poly_spec = |spec: &ast::TypeSpec| {
+            matches!(
+                spec,
+                ast::TypeSpec::PreDeclTy(ast::PreDeclTypeSpec::Poly(_))
+            )
+        };
         match class_spec {
             ast::TypeSpec::TypeApp { spec, args } => {
+                let not_found_is_qvar = is_poly_spec(spec);
                 match &args.args {
                     ast::TypeAppArgsKind::Args(args) => {
                         let (impl_trait, t_spec) = match &args.pos_args().first().unwrap().expr {
@@ -1060,7 +1073,7 @@ impl Context {
                                 let t = match self.instantiate_typespec_full(
                                     &tasc.t_spec.t_spec,
                                     None,
-                                    &mut dummy_tv_cache,
+                                    tv_cache,
                                     RegistrationMode::Normal,
                                     false,
                                 ) {
@@ -1093,9 +1106,9 @@ impl Context {
                         let class = match self.instantiate_typespec_full(
                             spec,
                             None,
-                            &mut dummy_tv_cache,
+                            tv_cache,
                             RegistrationMode::Normal,
-                            false,
+                            not_found_is_qvar,
                         ) {
                             Ok(t) => t,
                             Err((t, es)) => {
@@ -1110,10 +1123,26 @@ impl Context {
                         }
                     }
                     ast::TypeAppArgsKind::SubtypeOf(trait_spec) => {
+                        // The class spec must be instantiated first so that its type
+                        // variables (e.g. `T` of `C(T)|<: Eq C(T)|.`) are available
+                        // in the trait spec
+                        let class = match self.instantiate_typespec_full(
+                            spec,
+                            None,
+                            tv_cache,
+                            RegistrationMode::Normal,
+                            not_found_is_qvar,
+                        ) {
+                            Ok(t) => t,
+                            Err((t, es)) => {
+                                errs.extend(es);
+                                t
+                            }
+                        };
                         let impl_trait = match self.instantiate_typespec_full(
                             &trait_spec.t_spec,
                             None,
-                            &mut dummy_tv_cache,
+                            tv_cache,
                             RegistrationMode::Normal,
                             false,
                         ) {
@@ -1125,19 +1154,6 @@ impl Context {
                                 t.replace(&Type::Failure, &Type::Never)
                             }
                         };
-                        let class = match self.instantiate_typespec_full(
-                            spec,
-                            None,
-                            &mut dummy_tv_cache,
-                            RegistrationMode::Normal,
-                            false,
-                        ) {
-                            Ok(t) => t,
-                            Err((t, es)) => {
-                                errs.extend(es);
-                                t
-                            }
-                        };
                         if errs.is_empty() {
                             Ok((class, Some((impl_trait, trait_spec.as_ref()))))
                         } else {
@@ -1147,12 +1163,20 @@ impl Context {
                 }
             }
             other => {
+                // e.g. `Wrapper.` where `Wrapper` is a polymorphic class:
+                // instantiate the type parameters as fresh type variables
+                // named after the class's own parameter names
+                if let ast::TypeSpec::PreDeclTy(ast::PreDeclTypeSpec::Mono(ident)) = other {
+                    if let Some(class) = self.instantiate_poly_class_as_mono_spec(ident, tv_cache) {
+                        return Ok((class, None));
+                    }
+                }
                 let t = match self.instantiate_typespec_full(
                     other,
                     None,
-                    &mut dummy_tv_cache,
+                    tv_cache,
                     RegistrationMode::Normal,
-                    false,
+                    is_poly_spec(other),
                 ) {
                     Ok(t) => t,
                     Err((t, es)) => {
@@ -1167,6 +1191,47 @@ impl Context {
                 }
             }
         }
+    }
+
+    /// `Wrapper.` (where `Wrapper|T| = Class ...`) => `Some(Wrapper(?T))`
+    /// with `T ↦ ?T` registered into `tv_cache`.
+    /// Returns `None` if `ident` does not name a polymorphic type.
+    fn instantiate_poly_class_as_mono_spec(
+        &self,
+        ident: &Identifier,
+        tv_cache: &mut TyVarCache,
+    ) -> Option<Type> {
+        let type_ctx = self.get_type_ctx(ident.inspect())?;
+        if type_ctx.typ.is_monomorphic() {
+            return None;
+        }
+        let qual_name = type_ctx.typ.qual_name();
+        let params = type_ctx
+            .ctx
+            .params
+            .iter()
+            .map(|(name, vi)| {
+                let param_name = name
+                    .as_ref()
+                    .map_or(Str::ever("_"), |name| name.inspect().clone());
+                let varname = VarName::from_str(param_name.clone());
+                if vi.t == Type::Type {
+                    let tv =
+                        named_free_var(param_name, self.level, Constraint::new_type_of(Type::Type));
+                    let _ = tv_cache.push_or_init_tyvar(&varname, &tv, self);
+                    TyParam::t(tv)
+                } else {
+                    let tp = TyParam::named_free_var(
+                        param_name,
+                        self.level,
+                        Constraint::new_type_of(vi.t.clone()),
+                    );
+                    let _ = tv_cache.push_or_init_typaram(&varname, &tp, self);
+                    tp
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(poly(qual_name, params))
     }
 
     pub(crate) fn register_trait_impl(
@@ -1312,8 +1377,9 @@ impl Context {
                         .instantiate_vis_modifier(class_def.def.sig.vis())
                         .unwrap_or(VisibilityModifier::Public);
                     for methods in class_def.methods_list.iter() {
+                        let mut tv_cache = TyVarCache::new(self.level, self);
                         let (class, impl_trait) =
-                            match self.get_class_and_impl_trait(&methods.class) {
+                            match self.get_class_and_impl_trait(&methods.class, &mut tv_cache) {
                                 Ok(x) => x,
                                 Err((class, trait_, errs)) => {
                                     total_errs.extend(errs);
@@ -1327,9 +1393,23 @@ impl Context {
                                 total_errs.extend(errs);
                             }
                         }
-                        let kind =
-                            ContextKind::MethodDefs(impl_trait.as_ref().map(|(t, _)| t.clone()));
-                        self.grow(&class.local_name(), kind, vis.clone(), None);
+                        let kind = ContextKind::MethodDefs {
+                            class: (!class.is_monomorphic()).then(|| class.clone()),
+                            impl_trait: impl_trait.as_ref().map(|(t, _)| t.clone()),
+                        };
+                        // The type variables of the class spec (e.g. `T` of `Wrapper(T).`)
+                        // are created at the outer level; raise them to the methods
+                        // context's level so that `generalize_t` (which only generalizes
+                        // variables deeper than the registering context) quantifies them
+                        // into each method's type
+                        for tv in tv_cache.tyvar_instances.values() {
+                            tv.lift();
+                        }
+                        for tp in tv_cache.typaram_instances.values() {
+                            tp.lift();
+                        }
+                        let tv_cache = (!tv_cache.is_empty()).then_some(tv_cache);
+                        self.grow(&class.local_name(), kind, vis.clone(), tv_cache);
                         for attr in methods.attrs.iter() {
                             match attr {
                                 ClassAttr::Def(def) => {
@@ -1608,6 +1688,18 @@ impl Context {
         match &def.sig {
             ast::Signature::Subr(sig) => {
                 if sig.is_const() {
+                    // `MyTr T = Trait ...` would silently degrade (`T` decays to `Never`),
+                    // so reject it explicitly. Use the `MyTr|T| = Trait ...` form instead
+                    // (which is also rejected for now, but with a proper feature error).
+                    if !sig.params.is_empty() && def.def_kind().is_trait() {
+                        return feature_error!(
+                            TyCheckErrors,
+                            TyCheckError,
+                            self,
+                            sig.loc(),
+                            "polymorphic trait definition"
+                        );
+                    }
                     // If the const subroutine has parameters, create a UserConstSubr
                     // instead of evaluating the body immediately
                     if !sig.params.is_empty() {
@@ -1922,7 +2014,11 @@ impl Context {
 
     /// If the trait has super-traits, you should call `register_trait` after calling this method.
     pub(crate) fn register_trait_methods(&mut self, class: Type, methods: Self) {
-        let trait_ = if let ContextKind::MethodDefs(Some(tr)) = &methods.kind {
+        let trait_ = if let ContextKind::MethodDefs {
+            impl_trait: Some(tr),
+            ..
+        } = &methods.kind
+        {
             tr.clone()
         } else {
             unreachable!()
@@ -2818,6 +2914,18 @@ impl Context {
             func1(base.typ().clone(), gen.typ().clone())
         } else {
             func0(gen.typ().clone())
+        };
+        let new_t = if gen.typ().is_monomorphic() {
+            new_t
+        } else {
+            // Generalize the class's type parameters (in place, the variables are shared
+            // with `gen.typ()` etc.) so that each use of the class instantiates fresh
+            // type variables (e.g. `T` of `Box.new {value = 1}` and `Box.new {value = "a"}`)
+            new_t.lift();
+            gen.typ().lift();
+            let new_t = self.generalize_t(new_t);
+            let _ = self.generalize_t(gen.typ().clone());
+            new_t
         };
         if ERG_MODE {
             methods.register_fixed_auto_impl(

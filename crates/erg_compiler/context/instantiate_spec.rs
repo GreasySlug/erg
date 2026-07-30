@@ -1264,7 +1264,9 @@ impl Context {
                 let name = arg.to_string();
                 // FIXME: handle `::` as a right way
                 let name = Str::rc(name.trim_start_matches("::"));
-                let tp = TyParam::named_free_var(name.clone(), self.level, Constraint::Uninited);
+                // e.g. `T` of `Wrapper(T).` => `?T: Type` (the parameter type of the class)
+                let constr = Constraint::new_type_of(param_vi.t.clone());
+                let tp = TyParam::named_free_var(name.clone(), self.level, constr);
                 let varname = VarName::from_str(name);
                 if let Err(es) = tmp_tv_cache.push_or_init_typaram(&varname, &tp, self) {
                     errs.extend(es);
@@ -1380,7 +1382,13 @@ impl Context {
             return Ok(TyParam::Value(value.clone()));
         }
         if not_found_is_qvar {
-            let tyvar = named_free_var(name.inspect().clone(), self.level, Constraint::Uninited);
+            // e.g. `T` of `Wrapper(T).` => `?T: Type` (the type of the class's parameter)
+            let constr = erased_idx
+                .and_then(|(ctx, i)| ctx.params.get(i))
+                .map_or(Constraint::Uninited, |param| {
+                    Constraint::new_type_of(param.1.t.clone())
+                });
+            let tyvar = named_free_var(name.inspect().clone(), self.level, constr);
             tmp_tv_cache.push_or_init_tyvar(&name.name, &tyvar, self)?;
             return Ok(TyParam::t(tyvar));
         }

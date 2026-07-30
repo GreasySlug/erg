@@ -460,7 +460,7 @@ impl VarInfo {
 
     pub fn impl_of(&self) -> Option<&Type> {
         match &self.ctx {
-            ContextKind::MethodDefs(ty) => ty.as_ref(),
+            ContextKind::MethodDefs { impl_trait, .. } => impl_trait.as_ref(),
             _ => None,
         }
     }

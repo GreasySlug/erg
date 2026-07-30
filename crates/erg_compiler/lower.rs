@@ -40,6 +40,7 @@ use crate::ty::{
     CastTarget, Field, GuardType, HasType, ParamTy, Predicate, SubrType, Type, VisibilityModifier,
 };
 
+use crate::context::instantiate::TyVarCache;
 use crate::context::{
     ClassDefType, Context, ContextKind, ContextProvider, ControlKind, MethodContext, ModuleContext,
     RegistrationMode, TypeContext,
@@ -2285,7 +2286,24 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     .map_err(|(def, es)| (Some(def), errors.concat(es)))
             }
             ast::Signature::Var(sig) => {
-                self.module.context.grow(&name, kind, vis, None);
+                // e.g. `Wrapper|T| = Class {value = T}`: the bounds must be
+                // visible while lowering the body (polymorphic type definition)
+                let tv_cache = if sig.bounds.is_empty() {
+                    None
+                } else {
+                    match self
+                        .module
+                        .context
+                        .instantiate_ty_bounds(&sig.bounds, RegistrationMode::Normal)
+                    {
+                        Ok(tv_cache) => Some(tv_cache),
+                        Err((tv_cache, errs)) => {
+                            errors.extend(errs);
+                            Some(tv_cache)
+                        }
+                    }
+                };
+                self.module.context.grow(&name, kind, vis, tv_cache);
                 self.lower_var_def(sig, def.body, expect_body)
             }
         };
@@ -2757,14 +2775,22 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         let mut implemented = set! {};
         for methods in class_def.methods_list.into_iter() {
             let mut hir_methods = hir::Block::empty();
-            let (class, impl_trait) =
-                match self.module.context.get_class_and_impl_trait(&methods.class) {
-                    Ok(x) => x,
-                    Err((class, trait_, errs)) => {
-                        errors.extend(errs);
-                        (class.unwrap_or(Type::Obj), trait_)
-                    }
-                };
+            // NOTE: the type variables of a polymorphic class spec (e.g. `T` of `Wrapper(T).`)
+            // were already registered into the methods context's tv_cache in `register_defs`;
+            // the cache here is only used to instantiate the class type for lookup purposes
+            let mut dummy_tv_cache =
+                TyVarCache::new(self.module.context.level, &self.module.context);
+            let (class, impl_trait) = match self
+                .module
+                .context
+                .get_class_and_impl_trait(&methods.class, &mut dummy_tv_cache)
+            {
+                Ok(x) => x,
+                Err((class, trait_, errs)) => {
+                    errors.extend(errs);
+                    (class.unwrap_or(Type::Obj), trait_)
+                }
+            };
             if let Some(class_root) = self.module.context.get_nominal_type_ctx(&class) {
                 if !class_root.kind.is_class() {
                     let err = LowerError::method_definition_error(

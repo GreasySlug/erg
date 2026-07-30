@@ -616,7 +616,11 @@ impl Context {
         {
             Some(val.clone())
         } else {
-            None
+            // The type variables of a polymorphic type definition must be visible
+            // in the inner scopes (e.g. `T` in `Wrapper|T| = Class {value = T}`
+            // is evaluated in the ctx of the requirement record `{value = T}`)
+            self.get_outer_scope()
+                .and_then(|outer| outer.get_value_from_tv_cache(ident))
         }
     }
 

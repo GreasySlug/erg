@@ -54,7 +54,8 @@
     - [x] Class definition
     - [x] Trait definition
     - [x] Structural trait definition
-    - [ ] Polymorphic type definition
+    - [x] Polymorphic class definition (`C|T| = Class ...`, `C(T).` methods; receiver-based type arg propagation and `C T = Class ...` syntax are not yet supported)
+    - [ ] Polymorphic trait definition
   - [x] Patch definition
     - [x] Glue Patch definition (type-check level; runtime dispatch in generic bodies is not yet supported)
   - [x] Range object

@@ -448,7 +448,14 @@ pub enum ContextKind {
     Func,
     Proc,
     Class,
-    MethodDefs(Option<Type>), // Type: trait implemented
+    MethodDefs {
+        /// The class/trait the methods belong to.
+        /// `Some` only when the target type is polymorphic (e.g. `Wrapper(T).`);
+        /// for monomorphic types the type is resolved from the context name.
+        class: Option<Type>,
+        /// The trait implemented (e.g. `C|<: Eq|.`)
+        impl_trait: Option<Type>,
+    },
     PatchMethodDefs(Type),
     Trait,
     StructuralTrait,
@@ -496,7 +503,9 @@ impl fmt::Display for ContextKind {
             Self::Func => write!(f, "Func"),
             Self::Proc => write!(f, "Proc"),
             Self::Class => write!(f, "Class"),
-            Self::MethodDefs(trait_) => write!(f, "MethodDefs({})", fmt_option!(trait_)),
+            Self::MethodDefs { impl_trait, .. } => {
+                write!(f, "MethodDefs({})", fmt_option!(impl_trait))
+            }
             Self::PatchMethodDefs(type_) => write!(f, "PatchMethodDefs({type_})"),
             Self::Trait => write!(f, "Trait"),
             Self::StructuralTrait => write!(f, "StructuralTrait"),
@@ -513,11 +522,17 @@ impl fmt::Display for ContextKind {
 
 impl ContextKind {
     pub const fn is_method_def(&self) -> bool {
-        matches!(self, Self::MethodDefs(_))
+        matches!(self, Self::MethodDefs { .. })
     }
 
     pub const fn is_trait_impl(&self) -> bool {
-        matches!(self, Self::MethodDefs(Some(_)))
+        matches!(
+            self,
+            Self::MethodDefs {
+                impl_trait: Some(_),
+                ..
+            }
+        )
     }
 
     pub const fn is_type(&self) -> bool {
@@ -1059,7 +1074,10 @@ impl Context {
         Self::with_capacity(
             name,
             cfg,
-            ContextKind::MethodDefs(impl_trait),
+            ContextKind::MethodDefs {
+                class: None,
+                impl_trait,
+            },
             vec![],
             None,
             shared,
@@ -1229,7 +1247,11 @@ impl Context {
     }
 
     pub(crate) fn impl_of(&self) -> Option<Type> {
-        if let ContextKind::MethodDefs(Some(tr)) = &self.kind {
+        if let ContextKind::MethodDefs {
+            impl_trait: Some(tr),
+            ..
+        } = &self.kind
+        {
             Some(tr.clone())
         } else {
             None

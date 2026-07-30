@@ -42,7 +42,7 @@ use crate::{feature_error, hir};
 use crate::{unreachable_error, AccessKind};
 use RegistrationMode::*;
 
-use super::eval::UndoableLinkedList;
+use super::eval::{Substituter, UndoableLinkedList};
 use super::instantiate_spec::ParamKind;
 use super::{ContextKind, MethodContext, MethodPair, TypeContext};
 
@@ -656,6 +656,17 @@ impl Context {
                 self.get_similar_name(ident.inspect()),
             ));
         }
+        // quantified type variables of a polymorphic type definition
+        // (e.g. `T` of `Wrapper|T| = Class {value = T}`)
+        if acc_kind.is_local() {
+            if let Some(vi) = self
+                .tv_cache
+                .as_ref()
+                .and_then(|tv_cache| tv_cache.var_infos.get(&ident.inspect()[..]))
+            {
+                return Triple::Ok(vi.clone());
+            }
+        }
         for method_ctx in self.methods_list.iter() {
             match method_ctx.rec_get_var_info(ident, acc_kind, input, namespace) {
                 Triple::Ok(vi) => {
@@ -986,9 +997,11 @@ impl Context {
         let self_t = obj.t().derefine().destructuralize();
         // NOTE: get_nominal_super_type_ctxs({Nat}) == [<Nat>, ...], so we need to derefine
         if let Some(sups) = self.get_nominal_super_type_ctxs(&self_t) {
-            for ctx in sups {
+            for type_ctx in sups {
+                let ctx = &type_ctx.ctx;
                 match ctx.rec_get_var_info(ident, AccessKind::BoundAttr, input, namespace) {
                     Triple::Ok(vi) => {
+                        let vi = self.substitute_attr_typarams(vi, &type_ctx.typ, &self_t);
                         return Triple::Ok(vi);
                     }
                     Triple::Err(e) => {
@@ -1000,6 +1013,7 @@ impl Context {
                 if let Some(ctx) = self.get_same_name_context(&ctx.name) {
                     match ctx.rec_get_var_info(ident, AccessKind::BoundAttr, input, namespace) {
                         Triple::Ok(vi) => {
+                            let vi = self.substitute_attr_typarams(vi, &type_ctx.typ, &self_t);
                             return Triple::Ok(vi);
                         }
                         Triple::Err(e) => {
@@ -1056,6 +1070,38 @@ impl Context {
             }
         }
         Triple::None
+    }
+
+    /// The instance attribute types of a user-defined polymorphic class refer to
+    /// the class's (generalized) type parameters
+    /// (e.g. `value: T` of `Wrapper|T| = Class {value = T}`).
+    /// This method substitutes them with the receiver's own type parameters:
+    /// `(Wrapper(Int))::value: T => Int`.
+    /// Quantified subroutines (methods) are excluded; their type parameters are
+    /// instantiated at the call site (bound via the `self` parameter).
+    fn substitute_attr_typarams(&self, mut vi: VarInfo, class_t: &Type, self_t: &Type) -> VarInfo {
+        if !class_t.has_qvar() || !vi.t.has_qvar() || matches!(vi.t, Type::Quantified(_)) {
+            return vi;
+        }
+        let self_t = if self_t.qual_name() == class_t.qual_name() {
+            self_t.clone()
+        } else if let Type::FreeVar(fv) = self_t {
+            // e.g. the `self` parameter of a method: `?self(<: Wrapper(?T))`
+            match fv.get_super() {
+                Some(sup) if sup.qual_name() == class_t.qual_name() => sup,
+                _ => return vi,
+            }
+        } else {
+            return vi;
+        };
+        let _subs = Substituter::substitute_typarams(self, class_t, &self_t)
+            .ok()
+            .flatten();
+        // resolves the undoable links of `_subs` into a detached type
+        if let Ok(t) = self.instantiate_def_type(&vi.t) {
+            vi.t = t;
+        }
+        vi
     }
 
     /// Get an attribute declared by a structural *trait* requirement.
@@ -4157,7 +4203,13 @@ impl Context {
 
     // TODO: poly type
     pub(crate) fn rec_get_self_t(&self) -> Option<Type> {
-        if self.kind.is_method_def() || self.kind.is_type() {
+        if let ContextKind::MethodDefs {
+            class: Some(class), ..
+        } = &self.kind
+        {
+            // e.g. `Wrapper(T).` => Self == Wrapper(T)
+            Some(class.clone())
+        } else if self.kind.is_method_def() || self.kind.is_type() {
             Some(mono(self.name.clone()))
         } else if let ContextKind::PatchMethodDefs(t) = &self.kind {
             Some(t.clone())

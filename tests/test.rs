@@ -107,6 +107,11 @@ fn exec_poly_class() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_poly_class_full() -> Result<(), ()> {
+    expect_success("tests/should_ok/poly_class_full.er", 1)
+}
+
+#[test]
 fn exec_container_class() -> Result<(), ()> {
     expect_success("tests/should_ok/container_class.er", 0)
 }

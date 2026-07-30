@@ -1581,6 +1581,12 @@ impl PyCodeGenerator {
 
     fn emit_class_def(&mut self, class_def: ClassDef) {
         log!(info "entered {} ({})", fn_name!(), class_def.sig);
+        // For a polymorphic class, type application (e.g. `Box(Int)`) is emitted as a
+        // subscript (`Box[Int]`), so the class must support `__class_getitem__`
+        // (registered in `emit_class_block`; the runtime `GenericAlias` is imported here)
+        if !class_def.obj.typ().is_monomorphic() && self.opcode_set.is_3_10_plus() {
+            self.load_generic_alias();
+        }
         self.emit_push_null();
         let ident = class_def.sig.ident().clone();
         let require_or_sup = class_def.require_or_sup.clone().map(|x| *x);
@@ -3469,6 +3475,16 @@ impl PyCodeGenerator {
         self.emit_store_instr(Identifier::static_public("__module__"), Name);
         self.emit_load_const(name);
         self.emit_store_instr(Identifier::static_public("__qualname__"), Name);
+        if !class.obj.typ().is_monomorphic() && self.opcode_set.is_3_10_plus() {
+            // __class_getitem__ = classmethod(#GenericAlias)
+            // (supports runtime type application: `Box[Int].new(...)` forwards to `Box.new(...)`)
+            let classmethod = Identifier::static_public("classmethod");
+            let generic_alias =
+                Expr::Accessor(Accessor::Ident(Identifier::private("#GenericAlias")));
+            let call = classmethod.call(Args::single(PosArg::new(generic_alias)));
+            self.emit_call(call);
+            self.emit_store_instr(Identifier::static_public("__class_getitem__"), Name);
+        }
         let mut methods = ClassDef::take_all_methods(class.methods_list);
         let __init__ = methods
             .get_def("__init__")
@@ -3897,7 +3913,12 @@ impl PyCodeGenerator {
         let class_ident = sig.ident();
         let line = sig.ln_begin().unwrap_or(0);
         let mut ident = Identifier::public_with_line(DOT, Str::ever("new"), line);
-        let class = Expr::Accessor(Accessor::Ident(class_ident.clone()));
+        // NOTE: for a polymorphic class, the identifier's type is a poly meta type
+        // (e.g. `|T|({T}) -> {Box(T)}`), which would be emitted as a subscript
+        // (`Box[x]`). The generated `new` must call the constructor directly.
+        let mut callee_ident = class_ident.clone();
+        callee_ident.vi.t = Type::ClassType;
+        let class = Expr::Accessor(Accessor::Ident(callee_ident));
         ident.vi.t = constructor;
         if let Ok(subr) = <&SubrType>::try_from(&ident.vi.t) {
             let mut params = Params::empty();
@@ -4249,6 +4270,16 @@ impl PyCodeGenerator {
             vec![(
                 Identifier::static_public("FakeGenericAlias"),
                 Some(Identifier::private("#FakeGenericAlias")),
+            )],
+        );
+    }
+
+    fn load_generic_alias(&mut self) {
+        self.emit_global_import_items(
+            Identifier::static_public("_erg_type"),
+            vec![(
+                Identifier::static_public("GenericAlias"),
+                Some(Identifier::private("#GenericAlias")),
             )],
         );
     }

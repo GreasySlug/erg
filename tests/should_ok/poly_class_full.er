@@ -1,25 +1,30 @@
 # 目標: ユーザー定義の多相クラスの完全な実装
 # このファイルが正常にコンパイル・実行できることが目標
 
-# === Phase 1: 基本的な多相クラス定義（現在動作する）===
+# === Phase 1: 基本的な多相クラス定義 ===
 Empty|T| = Class()
+_ = Empty
 
 # === Phase 2: フィールドを持つ多相クラス ===
 # 型パラメータTを使用するフィールドを持つクラス
-# エラー: T is not defined
 Box|T| = Class { .value = T }
 
 # === Phase 3: 多相クラスのメソッド定義 ===
-# エラー: expected type ascription, but found accessor
-Box|T|.
-    get(self): T = self::base.value
+Box(T).
+    get(self): T = self.value
 
 # === Phase 4: 型推論によるインスタンス化 ===
-# エラー: cannot uniquely determine the type parameter
 int_box = Box.new { .value = 42 }
 
 # === Phase 5: メソッド呼び出し ===
 x = int_box.get()
 assert x == 42
+
+# === Phase 6: 非公開フィールド + 型注釈による型指定 ===
+Wrapper|T| = Class { value = T }
+Wrapper(T).
+    unwrap(self): T = self::value
+w: Wrapper(Int) = Wrapper.new { value = 1 }
+assert w.unwrap() == 1
 
 print! "All polymorphic class tests passed!"

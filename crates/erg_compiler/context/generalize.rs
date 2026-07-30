@@ -1260,6 +1260,12 @@ impl<'c, 'q, 'l, L: Locational> Dereferencer<'c, 'q, 'l, L> {
                     // need to check if sub_t == super_t (sub_t <: super_t is already checked)
                     if self.ctx.supertype_of(&sub_t, &super_t) {
                         Ok(sub_t)
+                    } else if sub_t != Never {
+                        // The variable has a definite lower bound and only requirement-like
+                        // upper bounds (e.g. `Box.new {value = 42}` => `?T(:> {42}, <: Obj)`
+                        // for `Box|T| = Class {value = T}`; `sub_t <: super_t` was already
+                        // checked). Pinning to the lower bound is the only non-widening choice.
+                        Ok(sub_t)
                     } else {
                         Err(TyCheckErrors::from(TyCheckError::invariant_error(
                             self.ctx.cfg.input.clone(),

@@ -1438,7 +1438,7 @@ impl Parser {
     /// colon-style arms of `try_reduce_args`.
     fn push_next_arg(&mut self, args: &mut Args, in_type_args: bool) -> ParseResult<()> {
         debug_call_info!(self);
-        if !args.kw_is_empty() {
+        if !args.kw_is_empty() && !self.cur_is(PreDblStar) {
             let kw = self
                 .try_reduce_kw_arg(in_type_args)
                 .map_err(|_| self.stack_dec(fn_name!()))?;

@@ -1,0 +1,14 @@
+# Cyclic (infinitely recursive) constant definitions must be reported as errors,
+# not crash the compiler with a stack overflow.
+
+# self-recursive const function evaluated in a const context
+F n = F n
+X = F 1 # ERR
+
+# mutually recursive const functions evaluated in a const context
+G n = H n
+H n = G n
+Y = G 1 # ERR
+
+print! X
+print! Y

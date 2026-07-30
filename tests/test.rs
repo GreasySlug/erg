@@ -760,6 +760,11 @@ fn exec_side_effect_test() -> Result<(), ()> {
 
 #[test]
 fn exec_structural_err() -> Result<(), ()> {
+#[test]
+fn exec_recursive_const_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
+}
+
     expect_compile_failure("tests/should_err/structural.er", 1, 11)
 }
 

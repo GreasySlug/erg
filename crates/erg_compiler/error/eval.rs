@@ -29,6 +29,25 @@ impl EvalError {
         )
     }
 
+    pub fn recursion_error(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::only_loc(loc)],
+                switch_lang!(
+                    "japanese" => "コンパイル時評価の再帰の深さが上限を超えました(定数定義が循環している可能性があります)",
+                    "simplified_chinese" => "编译时求值的递归深度超过了上限(常量定义可能存在循环)",
+                    "traditional_chinese" => "編譯時求值的遞迴深度超過了上限(常量定義可能存在循環)",
+                    "english" => "recursion depth limit exceeded during compile-time evaluation (constant definitions may be cyclic)",
+                ),
+                errno,
+                RecursionError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn invalid_literal(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
         Self::new(
             ErrorCore::new(

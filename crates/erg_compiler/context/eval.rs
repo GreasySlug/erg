@@ -886,6 +886,20 @@ impl Context {
     ) -> Failable<TyParam> {
         match subr {
             ConstSubr::User(user) => {
+                // Guard against infinitely recursive constant evaluation,
+                // e.g. `F n = F n; X = F 1` (self- or mutually-recursive const functions)
+                set_recursion_limit!(
+                    Err((
+                        TyParam::Failure,
+                        EvalErrors::from(EvalError::recursion_error(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            loc.loc(),
+                            self.caused_by(),
+                        )),
+                    )),
+                    128
+                );
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
                 let mut subr_ctx = Context::instant(

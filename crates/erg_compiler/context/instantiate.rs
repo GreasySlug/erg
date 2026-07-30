@@ -40,6 +40,10 @@ pub struct TyVarCache {
     pub(crate) tyvar_instances: Dict<VarName, Type>,
     pub(crate) typaram_instances: Dict<VarName, TyParam>,
     pub(crate) var_infos: Dict<VarName, VarInfo>,
+    /// The names of `tyvar_instances`/`typaram_instances` in the order they were pushed
+    /// (`Dict` is a hash map, so its iteration order does not respect the declaration
+    /// order of e.g. `|T, U|`)
+    pub(crate) ordered_names: Vec<VarName>,
 }
 
 impl fmt::Display for TyVarCache {
@@ -60,11 +64,33 @@ impl TyVarCache {
             tyvar_instances: Dict::new(),
             typaram_instances: Dict::new(),
             var_infos: Dict::new(),
+            ordered_names: Vec::new(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.tyvar_instances.is_empty() && self.typaram_instances.is_empty()
+    }
+
+    fn push_name_order(&mut self, name: &VarName) {
+        if !self.ordered_names.contains(name) {
+            self.ordered_names.push(name.clone());
+        }
+    }
+
+    /// Returns the registered type variables/parameters in the order they were pushed
+    /// (e.g. the declaration order of `|T, U|`)
+    pub(crate) fn ordered_instances(&self) -> Vec<TyParam> {
+        self.ordered_names
+            .iter()
+            .filter_map(|name| {
+                if let Some(t) = self.tyvar_instances.get(name) {
+                    Some(TyParam::t(t.clone()))
+                } else {
+                    self.typaram_instances.get(name).cloned()
+                }
+            })
+            .collect()
     }
 
     pub fn merge(&mut self, outer: &Self) {
@@ -89,6 +115,9 @@ impl TyVarCache {
                 self.var_infos.insert(name.clone(), vi.clone());
             }
         }
+        for name in outer.ordered_names.iter() {
+            self.push_name_order(name);
+        }
     }
 
     pub fn purge(&mut self, other: &Self) {
@@ -101,12 +130,15 @@ impl TyVarCache {
         for name in other.var_infos.keys() {
             self.var_infos.remove(name);
         }
+        self.ordered_names
+            .retain(|name| !other.ordered_names.contains(name));
     }
 
     pub fn remove(&mut self, name: &str) {
         self.tyvar_instances.remove(name);
         self.typaram_instances.remove(name);
         self.var_infos.remove(name);
+        self.ordered_names.retain(|n| n.inspect() != name);
     }
 
     /// Warn when a type does not need to be a type variable, such as `|T| T -> Int` (it should be `Obj -> Int`).
@@ -198,6 +230,7 @@ impl TyVarCache {
             }
         } else {
             self.tyvar_instances.insert(name.clone(), tv.clone());
+            self.push_name_order(name);
         }
         Ok(())
     }
@@ -220,6 +253,7 @@ impl TyVarCache {
             }
         } else {
             self.tyvar_instances.insert(name.clone(), tv.clone());
+            self.push_name_order(name);
         }
     }
 
@@ -307,6 +341,7 @@ impl TyVarCache {
             }
         } else {
             self.typaram_instances.insert(name.clone(), tp.clone());
+            self.push_name_order(name);
         }
         Ok(())
     }
@@ -320,6 +355,7 @@ impl TyVarCache {
         self.var_infos.insert(name.clone(), vi);
         let tp = TyParam::mono(name.inspect());
         self.typaram_instances.insert(name.clone(), tp);
+        self.push_name_order(name);
     }
 
     pub(crate) fn dummy_push_or_init_typaram(
@@ -344,6 +380,7 @@ impl TyVarCache {
             }
         } else {
             self.typaram_instances.insert(name.clone(), tp.clone());
+            self.push_name_order(name);
         }
     }
 

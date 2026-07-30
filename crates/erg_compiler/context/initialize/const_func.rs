@@ -78,16 +78,13 @@ pub(crate) fn class_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<
     let impls = impls.and_then(|v| v.as_type(ctx));
     // Check if the context has type parameters for polymorphic class
     let t = if let Some(ref tv_cache) = ctx.tv_cache {
-        if !tv_cache.tyvar_instances.is_empty() {
-            // Create polymorphic type with type parameters from tv_cache
-            let params = tv_cache
-                .tyvar_instances
-                .iter()
-                .map(|(_, ty)| TyParam::t(ty.clone()))
-                .collect();
-            poly(ctx.name.clone(), params)
-        } else {
+        // Create polymorphic type with type parameters from tv_cache
+        // (in declaration order, e.g. `|T, U|`)
+        let params = tv_cache.ordered_instances();
+        if params.is_empty() {
             mono(ctx.name.clone())
+        } else {
+            poly(ctx.name.clone(), params)
         }
     } else {
         mono(ctx.name.clone())
@@ -171,15 +168,12 @@ pub(crate) fn trait_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<
     let impls = impls.and_then(|v| v.as_type(ctx));
     // Check if the context has type parameters for polymorphic trait
     let t = if let Some(ref tv_cache) = ctx.tv_cache {
-        if !tv_cache.tyvar_instances.is_empty() {
-            let params = tv_cache
-                .tyvar_instances
-                .iter()
-                .map(|(_, ty)| TyParam::t(ty.clone()))
-                .collect();
-            poly(ctx.name.clone(), params)
-        } else {
+        // in declaration order, e.g. `|T, U|`
+        let params = tv_cache.ordered_instances();
+        if params.is_empty() {
             mono(ctx.name.clone())
+        } else {
+            poly(ctx.name.clone(), params)
         }
     } else {
         mono(ctx.name.clone())

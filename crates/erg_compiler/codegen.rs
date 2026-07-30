@@ -1374,7 +1374,15 @@ impl PyCodeGenerator {
     }
 
     pub(crate) fn emit_call_kw_instr(&mut self, argc: usize, kws: Vec<ValueObj>) {
-        if self.opcode_set.is_3_11_plus() {
+        if self.opcode_set.is_3_13_plus() {
+            // 3.13 removed KW_NAMES; push the names tuple and use CALL_KW
+            self.emit_load_const(kws);
+            self.write_instr(self.opcode_set.call_kw());
+            self.write_arg(argc);
+            let cache = self.opcode_set.cache_entries_call_kw() * 2;
+            self.write_bytes(&vec![0; cache]); // CACHE
+            self.stack_dec_n(2); // the kw names tuple (+ parity with `emit_precall_and_call`)
+        } else if self.opcode_set.is_3_11_plus() {
             let idx = self.register_const(kws);
             self.write_instr(self.opcode_set.kw_names());
             self.write_arg(idx);
@@ -1803,11 +1811,13 @@ impl PyCodeGenerator {
             lambda.params.defaults,
             &mut make_function_flag,
         );
-        let flags = if lambda.params.var_params.is_some() {
-            CodeObjFlags::VarArgs as u32
-        } else {
-            0
-        };
+        let mut flags = 0;
+        if lambda.params.var_params.is_some() {
+            flags += CodeObjFlags::VarArgs as u32;
+        }
+        if lambda.params.kw_var_params.is_some() {
+            flags += CodeObjFlags::VarKeywords as u32;
+        }
         let code = self.emit_block(
             lambda.body,
             lambda.params.guards,
@@ -2791,28 +2801,24 @@ impl PyCodeGenerator {
     pub(crate) fn emit_args_311(&mut self, mut args: Args, kind: AccessKind) {
         let argc = args.len();
         let pos_len = args.pos_args.len();
-        let mut kws = Vec::with_capacity(args.kw_len());
+        let kw_len = args.kw_len();
+        let use_ex = args.var_args.is_some() || args.kw_var.is_some();
+        let mut kws = Vec::with_capacity(kw_len);
         while let Some(arg) = args.try_remove_pos(0) {
             self.emit_expr(arg.expr);
         }
+        if use_ex && self.opcode_set.is_3_9_plus() {
+            return self.emit_call_function_ex(args, pos_len, kw_len);
+        }
         if let Some(var_args) = &args.var_args {
-            if self.opcode_set.is_3_9_plus() {
-                self.emit_var_args_311(pos_len, var_args);
-            } else {
-                self.emit_var_args_308(pos_len, var_args);
-            }
+            self.emit_var_args_308(pos_len, var_args);
         }
         while let Some(arg) = args.try_remove_kw(0) {
             kws.push(ValueObj::Str(arg.keyword.content));
             self.emit_expr(arg.expr);
         }
-        // FIXME: tests/should_ok/args_expansion.er
         if let Some(kw_var) = &args.kw_var {
-            if self.opcode_set.is_3_9_plus() {
-                self.emit_kw_var_args_311(pos_len, kw_var);
-            } else {
-                self.emit_kw_var_args_308(pos_len, kw_var);
-            }
+            self.emit_kw_var_args_308(pos_len, kw_var);
         }
         let kwsc = if !kws.is_empty() {
             self.emit_call_kw_instr(argc, kws);
@@ -2824,13 +2830,10 @@ impl PyCodeGenerator {
             }
         } else if args.var_args.is_some() || args.kw_var.is_some() {
             self.write_opcode(CALL_FUNCTION_EX);
-            if kws.is_empty() && args.kw_var.is_none() {
+            if args.kw_var.is_none() {
                 self.write_arg(0);
             } else {
                 self.write_arg(1);
-            }
-            if self.opcode_set.is_3_11_plus() {
-                self.stack_dec();
             }
             if args.kw_var.is_some() {
                 1
@@ -2843,6 +2846,53 @@ impl PyCodeGenerator {
         };
         // (1 (subroutine) + argc + kwsc) input objects -> 1 return object
         self.stack_dec_n((1 + argc + kwsc) - 1);
+    }
+
+    /// Call with `*args`/`**kwargs` expansion for Python 3.9+.
+    /// Stack layout: `f, NULL (3.11+), callargs: Tuple, kwargs: Dict (or NULL on 3.14)`.
+    /// The positional args (`pos_len` items) are already on the stack.
+    fn emit_call_function_ex(&mut self, mut args: Args, pos_len: usize, kw_len: usize) {
+        if let Some(var_args) = &args.var_args {
+            self.emit_var_args_311(pos_len, var_args);
+        } else {
+            self.write_opcode(BUILD_TUPLE);
+            self.write_arg(pos_len);
+        }
+        self.stack_dec_n(pos_len);
+        self.stack_inc(); // the callargs tuple
+        if kw_len > 0 {
+            while let Some(arg) = args.try_remove_kw(0) {
+                self.emit_load_const(ValueObj::Str(arg.keyword.content));
+                self.emit_expr(arg.expr);
+            }
+            self.write_opcode(BUILD_MAP);
+            self.write_arg(kw_len);
+            self.stack_dec_n(2 * kw_len);
+            self.stack_inc(); // the kwargs dict
+        }
+        if let Some(kw_var) = &args.kw_var {
+            self.emit_kw_var_args_311(kw_len > 0, kw_var);
+        }
+        let has_kwargs = kw_len > 0 || args.kw_var.is_some();
+        if self.opcode_set.is_3_14_plus() {
+            // 3.14: CALL_FUNCTION_EX always takes 4 stack items (func, NULL, callargs, kwargs);
+            // NULL fills the kwargs slot when there are no keyword args
+            if !has_kwargs {
+                self.write_instr(self.opcode_set.push_null());
+                self.write_arg(0);
+                self.stack_inc();
+            }
+            self.write_opcode(CALL_FUNCTION_EX);
+            self.write_arg(0);
+            // func + NULL + callargs + kwargs -> result
+            self.stack_dec_n(3);
+        } else {
+            self.write_opcode(CALL_FUNCTION_EX);
+            self.write_arg(has_kwargs as usize);
+            // func (+ NULL on 3.11+) + callargs (+ kwargs) -> result
+            let null = self.opcode_set.is_3_11_plus() as usize;
+            self.stack_dec_n(null + has_kwargs as usize + 1);
+        }
     }
 
     fn emit_index_args(&mut self, mut args: Args) {

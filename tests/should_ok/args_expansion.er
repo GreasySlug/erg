@@ -6,7 +6,11 @@ foo(1, 2, *[3])
 data = {"first": 1, "second": 2, "third": 3}
 foo(**data)
 foo(1, **{"second": 2, "third": 3})
-# FIXME:
-# foo(1, 2, **{"third": 3})
+foo(1, 2, **{"third": 3})
+
+bar x: Int, *args: Int, **kwargs: Int = log x, args, kwargs
+bar(1, *[2, 3], **{"a": 4})
+bar(1, 2, 3, a:=4)
+bar(1, a:=4, **{"b": 5})
 
 print! "OK"

@@ -40,9 +40,9 @@
   - [x] Lambda function
     - [x] lambda function with indentation
   - [x] do/do!
-  - [ ] Function/Procedure definition
+  - [x] Function/Procedure definition
     - [x] Positional arguments
-    - [ ] Variable length arguments
+    - [x] Variable length arguments
     - [x] Keyword arguments
   - [ ] Constant definition
     - [x] Simple constant definition

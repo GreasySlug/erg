@@ -1,3 +1,27 @@
 kw_var(**x: Int) = x["a"] + x["b"]
 
 assert kw_var(a:=1, b:=2) == 3
+
+# non-parenthesized definition
+kw_var2 **x: Int = x["a"] + x["b"]
+assert kw_var2(a:=1, b:=2) == 3
+
+# procedure
+kw_var3! **x: Int =
+    x["a"] + x["b"]
+assert kw_var3!(a:=1, b:=2) == 3
+
+# lambda
+kw_var4 = (**x: Int) -> x["a"]
+assert kw_var4(a:=1) == 1
+
+# mixed with positional and variable-length params
+mixed x: Int, *args: Int, **kwargs: Int = x + args.sum() + kwargs["a"]
+assert mixed(1, 2, 3, a:=4) == 10
+
+# call with dict expansion
+data = {"a": 1, "b": 2}
+assert kw_var(**data) == 3
+assert kw_var(b:=2, **{"a": 1}) == 3
+
+print! "OK"

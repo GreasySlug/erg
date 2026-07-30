@@ -14,3 +14,20 @@ f(1, 2, 3)
 _: Int -> NoneType = f
 _: (Int, Int) -> NoneType = f
 _: (Int, Nat) -> NoneType = f
+
+# default param after var args
+g *args: Int, start := 0 = args.sum() + start
+assert g(1, 2, 3) == 6
+assert g(1, 2, 3, start:=10) == 16
+
+# method with var args
+C = Class {x = Int}
+C.
+    total self, *args: Int = self::x + args.sum()
+c = C.new {x = 10}
+assert c.total(1, 2, 3) == 16
+
+# calls with list expansion
+xs = [1, 2, 3]
+assert g(*xs) == 6
+assert g(10, *xs) == 16

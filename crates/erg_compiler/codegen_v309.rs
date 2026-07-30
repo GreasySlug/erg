@@ -205,7 +205,7 @@ impl PyCodeGenerator {
     /// Var args for Python 3.9+ (BUILD_LIST + LIST_EXTEND + LIST_TO_TUPLE).
     pub(crate) fn emit_var_args_311(&mut self, pos_len: usize, var_args: &PosArg) {
         if pos_len > 0 {
-            self.write_instr(BUILD_LIST);
+            self.write_opcode(BUILD_LIST);
             self.write_arg(pos_len);
         }
         self.emit_expr(var_args.expr.clone());
@@ -225,14 +225,17 @@ impl PyCodeGenerator {
     }
 
     /// Keyword var args for Python 3.9+ (BUILD_MAP + DICT_MERGE).
-    pub(crate) fn emit_kw_var_args_311(&mut self, pos_len: usize, kw_var: &PosArg) {
-        self.write_instr(BUILD_TUPLE);
-        self.write_arg(pos_len);
-        self.stack_dec_n(pos_len.saturating_sub(1));
-        self.write_instr(BUILD_MAP);
-        self.write_arg(0);
+    /// If `has_kw_dict`, a dict of the explicit keyword args is already on the stack
+    /// and `**kwargs` is merged into it.
+    pub(crate) fn emit_kw_var_args_311(&mut self, has_kw_dict: bool, kw_var: &PosArg) {
+        if !has_kw_dict {
+            self.write_opcode(BUILD_MAP);
+            self.write_arg(0);
+            self.stack_inc();
+        }
         self.emit_expr(kw_var.expr.clone());
         self.write_instr(self.opcode_set.dict_merge());
         self.write_arg(1);
+        self.stack_dec();
     }
 }

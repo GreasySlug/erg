@@ -2120,10 +2120,20 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     .map_or(Type::Obj, |t| t.clone()),
             )
         });
-        let kw_var_params = params
-            .kw_var_params
-            .as_ref()
-            .map(|param| ParamTy::kw(param.name().unwrap().inspect().clone(), param.vi.t.clone()));
+        let kw_var_params = params.kw_var_params.as_ref().map(|param| {
+            // the binding type is `Dict({Str: T})`, but the subr type must hold the value type `T`
+            let value_t = param
+                .vi
+                .t
+                .typarams()
+                .into_iter()
+                .next()
+                .and_then(|tp| Dict::<TyParam, TyParam>::try_from(tp).ok())
+                .and_then(|dict| dict.into_values().next())
+                .and_then(|tp| self.module.context.convert_tp_into_type(tp).ok())
+                .unwrap_or(Type::Obj);
+            ParamTy::kw(param.name().unwrap().inspect().clone(), value_t)
+        });
         let captured_names = mem::take(&mut self.module.context.captured_names);
         if in_statement {
             // For example, `i` in `for i in ...` is a parameter,

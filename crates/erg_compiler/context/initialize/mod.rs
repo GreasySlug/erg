@@ -759,6 +759,7 @@ const KW_LEVEL: &str = "level";
 const KW_STOP: &str = "stop";
 const KW_STEP: &str = "step";
 const KW_REQUIREMENT: &str = "Requirement";
+const KW_PATCH_BASE: &str = "Base";
 const KW_IMPL: &str = "Impl";
 const KW_ADDITIONAL: &str = "Additional";
 const KW_SUPER: &str = "Super";

@@ -924,8 +924,9 @@ impl Context {
         // TODO: register Del function object
         let t_del = nd_func(vec![kw(KW_OBJ, Obj)], None, NoneType);
         self.register_builtin_erg_impl(DEL, t_del, Immutable, vis.clone());
+        // `patch_func` and `lower_patch_def` take the first argument by the key `Base`
         let patch_t = no_var_func(
-            vec![kw(KW_REQUIREMENT, Type)],
+            vec![kw(KW_PATCH_BASE, Type)],
             vec![kw(KW_IMPL, Type)],
             TraitType,
         );

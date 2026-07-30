@@ -27,3 +27,8 @@ result
 # Erg
 test*.er
 test*.py
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/

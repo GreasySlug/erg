@@ -3764,7 +3764,12 @@ impl PolyTypeSpec {
     }
 
     pub fn ident(&self) -> String {
-        self.acc.to_string()
+        match &self.acc {
+            // NOTE: `acc.to_string()` contains the visibility modifier (e.g. `::C`),
+            // which does not match the class name keys of `ASTLinker::def_root_pos_map`
+            ConstAccessor::Local(ident) => ident.inspect().to_string(),
+            other => other.to_string(),
+        }
     }
 }
 

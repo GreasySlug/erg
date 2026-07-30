@@ -2956,20 +2956,45 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
     fn lower_patch_def(&mut self, class_def: ast::PatchDef) -> FailableOption<hir::PatchDef> {
         log!(info "entered {}({class_def})", fn_name!());
         let mut errors = LowerErrors::empty();
-        let base_t = {
+        let (base_t, impl_trait) = {
             let Some(ast::Expr::Call(call)) = class_def.def.body.block.get(0) else {
                 return unreachable_error!(LowerErrors, LowerError, self)
                     .map_err(|errs| (None, errors.concat(errs)));
             };
             let base_t_expr = call.args.get_left_or_key("Base").unwrap();
             let spec = Parser::expr_to_type_spec(base_t_expr.clone()).unwrap();
-            match self.module.context.instantiate_typespec(&spec) {
+            let base_t = match self.module.context.instantiate_typespec(&spec) {
                 Ok(t) => t,
                 Err((t, errs)) => {
                     errors.extend(errs);
                     t
                 }
-            }
+            };
+            // glue patch: `P = Patch Base, Impl := Trait`
+            let impl_t_expr = call
+                .args
+                .pos_args
+                .get(1)
+                .map(|a| &a.expr)
+                .or_else(|| call.args.get_with_key("Impl"));
+            let impl_trait = impl_t_expr.and_then(|impl_t_expr| {
+                let spec = Parser::expr_to_type_spec(impl_t_expr.clone()).ok()?;
+                let t = match self.module.context.instantiate_typespec(&spec) {
+                    Ok(t) => t,
+                    Err((t, errs)) => {
+                        errors.extend(errs);
+                        t
+                    }
+                };
+                let op = Token::new(
+                    TokenKind::SubtypeOf,
+                    "<:",
+                    impl_t_expr.ln_begin().unwrap_or(0),
+                    impl_t_expr.col_begin().unwrap_or(0),
+                );
+                Some((t, TypeSpecWithOp::new(op, spec, impl_t_expr.clone())))
+            });
+            (base_t, impl_trait)
         };
         let mut hir_def = match self.lower_def(class_def.def, None) {
             Ok(def) => def,
@@ -3045,6 +3070,9 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 errors.extend(errs);
             }
             self.push_patch(methods.id);
+        }
+        if let Some((impl_trait, t_spec)) = &impl_trait {
+            self.check_patch_trait_impl(impl_trait, t_spec, &base_t, hir_def.sig.ident().inspect());
         }
         let patch = hir::PatchDef::new(hir_def.sig, base, hir_methods);
         if errors.is_empty() {
@@ -3354,6 +3382,141 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
         implemented.insert(trait_type.clone());
         (unverified_names, errors)
+    }
+
+    /// Check that a glue patch (`P = Patch C, Impl := T`) provides all the members
+    /// required by the trait `T`. Members already implemented by the base type or
+    /// given a default implementation by the trait need not be re-implemented.
+    /// cf. `check_trait_impl` (the class methods version)
+    fn check_patch_trait_impl(
+        &mut self,
+        impl_trait: &Type,
+        t_spec: &TypeSpecWithOp,
+        base: &Type,
+        patch_name: &str,
+    ) {
+        let mut errors = CompileErrors::empty();
+        let context = &self.module.context;
+        let impl_trait = impl_trait.clone().normalize();
+        if let Some(mut sups) = context.get_super_traits(&impl_trait) {
+            let trait_ctx = context.get_nominal_type_ctx(&impl_trait);
+            let external_trait = trait_ctx.is_none_or(|tr| !tr.name.starts_with(&context.name[..]));
+            if sups.any(|t| t == mono("Sealed")) && external_trait {
+                self.errs.push(LowerError::sealed_trait_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    t_spec.loc(),
+                    context.caused_by(),
+                    &impl_trait.qual_name(),
+                ));
+                return;
+            }
+        }
+        let Some(TypeContext {
+            typ: trait_type,
+            ctx: trait_ctx,
+        }) = context.get_nominal_type_ctx(&impl_trait)
+        else {
+            self.errs.push(LowerError::no_type_error(
+                self.cfg.input.clone(),
+                line!() as usize,
+                t_spec.loc(),
+                context.caused_by(),
+                &impl_trait.qual_name(),
+                context.get_similar_name(&impl_trait.local_name()),
+            ));
+            return;
+        };
+        // collect the members required by the trait (and its super traits);
+        // members implemented in the (super) traits themselves are not requirements
+        let mut super_impls: Set<&VarName> = set! {};
+        let retained_decls = |ctx: &Context, super_impls: &Set<&VarName>| {
+            ctx.decls.clone().retained(|k, _| {
+                let implemented_in_super = super_impls.contains(k);
+                let class_decl = ctx.kind.is_class();
+                !implemented_in_super && !class_decl
+            })
+        };
+        let tys_decls = if context.is_class(trait_type) {
+            vec![(impl_trait.clone(), retained_decls(trait_ctx, &super_impls))]
+        } else if let Some(sups) = context.get_super_types(trait_type) {
+            sups.map(|sup| {
+                let decls = context
+                    .get_nominal_type_ctx(&sup)
+                    .map_or(Dict::new(), |ctx| {
+                        super_impls.extend(ctx.locals.keys());
+                        for methods in &ctx.methods_list {
+                            super_impls.extend(methods.locals.keys());
+                        }
+                        retained_decls(ctx, &super_impls)
+                    });
+                (sup, decls)
+            })
+            .collect::<Vec<_>>()
+        } else {
+            vec![(impl_trait.clone(), retained_decls(trait_ctx, &super_impls))]
+        };
+        // implementations are provided by the patch itself
+        // (members the base type already implements are not re-verified here)
+        let patch_ctx = context.rec_get_patch(patch_name);
+        let base_ctx = context.get_nominal_type_ctx(base);
+        let find_impl = |name: &str| -> Option<(&VarName, &VarInfo)> {
+            patch_ctx.and_then(|patch| {
+                patch.locals.get_key_value(name).or_else(|| {
+                    patch
+                        .methods_list
+                        .iter()
+                        .find_map(|methods| methods.locals.get_key_value(name))
+                })
+            })
+        };
+        let base_provides = |name: &str| -> bool {
+            base_ctx.is_some_and(|base_ctx| {
+                base_ctx.locals.contains_key(name)
+                    || base_ctx
+                        .methods_list
+                        .iter()
+                        .any(|methods| methods.locals.contains_key(name))
+            })
+        };
+        for (impl_trait, decls) in tys_decls {
+            for (decl_name, decl_vi) in decls {
+                if let Some((name, vi)) = find_impl(decl_name.inspect()) {
+                    let def_t = &vi.t;
+                    let replaced_decl_t = decl_vi
+                        .t
+                        .clone()
+                        .replace(trait_type, &impl_trait)
+                        .replace(&impl_trait, base);
+                    if !context.supertype_of(&replaced_decl_t, def_t) {
+                        let hint = context.get_simple_type_mismatch_hint(&replaced_decl_t, def_t);
+                        errors.push(LowerError::trait_member_type_error(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            name.loc(),
+                            context.caused_by(),
+                            name.inspect(),
+                            &impl_trait,
+                            &decl_vi.t,
+                            &vi.t,
+                            hint,
+                        ));
+                    }
+                } else if !base_provides(decl_name.inspect()) {
+                    errors.push(LowerError::trait_member_not_defined_error(
+                        self.cfg.input.clone(),
+                        line!() as usize,
+                        context.caused_by(),
+                        decl_name.inspect(),
+                        &impl_trait,
+                        base,
+                        None,
+                        t_spec.loc(),
+                    ));
+                }
+            }
+        }
+        self.errs.extend(errors);
     }
 
     fn check_collision_and_push(&mut self, id: DefId, class: Type, impl_trait: Option<Type>) {
@@ -3973,6 +4136,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         if let Err(errs) = self.module.context.register_defs(ast.module.block()) {
             self.errs.extend(errs);
         }
+        let cyclic_errs = self.module.context.check_cyclic_definitions();
+        if !cyclic_errs.is_empty() {
+            self.errs.extend(cyclic_errs);
+        }
         for chunk in ast.module.into_iter() {
             match self.lower_chunk(chunk, None) {
                 Ok(chunk) => {
@@ -4031,7 +4198,3 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 }
-        let cyclic_errs = self.module.context.check_cyclic_definitions();
-        if !cyclic_errs.is_empty() {
-            self.errs.extend(cyclic_errs);
-        }

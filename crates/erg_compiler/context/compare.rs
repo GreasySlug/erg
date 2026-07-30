@@ -247,6 +247,14 @@ impl Context {
         if let (Absolutely, judge) = self.traits_supertype_of(lhs, rhs) {
             return judge;
         }
+        // e.g. `StrReverse = Patch Str, Impl := Reverse` establishes `Str <: Reverse`
+        // (a glue patch can only make a non-trait type a subtype of a trait)
+        if self.is_trait(lhs)
+            && !self.is_trait(rhs)
+            && self.find_compatible_glue_patch(lhs, rhs).is_some()
+        {
+            return true;
+        }
         false
     }
 
@@ -259,14 +267,34 @@ impl Context {
         typ: &'a Type,
     ) -> impl Iterator<Item = &'a Context> {
         self.all_patches().into_iter().filter(move |ctx| {
-            if let ContextKind::Patch(base) = &ctx.kind {
-                return self.supertype_of(base, typ);
+            match &ctx.kind {
+                ContextKind::Patch(base) => self.supertype_of(base, typ),
+                // a glue patch method is also applicable to its base type
+                ContextKind::GluePatch(tr_impl) => self.supertype_of(&tr_impl.sub_type, typ),
+                _ => false,
             }
-            false
         })
     }
 
-    fn _find_compatible_glue_patch(&self, sup: &Type, sub: &Type) -> Option<&Context> {
+    /// Find a visible glue patch (`P = Patch C, Impl := T`) that establishes `sub <: sup`
+    /// (e.g. `StrReverse = Patch Str, Impl := Reverse` establishes `Str <: Reverse`).
+    fn find_compatible_glue_patch(&self, sup: &Type, sub: &Type) -> Option<&Context> {
+        // The `subtype_of` calls below can ask the very same question again
+        // (e.g. `OptionEq`'s base `(E or NoneType)` with `E <: Eq` re-asks `Eq :> C`
+        // when checking the bound of `E`), so nested scans are suppressed
+        thread_local! {
+            static SCANNING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                SCANNING.with(|scanning| scanning.set(false));
+            }
+        }
+        if SCANNING.with(|scanning| scanning.replace(true)) {
+            return None;
+        }
+        let _guard = Guard;
         for patch in self.all_patches().into_iter() {
             if let ContextKind::GluePatch(tr_impl) = &patch.kind {
                 if self.subtype_of(sub, &tr_impl.sub_type)
@@ -984,34 +1012,6 @@ impl Context {
         }
     }
 
-    /// ```erg
-    /// Int.fields() == { imag: Int, real: Int, abs: (self: Int) -> Nat, ... }
-    /// ?T(<: Int).fields() == Int.fields()
-    /// Structural({ .x = Int }).fields() == { x: Int }
-    /// ```
-    pub fn fields(&self, t: &Type) -> Dict<Field, Type> {
-        match t {
-            Type::FreeVar(fv) if fv.is_linked() => self.fields(&fv.unwrap_linked()),
-            Type::Record(fields) => fields.clone(),
-            Type::NamedTuple(fields) => fields.iter().cloned().collect(),
-            Type::Refinement(refine) => self.fields(&refine.t),
-            Type::Structural(t) => self.fields(t),
-            Type::Or(tys) => {
-                let or_fields = tys.iter().map(|t| self.fields(t)).collect::<Set<_>>();
-                let field_names = or_fields
-                    .iter()
-                    .flat_map(|fs| fs.keys())
-                    .collect::<Set<_>>();
-                let mut fields = Dict::new();
-                for (name, tys) in field_names
-                    .iter()
-                    .map(|&name| (name, or_fields.iter().filter_map(|fields| fields.get(name))))
-                {
-                    let union = tys.fold(Never, |acc, ty| self.union(&acc, ty));
-                    fields.insert(name.clone(), union);
-                }
-                fields
-            }
     /// The required fields of the requirement type of a structural type,
     /// with `Self` substituted by `subject`.
     ///
@@ -1048,6 +1048,34 @@ impl Context {
             .collect()
     }
 
+    /// ```erg
+    /// Int.fields() == { imag: Int, real: Int, abs: (self: Int) -> Nat, ... }
+    /// ?T(<: Int).fields() == Int.fields()
+    /// Structural({ .x = Int }).fields() == { x: Int }
+    /// ```
+    pub fn fields(&self, t: &Type) -> Dict<Field, Type> {
+        match t {
+            Type::FreeVar(fv) if fv.is_linked() => self.fields(&fv.unwrap_linked()),
+            Type::Record(fields) => fields.clone(),
+            Type::NamedTuple(fields) => fields.iter().cloned().collect(),
+            Type::Refinement(refine) => self.fields(&refine.t),
+            Type::Structural(t) => self.fields(t),
+            Type::Or(tys) => {
+                let or_fields = tys.iter().map(|t| self.fields(t)).collect::<Set<_>>();
+                let field_names = or_fields
+                    .iter()
+                    .flat_map(|fs| fs.keys())
+                    .collect::<Set<_>>();
+                let mut fields = Dict::new();
+                for (name, tys) in field_names
+                    .iter()
+                    .map(|&name| (name, or_fields.iter().filter_map(|fields| fields.get(name))))
+                {
+                    let union = tys.fold(Never, |acc, ty| self.union(&acc, ty));
+                    fields.insert(name.clone(), union);
+                }
+                fields
+            }
             other => {
                 let Some(ctx) = self.get_nominal_type_ctx(other) else {
                     return Dict::new();

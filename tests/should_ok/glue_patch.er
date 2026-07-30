@@ -1,0 +1,22 @@
+Reverse = Trait {.rev = (self: Self) -> Str}
+
+# glue patch: retrofits the trait `Reverse` to the existing class `Str`
+StrReverse = Patch Str, Impl := Reverse
+StrReverse.
+    rev self = self
+
+# the glue patch establishes `Str <: Reverse`
+x: Reverse = "hello"
+_ = x
+
+f|T <: Reverse| y: T = y.rev()
+assert f("hello") == "hello"
+
+# a direct call resolves to the patch method (not the same-named trait declaration)
+assert "hello".rev() == "hello"
+
+# a same-named trait declaration must not shadow a normal (non-glue) patch method either
+IntRev = Patch Int
+IntRev.
+    rev self = "\{self}"
+assert 1.rev() == "1"

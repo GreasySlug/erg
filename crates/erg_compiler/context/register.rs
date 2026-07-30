@@ -2414,14 +2414,29 @@ impl Context {
                     let Some(TypeObj::Builtin { t: base, .. }) = gen.base_or_sup() else {
                         todo!("{gen}")
                     };
-                    let ctx = Self::mono_patch(
-                        gen.typ().qual_name(),
-                        base.clone(),
-                        self.cfg.clone(),
-                        self.shared.clone(),
-                        2,
-                        self.level,
-                    );
+                    // A patch with `Impl := Trait` is a glue patch,
+                    // which retrofits the trait to the base type
+                    let ctx = if let Some(impls) = gen.impls() {
+                        Self::poly_glue_patch(
+                            gen.typ().qual_name(),
+                            base.clone(),
+                            impls.typ().clone(),
+                            vec![],
+                            self.cfg.clone(),
+                            self.shared.clone(),
+                            2,
+                            self.level,
+                        )
+                    } else {
+                        Self::mono_patch(
+                            gen.typ().qual_name(),
+                            base.clone(),
+                            self.cfg.clone(),
+                            self.shared.clone(),
+                            2,
+                            self.level,
+                        )
+                    };
                     self.register_gen_mono_patch(ident, gen, ctx, Const)
                 } else {
                     feature_error!(
@@ -3025,6 +3040,25 @@ impl Context {
             self.consts
                 .insert(name.clone(), ValueObj::Type(TypeObj::Generated(gen)));
             self.register_methods(&t, &ctx);
+            // If this is a glue patch (`P = Patch C, Impl := T`), record that the base type
+            // now implements the trait (used by trait impl searches; the subtype judgment
+            // itself is made by `Context::find_compatible_glue_patch`)
+            if let ContextKind::GluePatch(tr_impl) = &ctx.kind {
+                let declared_in = NormalizedPathBuf::from(self.module_path());
+                let declared_in = declared_in.exists().then_some(declared_in);
+                let tr_impl = TraitImpl::new(
+                    tr_impl.sub_type.clone(),
+                    tr_impl.sup_trait.clone(),
+                    declared_in,
+                );
+                if let Some(mut impls) = self.trait_impls().get_mut(&tr_impl.sup_trait.qual_name())
+                {
+                    impls.insert(tr_impl);
+                } else {
+                    self.trait_impls()
+                        .register(tr_impl.sup_trait.qual_name(), set! {tr_impl});
+                }
+            }
             self.patches.insert(name.clone(), ctx);
             Ok(())
         }

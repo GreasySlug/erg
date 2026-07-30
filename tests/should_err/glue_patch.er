@@ -1,0 +1,10 @@
+Reverse = Trait {.rev = (self: Self) -> Str}
+
+# ERR: `.rev` required by Reverse is not implemented by the patch (nor by Str)
+StrReverse = Patch Str, Impl := Reverse
+StrReverse.
+    other self = self
+
+# ERR: Int does not implement Reverse
+g|T <: Reverse| x: T = x.rev()
+_ = g(1)

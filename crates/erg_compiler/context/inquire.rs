@@ -1474,6 +1474,41 @@ impl Context {
     }
 
     // Note that the method may be static.
+    /// Search an attribute of patches applicable to `t`
+    /// (e.g. `IntDouble = Patch Int` provides `.double` for `Int`).
+    fn get_patch_attr_info(
+        &self,
+        t: &Type,
+        attr_name: &Identifier,
+        callable_only: bool,
+        input: &Input,
+        namespace: &Context,
+    ) -> SingleTyCheckResult<Option<VarInfo>> {
+        for patch in self.find_patches_of(t) {
+            let vi = if callable_only {
+                patch.get_current_scope_callable(&attr_name.name)
+            } else {
+                patch.get_current_scope_non_param(&attr_name.name)
+            };
+            if let Some(vi) = vi {
+                self.validate_visibility(attr_name, vi, input, namespace)?;
+                return Ok(Some(vi.clone()));
+            }
+            for methods_ctx in patch.methods_list.iter() {
+                let vi = if callable_only {
+                    methods_ctx.get_current_scope_callable(&attr_name.name)
+                } else {
+                    methods_ctx.get_current_scope_non_param(&attr_name.name)
+                };
+                if let Some(vi) = vi {
+                    self.validate_visibility(attr_name, vi, input, namespace)?;
+                    return Ok(Some(vi.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn search_method_info(
         &self,
         obj: &hir::Expr,
@@ -1558,6 +1593,16 @@ impl Context {
             }
             _ => {}
         }
+        // method declared by a structural trait requirement (`Self` is substituted by the receiver)
+        match self.get_attr_info_from_structural(obj.ref_t(), attr_name, namespace) {
+            Triple::Ok(vi) => {
+                return Ok(vi);
+            }
+            Triple::Err(e) => {
+                return Err(e);
+            }
+            _ => {}
+        }
         if let Ok(singular_ctxs) = self.get_singular_ctxs_by_hir_expr(obj, namespace) {
             for ctx in &singular_ctxs {
                 if let Some(vi) = ctx.get_current_scope_non_param(&attr_name.name) {
@@ -1593,16 +1638,6 @@ impl Context {
                     AbsLocation::unknown(),
                 ));
             }
-        // method declared by a structural trait requirement (`Self` is substituted by the receiver)
-        match self.get_attr_info_from_structural(obj.ref_t(), attr_name, namespace) {
-            Triple::Ok(vi) => {
-                return Ok(vi);
-            }
-            Triple::Err(e) => {
-                return Err(e);
-            }
-            _ => {}
-        }
         }
         let mut checked = vec![];
         // FIXME: tests/should_ok/collection.er
@@ -1682,21 +1717,44 @@ impl Context {
                 }
             }
         }
+        // Patch methods rank below nominal methods (searched above), but for a concrete
+        // receiver an applicable patch takes precedence over the name-based guess below
+        // (`get_attr_type_by_name`), so that e.g. a same-named trait method declaration
+        // does not shadow a patch method (and so that the compiled code calls the patch
+        // function, which actually exists at runtime)
+        if ERG_MODE && !obj.ref_t().has_unbound_var() {
+            if let Some(vi) =
+                self.get_patch_attr_info(obj.ref_t(), attr_name, false, input, namespace)?
+            {
+                return Ok(vi);
+            }
+        }
+        let mut method_type_err = None;
         match self.get_attr_type_by_name(obj, attr_name, namespace) {
             Triple::Ok(method) => {
-                let def_t = self
+                let res = self
                     .instantiate_def_type(&method.definition_type)
-                    .map_err(|mut errs| errs.remove(0))?;
-                let list = UndoableLinkedList::new();
-                self.undoable_sub_unify(obj.ref_t(), &def_t, obj, &list, None)
+                    .and_then(|def_t| {
+                        let list = UndoableLinkedList::new();
+                        self.undoable_sub_unify(obj.ref_t(), &def_t, obj, &list, None)?;
+                        drop(list);
+                        let res = self.sub_unify(obj.ref_t(), &def_t, obj, None);
+                        if DEBUG_MODE {
+                            res.unwrap();
+                        }
+                        Ok(())
+                    });
+                match res {
+                    Ok(()) => {
+                        return Ok(method.method_info.clone());
+                    }
+                    // the found method (e.g. a trait method declaration) is not applicable
+                    // to `obj`; fall back to the patch method search below
                     // HACK: change this func's return type to TyCheckResult<Type>
-                    .map_err(|mut errs| errs.remove(0))?;
-                drop(list);
-                let res = self.sub_unify(obj.ref_t(), &def_t, obj, None);
-                if DEBUG_MODE {
-                    res.unwrap();
+                    Err(mut errs) => {
+                        method_type_err = Some(errs.remove(0));
+                    }
                 }
-                return Ok(method.method_info.clone());
             }
             Triple::Err(err) if ERG_MODE => {
                 return Err(err);
@@ -1718,19 +1776,10 @@ impl Context {
                 );
                 return Ok(vi);
             }
-        } else {
-            for patch in self.find_patches_of(obj.ref_t()) {
-                if let Some(vi) = patch.get_current_scope_non_param(&attr_name.name) {
-                    self.validate_visibility(attr_name, vi, input, namespace)?;
-                    return Ok(vi.clone());
-                }
-                for methods_ctx in patch.methods_list.iter() {
-                    if let Some(vi) = methods_ctx.get_current_scope_non_param(&attr_name.name) {
-                        self.validate_visibility(attr_name, vi, input, namespace)?;
-                        return Ok(vi.clone());
-                    }
-                }
-            }
+        } else if let Some(vi) =
+            self.get_patch_attr_info(obj.ref_t(), attr_name, false, input, namespace)?
+        {
+            return Ok(vi);
         }
         let coerced = self
             .coerce(obj.t(), &())
@@ -1742,6 +1791,9 @@ impl Context {
                 return self
                     .search_method_info(obj, attr_name, pos_args, kw_args, input, namespace);
             }
+        }
+        if let Some(err) = method_type_err {
+            return Err(err);
         }
         Err(TyCheckError::no_attr_error(
             self.cfg.input.clone(),
@@ -1818,21 +1870,40 @@ impl Context {
                 }
             }
         }
+        // see the comment in `search_method_info`
+        if ERG_MODE && !obj.ref_t().has_unbound_var() {
+            if let Some(vi) =
+                self.get_patch_attr_info(obj.ref_t(), attr_name, true, input, namespace)?
+            {
+                return Ok(vi);
+            }
+        }
+        let mut method_type_err = None;
         match self.get_attr_type_by_name(obj, attr_name, namespace) {
             Triple::Ok(method) => {
-                let def_t = self
+                let res = self
                     .instantiate_def_type(&method.definition_type)
-                    .map_err(|mut errs| errs.remove(0))?;
-                let list = UndoableLinkedList::new();
-                self.undoable_sub_unify(obj.ref_t(), &def_t, obj, &list, None)
+                    .and_then(|def_t| {
+                        let list = UndoableLinkedList::new();
+                        self.undoable_sub_unify(obj.ref_t(), &def_t, obj, &list, None)?;
+                        drop(list);
+                        let res = self.sub_unify(obj.ref_t(), &def_t, obj, None);
+                        if DEBUG_MODE {
+                            res.unwrap();
+                        }
+                        Ok(())
+                    });
+                match res {
+                    Ok(()) => {
+                        return Ok(method.method_info.clone());
+                    }
+                    // the found method (e.g. a trait method declaration) is not applicable
+                    // to `obj`; fall back to the patch method search below
                     // HACK: change this func's return type to TyCheckResult<Type>
-                    .map_err(|mut errs| errs.remove(0))?;
-                drop(list);
-                let res = self.sub_unify(obj.ref_t(), &def_t, obj, None);
-                if DEBUG_MODE {
-                    res.unwrap();
+                    Err(mut errs) => {
+                        method_type_err = Some(errs.remove(0));
+                    }
                 }
-                return Ok(method.method_info.clone());
             }
             Triple::Err(err) if ERG_MODE => {
                 return Err(err);
@@ -1854,19 +1925,10 @@ impl Context {
                 );
                 return Ok(vi);
             }
-        } else {
-            for patch in self.find_patches_of(obj.ref_t()) {
-                if let Some(vi) = patch.get_current_scope_callable(&attr_name.name) {
-                    self.validate_visibility(attr_name, vi, input, namespace)?;
-                    return Ok(vi.clone());
-                }
-                for methods_ctx in patch.methods_list.iter() {
-                    if let Some(vi) = methods_ctx.get_current_scope_callable(&attr_name.name) {
-                        self.validate_visibility(attr_name, vi, input, namespace)?;
-                        return Ok(vi.clone());
-                    }
-                }
-            }
+        } else if let Some(vi) =
+            self.get_patch_attr_info(obj.ref_t(), attr_name, true, input, namespace)?
+        {
+            return Ok(vi);
         }
         let coerced = self
             .coerce(obj.t(), &())
@@ -1878,6 +1940,9 @@ impl Context {
             if get_hash(obj.ref_t()) != hash {
                 return self.search_method_info_without_args(obj, attr_name, input, namespace);
             }
+        }
+        if let Some(err) = method_type_err {
+            return Err(err);
         }
         Err(TyCheckError::no_attr_error(
             self.cfg.input.clone(),

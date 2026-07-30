@@ -55,8 +55,8 @@
     - [x] Trait definition
     - [x] Structural trait definition
     - [ ] Polymorphic type definition
-  - [ ] Patch definition
-    - [ ] Glue Patch definition
+  - [x] Patch definition
+    - [x] Glue Patch definition (type-check level; runtime dispatch in generic bodies is not yet supported)
   - [x] Range object
   - [x] Decorator
   - [x] Comprehension

@@ -187,6 +187,13 @@ fn exec_fib() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_glue_patch() -> Result<(), ()> {
+    // TODO: `expect_success` once trait-polymorphic calls (e.g. `f|T <: Reverse| x: T = x.rev()`)
+    // can dispatch to glue patch methods at runtime
+    expect_compile_success("tests/should_ok/glue_patch.er", 0)
+}
+
+#[test]
 fn exec_helloworld() -> Result<(), ()> {
     // HACK: When running the test with Windows, the exit code is 1 (the cause is unknown)
     if cfg!(windows) && env_python_version().unwrap().minor >= Some(8) {
@@ -493,17 +500,17 @@ fn exec_structural() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_structural_trait() -> Result<(), ()> {
+    expect_success("tests/should_ok/structural_trait.er", 0)
+}
+
+#[test]
 fn exec_subtyping() -> Result<(), ()> {
     expect_success("tests/should_ok/subtyping.er", 0)
 }
 
 #[test]
 fn exec_sym_op() -> Result<(), ()> {
-#[test]
-fn exec_structural_trait() -> Result<(), ()> {
-    expect_success("tests/should_ok/structural_trait.er", 0)
-}
-
     expect_success("tests/should_ok/sym_op.er", 0)
 }
 
@@ -633,6 +640,11 @@ fn exec_collection_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_cyclic_type_def_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/cyclic_type_def.er", 0, 5)
+}
+
+#[test]
 fn exec_decl_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/decl.er", 1, 2)
 }
@@ -644,11 +656,6 @@ fn exec_default_param_err() -> Result<(), ()> {
 
 #[test]
 fn exec_dependent_err() -> Result<(), ()> {
-#[test]
-fn exec_cyclic_type_def_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/cyclic_type_def.er", 0, 5)
-}
-
     expect_compile_failure("tests/should_err/dependent.er", 0, 5)
 }
 
@@ -660,6 +667,11 @@ fn exec_dict_err() -> Result<(), ()> {
 #[test]
 fn exec_err_import() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/err_import.er", 0, 9)
+}
+
+#[test]
+fn exec_glue_patch_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/glue_patch.er", 0, 2)
 }
 
 /// This file compiles successfully, but causes a run-time error due to incomplete method dispatching
@@ -749,6 +761,11 @@ fn exec_pyimport_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_recursive_const_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
+}
+
+#[test]
 fn exec_set() -> Result<(), ()> {
     expect_compile_failure("examples/set.er", 3, 1)
 }
@@ -770,9 +787,7 @@ fn exec_side_effect_test() -> Result<(), ()> {
 
 #[test]
 fn exec_structural_err() -> Result<(), ()> {
-#[test]
-fn exec_recursive_const_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
+    expect_compile_failure("tests/should_err/structural.er", 1, 11)
 }
 
 #[test]

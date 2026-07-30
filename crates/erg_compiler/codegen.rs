@@ -1442,6 +1442,13 @@ impl PyCodeGenerator {
         let Expr::Call(mut trait_call) = block.remove(0) else {
             unreachable!()
         };
+        // `T = Structural Trait {...}`: unwrap the `Structural` wrapper to reach the `Trait` call,
+        // whose `Requirement` record holds the declared attributes.
+        if kind.is_structural_trait() {
+            if let Some(Expr::Call(inner)) = trait_call.args.remove_left_or_key("Type") {
+                trait_call = inner;
+            }
+        }
         let req = if let Some(Expr::Record(req)) = trait_call.args.remove_left_or_key("Requirement")
         {
             req.attrs.into_iter()

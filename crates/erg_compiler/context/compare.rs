@@ -968,7 +968,7 @@ impl Context {
                     return true;
                 }
                 let r_fields = self.fields(r);
-                for (l_field, l_ty) in self.fields(l) {
+                for (l_field, l_ty) in self.structural_fields(l, r) {
                     if let Some((r_field, r_ty)) = r_fields.get_key_value(&l_field) {
                         if r_field.vis != l_field.vis || !self.supertype_of(&l_ty, r_ty) {
                             return false;
@@ -1012,6 +1012,42 @@ impl Context {
                 }
                 fields
             }
+    /// The required fields of the requirement type of a structural type,
+    /// with `Self` substituted by `subject`.
+    ///
+    /// In a structural trait definition, `Self` is resolved to the trait's own
+    /// nominal type, so judging whether `subject` satisfies the requirement
+    /// requires reading those occurrences as `subject`.
+    /// ```erg
+    /// SAdd = Structural Trait { .`_+_` = (self: Self, other: Self) -> Self }
+    /// # SAdd.fields() == { .`_+_` = (self: SAdd, other: SAdd) -> SAdd }
+    /// # structural_fields(SAdd, C) == { .`_+_` = (self: C, other: C) -> C }
+    /// ```
+    pub(crate) fn structural_fields(&self, req: &Type, subject: &Type) -> Dict<Field, Type> {
+        let fields = self.fields(req);
+        // only structural *trait* requirements are nominal; `Structural { .x = Int }` needs no substitution
+        if !matches!(req, Type::Mono(_) | Type::Poly { .. }) || req == subject {
+            return fields;
+        }
+        // `Self` resolves to `T` in parameter position but to the alias `Structural(T)` in
+        // return position (and whenever the trait is referred to by name), so both spellings
+        // must be substituted. The wrapped one comes first, or it would become
+        // `Structural(subject)`.
+        let structural_req = req.clone().structuralize();
+        fields
+            .into_iter()
+            .map(|(field, mut ty)| {
+                if ty.contains_type(&structural_req) {
+                    ty = ty.replace(&structural_req, subject);
+                }
+                if ty.contains_type(req) {
+                    ty = ty.replace(req, subject);
+                }
+                (field, ty)
+            })
+            .collect()
+    }
+
             other => {
                 let Some(ctx) = self.get_nominal_type_ctx(other) else {
                     return Dict::new();

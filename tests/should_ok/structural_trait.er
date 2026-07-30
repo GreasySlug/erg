@@ -1,0 +1,39 @@
+# structural trait definitions (`Structural Trait {...}`)
+# Unlike nominal traits, no explicit implementation declaration (`C|<: SAdd|`) is required:
+# any type that structurally satisfies the requirement is a subtype.
+
+SAdd = Structural Trait {
+    .__add__ = (self: Self, other: Self) -> Self
+}
+# |A <: SAdd| cannot be omitted
+add|A <: SAdd| x, y: A = x.__add__ y
+
+C = Class {.i = Int}
+C.
+    new i = C {.i = i}
+    # note that this is not an explicit implementation of SAdd
+    __add__ self, other: Self = C.new(self.i + other.i)
+
+assert add(C.new(1), C.new(2)).i == 3
+
+# a structural trait can also be used directly as a type specification
+SNamed = Structural Trait {
+    .name = Str
+}
+name x: SNamed = x.name
+
+D = Class {.name = Str; .id = Nat}
+D.
+    new name, id = D {.name = name; .id = id}
+
+assert name(D.new("erg", 1)) == "erg"
+
+# builtin types satisfy structural traits too
+SLen = Structural Trait {
+    .__len__ = (self: Self) -> Nat
+}
+length x: SLen = x.__len__()
+
+assert length("abc") == 3
+assert length([1, 2]) == 2
+assert length({"a": 1}) == 1

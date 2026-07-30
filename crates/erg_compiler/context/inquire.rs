@@ -830,6 +830,16 @@ impl Context {
             }
             _ => {}
         }
+        // attr declared by a structural trait requirement (`Self` is substituted by `self_t`)
+        match self.get_attr_info_from_structural(&self_t, ident, namespace) {
+            Triple::Ok(vi) => {
+                return Triple::Ok(vi);
+            }
+            Triple::Err(e) => {
+                return Triple::Err(e);
+            }
+            _ => {}
+        }
         // class/module attr
         if let Ok(singular_ctxs) = self.get_singular_ctxs_by_hir_expr(obj, namespace) {
             for ctx in &singular_ctxs {
@@ -1046,6 +1056,67 @@ impl Context {
             }
         }
         Triple::None
+    }
+
+    /// Get an attribute declared by a structural *trait* requirement.
+    ///
+    /// Unlike `Structural { .x = Int }` (a record, handled by
+    /// [`Self::get_attr_info_from_attributive`]), the requirement of
+    /// `T = Structural Trait {...}` is the nominal type `T` itself, so the attribute must be
+    /// looked up in `T`'s declarations, with `Self` replaced by a fresh type variable
+    /// that unification then binds to the receiver.
+    ///
+    /// Substituting the receiver type directly is not an option: the receiver of
+    /// `|A <: T| ...` is a type variable whose own bound mentions `T`, so the result
+    /// would be self-referential.
+    /// ```erg
+    /// SAdd = Structural Trait { .__add__ = (self: Self, other: Self) -> Self }
+    /// add|A <: SAdd| x, y: A = x.__add__ y # x.__add__: (self: ?S, other: ?S) -> ?S, ?S :> A
+    /// ```
+    fn get_attr_info_from_structural(
+        &self,
+        t: &Type,
+        ident: &Identifier,
+        namespace: &Context,
+    ) -> Triple<VarInfo, TyCheckError> {
+        let req = match t {
+            Type::FreeVar(fv) if fv.is_linked() => {
+                return self.get_attr_info_from_structural(&fv.unwrap_linked(), ident, namespace)
+            }
+            Type::FreeVar(fv) => match fv.get_super() {
+                Some(Type::Structural(req)) => *req,
+                _ => return Triple::None,
+            },
+            Type::Structural(req) => *req.clone(),
+            _ => return Triple::None,
+        };
+        // records are already handled by `get_attr_info_from_attributive`
+        if !matches!(req, Type::Mono(_) | Type::Poly { .. }) {
+            return Triple::None;
+        }
+        let self_ph = free_var(self.level, Constraint::new_type_of(Type));
+        let Some((field, attr_t)) = self
+            .structural_fields(&req, &self_ph)
+            .into_iter()
+            .find(|(field, _)| &field.symbol == ident.inspect())
+        else {
+            return Triple::None;
+        };
+        let muty = Mutability::from(&ident.inspect()[..]);
+        let vi = VarInfo::new(
+            attr_t,
+            muty,
+            Visibility::new(field.vis, req.qual_name()),
+            VarKind::Declared,
+            None,
+            ContextKind::Trait,
+            None,
+            AbsLocation::unknown(),
+        );
+        if let Err(err) = self.validate_visibility(ident, &vi, &self.cfg.input, namespace) {
+            return Triple::Err(err);
+        }
+        Triple::Ok(vi)
     }
 
     /// get type from given attributive type (Record).
@@ -1522,6 +1593,16 @@ impl Context {
                     AbsLocation::unknown(),
                 ));
             }
+        // method declared by a structural trait requirement (`Self` is substituted by the receiver)
+        match self.get_attr_info_from_structural(obj.ref_t(), attr_name, namespace) {
+            Triple::Ok(vi) => {
+                return Ok(vi);
+            }
+            Triple::Err(e) => {
+                return Err(e);
+            }
+            _ => {}
+        }
         }
         let mut checked = vec![];
         // FIXME: tests/should_ok/collection.er

@@ -6514,6 +6514,10 @@ impl DefKind {
         matches!(self, Self::Trait | Self::Subsume | Self::StructuralTrait)
     }
 
+    pub const fn is_structural_trait(&self) -> bool {
+        matches!(self, Self::StructuralTrait)
+    }
+
     pub const fn is_class(&self) -> bool {
         matches!(self, Self::Class | Self::Inherit)
     }
@@ -6607,6 +6611,18 @@ impl DefBody {
                         match inner.obj.get_name().map(|n| &n[..]) {
                             Some("Class") => DefKind::Class,
                             Some("Inherit") => DefKind::Inherit,
+                            _ => DefKind::Other,
+                        }
+                    } else {
+                        DefKind::Other
+                    }
+                }
+                // `Structural Trait {...}` is a structural trait definition,
+                // while `Structural {...}` (applied to a record/type) is a mere type alias.
+                Some("Structural") => {
+                    if let Some(Expr::Call(inner)) = call.args.get_left_or_key("Type") {
+                        match inner.obj.get_name().map(|n| &n[..]) {
+                            Some("Trait") => DefKind::StructuralTrait,
                             _ => DefKind::Other,
                         }
                     } else {

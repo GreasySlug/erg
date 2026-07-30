@@ -499,6 +499,11 @@ fn exec_subtyping() -> Result<(), ()> {
 
 #[test]
 fn exec_sym_op() -> Result<(), ()> {
+#[test]
+fn exec_structural_trait() -> Result<(), ()> {
+    expect_success("tests/should_ok/structural_trait.er", 0)
+}
+
     expect_success("tests/should_ok/sym_op.er", 0)
 }
 
@@ -770,7 +775,9 @@ fn exec_recursive_const_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
 }
 
-    expect_compile_failure("tests/should_err/structural.er", 1, 11)
+#[test]
+fn exec_structural_trait_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/structural_trait.er", 0, 5)
 }
 
 #[test]

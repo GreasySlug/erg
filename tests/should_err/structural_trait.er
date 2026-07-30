@@ -1,0 +1,23 @@
+SNamed = Structural Trait {
+    .name = Str
+}
+name x: SNamed = x.name
+
+C = Class {.id = Nat}
+C.
+    new id = C {.id = id}
+
+D = Class {.name = Int}
+D.
+    new name = D {.name = name}
+
+print! name(C.new 1) # ERR: `.name` is not declared
+print! name(D.new 1) # ERR: `.name` is Int, not Str
+print! name(1) # ERR
+
+SAdd = Structural Trait {
+    .__add__ = (self: Self, other: Self) -> Self
+}
+add|A <: SAdd| x, y: A = x.__add__ y
+
+_ = add C.new(1), C.new(2) # ERR: `.__add__` is not declared

@@ -2613,6 +2613,18 @@ impl Def {
                         DefKind::Other
                     }
                 }
+                // `Structural Trait {...}` is a structural trait definition,
+                // while `Structural {...}` (applied to a record/type) is a mere type alias.
+                Some("Structural") => {
+                    if let Some(Expr::Call(inner)) = call.args.get_left_or_key("Type") {
+                        match inner.obj.show_acc().as_ref().map(|n| &n[..]) {
+                            Some("Trait") => DefKind::StructuralTrait,
+                            _ => DefKind::Other,
+                        }
+                    } else {
+                        DefKind::Other
+                    }
+                }
                 Some("Patch") => DefKind::Patch,
                 Some("import") => DefKind::ErgImport,
                 Some("pyimport") | Some("__import__") => DefKind::PyImport,

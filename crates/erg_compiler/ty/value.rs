@@ -289,10 +289,16 @@ impl GenTypeObj {
         GenTypeObj::Structural(StructuralTypeObj::new(t, type_))
     }
 
-    pub const fn is_inited(&self) -> bool {
+    pub fn is_inited(&self) -> bool {
         match self {
             Self::Class(class) => class.inited,
             Self::Trait(trait_) => trait_.inited,
+            // a structural trait is inited iff the wrapped trait is inited
+            // (`T = Structural Trait {...}` is pre-registered uninited, like a plain trait)
+            Self::Structural(structural) => match structural.base.as_ref() {
+                TypeObj::Generated(gen) => gen.is_inited(),
+                _ => true,
+            },
             _ => true,
         }
     }
@@ -473,7 +479,7 @@ impl TypeObj {
         }
     }
 
-    pub const fn is_inited(&self) -> bool {
+    pub fn is_inited(&self) -> bool {
         match self {
             Self::Builtin { .. } => true,
             Self::Generated(gen) => gen.is_inited(),
@@ -1413,7 +1419,7 @@ impl ValueObj {
         matches!(self, Self::Type(_))
     }
 
-    pub const fn is_inited(&self) -> bool {
+    pub fn is_inited(&self) -> bool {
         match self {
             Self::Type(t) => t.is_inited(),
             _ => true,

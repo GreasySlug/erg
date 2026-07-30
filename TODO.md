@@ -53,7 +53,7 @@
   - [ ] Type definition
     - [x] Class definition
     - [x] Trait definition
-    - [ ] Structural trait definition
+    - [x] Structural trait definition
     - [ ] Polymorphic type definition
   - [ ] Patch definition
     - [ ] Glue Patch definition

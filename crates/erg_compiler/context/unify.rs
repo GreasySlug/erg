@@ -1771,7 +1771,7 @@ impl<L: Locational> Unifier<'_, '_, '_, L> {
             }
             (sub, Structural(supe)) => {
                 let sub_fields = self.ctx.fields(sub);
-                for (sup_field, sup_ty) in self.ctx.fields(supe) {
+                for (sup_field, sup_ty) in self.ctx.structural_fields(supe, sub) {
                     if let Some((_, sub_ty)) = sub_fields.get_key_value(&sup_field) {
                         self.sub_unify(sub_ty, &sup_ty)?;
                     } else {

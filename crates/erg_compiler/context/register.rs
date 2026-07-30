@@ -1513,37 +1513,37 @@ impl Context {
                     let trait_ = ValueObj::Type(TypeObj::Generated(trait_));
                     self.register_gen_const(ident, trait_, Some(call), false)
                 }
+                // `T = Structural Trait {...}`: pre-register the inner trait so that `Self`
+                // can be resolved while instantiating the requirement record.
+                // `Structural` applied to anything else is a mere type alias, so it is skipped.
+                "Structural" => {
+                    let Some(ast::Expr::Call(inner)) = call.args.get_left_or_key("Type") else {
+                        return Ok(());
+                    };
+                    if inner.obj.get_name().map(|n| &n[..]) != Some("Trait") {
+                        return Ok(());
+                    }
+                    let ident = var.ident().unwrap();
+                    // Skip preregistration for polymorphic traits - they will be registered in register_def
+                    if !var.bounds.is_empty() {
+                        return Ok(());
+                    }
+                    let t = Type::Mono(format!("{}{ident}", self.name).into());
+                    let trait_ =
+                        GenTypeObj::trait_(t, TypeObj::builtin_type(Type::Failure), None, false);
+                    let structural = GenTypeObj::structural(
+                        trait_.typ().clone().structuralize(),
+                        TypeObj::Generated(trait_),
+                    );
+                    let structural = ValueObj::Type(TypeObj::Generated(structural));
+                    self.register_gen_const(ident, structural, Some(call), false)
+                }
                 _ => Ok(()),
             },
             _ => Ok(()),
         }
     }
 
-    pub(crate) fn register_def(&mut self, def: &ast::Def) -> TyCheckResult<()> {
-        let id = Some(def.body.id);
-        let __name__ = def.sig.ident().map(|i| i.inspect()).unwrap_or(UBAR);
-        let call = if let Some(ast::Expr::Call(call)) = &def.body.block.first() {
-            Some(call)
-        } else {
-            None
-        };
-        let mut errs = TyCheckErrors::empty();
-        match &def.sig {
-            ast::Signature::Subr(sig) => {
-                if sig.is_const() {
-                    // If the const subroutine has parameters, create a UserConstSubr
-                    // instead of evaluating the body immediately
-                    if !sig.params.is_empty() {
-                        let obj =
-                            match self.register_const_subr(sig, &def.body.block, def.def_kind()) {
-                                Ok(obj) => obj,
-                                Err((obj, es)) => {
-                                    errs.extend(es);
-                                    obj
-                                }
-                            };
-                        if let Err(es) = self.register_gen_const(
-                            def.sig.ident().unwrap(),
     /// Detects cyclic class/trait definitions such as `C = Class D; D = Class C`.
     /// Since forward references are only possible for pre-registered types (classes/traits),
     /// it is sufficient to check the requirement (base) chains of the generated types.
@@ -1596,6 +1596,31 @@ impl Context {
         errs
     }
 
+    pub(crate) fn register_def(&mut self, def: &ast::Def) -> TyCheckResult<()> {
+        let id = Some(def.body.id);
+        let __name__ = def.sig.ident().map(|i| i.inspect()).unwrap_or(UBAR);
+        let call = if let Some(ast::Expr::Call(call)) = &def.body.block.first() {
+            Some(call)
+        } else {
+            None
+        };
+        let mut errs = TyCheckErrors::empty();
+        match &def.sig {
+            ast::Signature::Subr(sig) => {
+                if sig.is_const() {
+                    // If the const subroutine has parameters, create a UserConstSubr
+                    // instead of evaluating the body immediately
+                    if !sig.params.is_empty() {
+                        let obj =
+                            match self.register_const_subr(sig, &def.body.block, def.def_kind()) {
+                                Ok(obj) => obj,
+                                Err((obj, es)) => {
+                                    errs.extend(es);
+                                    obj
+                                }
+                            };
+                        if let Err(es) = self.register_gen_const(
+                            def.sig.ident().unwrap(),
                             obj,
                             call,
                             def.def_kind().is_other(),
@@ -2286,6 +2311,57 @@ impl Context {
                         self,
                         ident.loc(),
                         "polymorphic trait definition"
+                    )
+                }
+            }
+            // `T = Structural Trait {...}`
+            // The requirement record is nested inside the wrapped trait object,
+            // and the type itself is `Structural(Mono(T))`, so the context must be
+            // registered under the destructuralized (nominal) name in order for
+            // `fields(Structural(Mono(T)))` to find the declared attributes.
+            GenTypeObj::Structural(_) => {
+                if gen.typ().is_monomorphic() {
+                    let mut ctx = Self::mono_trait(
+                        gen.typ().destructuralize().qual_name(),
+                        self.cfg.clone(),
+                        self.shared.clone(),
+                        2,
+                        self.level,
+                    );
+                    // for better error locations, point at the inner `Trait {...}` call
+                    let req_call = call
+                        .and_then(|call| match call.args.get_left_or_key("Type") {
+                            Some(ast::Expr::Call(inner)) => Some(inner),
+                            _ => None,
+                        })
+                        .or(call);
+                    let res = match gen.base_or_sup() {
+                        Some(TypeObj::Generated(inner)) => {
+                            if let Some(TypeObj::Builtin {
+                                t: Type::Record(req),
+                                ..
+                            }) = inner.base_or_sup()
+                            {
+                                self.register_instance_attrs(&mut ctx, req, req_call)
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        Some(TypeObj::Builtin {
+                            t: Type::Record(req),
+                            ..
+                        }) => self.register_instance_attrs(&mut ctx, req, req_call),
+                        _ => Ok(()),
+                    };
+                    let res2 = self.register_gen_mono_type(ident, gen, ctx, Const);
+                    concat_result(res, res2)
+                } else {
+                    feature_error!(
+                        CompileErrors,
+                        CompileError,
+                        self,
+                        ident.loc(),
+                        "polymorphic structural trait definition"
                     )
                 }
             }

@@ -2590,6 +2590,11 @@ impl Context {
         let ty_ctxs = match self.get_nominal_super_type_ctxs(&sub) {
             Some(ty_ctxs) => ty_ctxs,
             None => {
+                // If the type is already poisoned by a previous error (e.g. `X = X + 1`,
+                // where `X` is registered as `{Failure}`), do not report a redundant error
+                if sub.is_failure() || sub.contains_failure() {
+                    return Ok(Failure);
+                }
                 let errs = EvalErrors::from(EvalError::type_not_found(
                     self.cfg.input.clone(),
                     line!() as usize,

@@ -313,6 +313,11 @@ impl Lexer /*<'a>*/ {
     // +, -, * etc. may be pre/bin
     // and, or, is!, isnot!, in, notin, as, dot, cross may be bin/function
     fn op_fix(&self) -> Option<OpFix> {
+        self.op_fix_of(1)
+    }
+
+    /// `op_len`: the length of the (already consumed) operator, e.g. 1 for `*`, 2 for `**`
+    fn op_fix_of(&self, op_len: usize) -> Option<OpFix> {
         match self.prev_token.category() {
             // unary: `[ +`, `= +`, `+ +`, `, +`, `:: +`
             TokenCategory::LEnclosure
@@ -328,13 +333,19 @@ impl Lexer /*<'a>*/ {
             TokenCategory::REnclosure
             | TokenCategory::Literal
             | TokenCategory::StrInterpRight
-            | TokenCategory::Symbol => match (self.peek_prev_prev_ch(), self.peek_cur_ch()) {
-                (Some(' '), Some(' ')) => Some(OpFix::Infix), // x + 1: bin
-                (Some(' '), Some(_)) => Some(OpFix::Prefix),  // x +1: unary
-                (Some(_), Some(' ')) => Some(OpFix::Infix),   // x+ 1 : bin
-                (Some(_), Some(_)) => Some(OpFix::Infix),     // x+1: bin
-                _ => None,
-            },
+            | TokenCategory::Symbol => {
+                let before_op = self
+                    .cursor
+                    .checked_sub(op_len + 1)
+                    .and_then(|i| self.chars.get(i).copied());
+                match (before_op, self.peek_cur_ch()) {
+                    (Some(' '), Some(' ')) => Some(OpFix::Infix), // x + 1: bin
+                    (Some(' '), Some(_)) => Some(OpFix::Prefix),  // x +1: unary
+                    (Some(_), Some(' ')) => Some(OpFix::Infix),   // x+ 1 : bin
+                    (Some(_), Some(_)) => Some(OpFix::Infix),     // x+1: bin
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -355,10 +366,6 @@ impl Lexer /*<'a>*/ {
         let now = self.cursor;
         self.cursor += 1;
         self.chars.get(now).copied()
-    }
-
-    fn peek_prev_prev_ch(&self) -> Option<char> {
-        self.chars.get(self.cursor.checked_sub(2)?).copied()
     }
 
     fn peek_prev_ch(&self) -> Option<char> {
@@ -1438,7 +1445,7 @@ impl Iterator for Lexer /*<'a>*/ {
             Some('*') => match self.peek_cur_ch() {
                 Some('*') => {
                     self.consume();
-                    let kind = match self.op_fix() {
+                    let kind = match self.op_fix_of(2) {
                         Some(OpFix::Infix) => Pow,
                         Some(OpFix::Prefix) => PreDblStar,
                         _ => {

@@ -112,6 +112,11 @@ fn exec_poly_class_full() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_poly_trait() -> Result<(), ()> {
+    expect_success("tests/should_ok/poly_trait.er", 1)
+}
+
+#[test]
 fn exec_container_class() -> Result<(), ()> {
     expect_success("tests/should_ok/container_class.er", 0)
 }
@@ -744,6 +749,11 @@ fn exec_move_check() -> Result<(), ()> {
 #[test]
 fn exec_or_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/or.er", 0, 1)
+}
+
+#[test]
+fn exec_poly_trait_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/poly_trait.er", 0, 4)
 }
 
 #[test]

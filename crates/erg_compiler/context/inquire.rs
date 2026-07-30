@@ -4210,6 +4210,16 @@ impl Context {
             // e.g. `Wrapper(T).` => Self == Wrapper(T)
             Some(class.clone())
         } else if self.kind.is_method_def() || self.kind.is_type() {
+            // In a polymorphic type definition (e.g. `MyTr|T| = Trait ...`),
+            // `Self` refers to the polymorphic form (e.g. `MyTr(T)`)
+            if self.kind.is_type() {
+                if let Some(tv_cache) = &self.tv_cache {
+                    let params = tv_cache.ordered_instances();
+                    if !params.is_empty() {
+                        return Some(poly(self.name.clone(), params));
+                    }
+                }
+            }
             Some(mono(self.name.clone()))
         } else if let ContextKind::PatchMethodDefs(t) = &self.kind {
             Some(t.clone())

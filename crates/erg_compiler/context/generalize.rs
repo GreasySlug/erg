@@ -885,6 +885,18 @@ impl<'c, 'q, 'l, L: Locational> Dereferencer<'c, 'q, 'l, L> {
             FreeVar(fv) if fv.constraint_is_sandwiched() => {
                 let fv_hash = get_hash(&fv);
                 let (sub_t, super_t) = fv.get_subsup().unwrap();
+                // A generalized, unconstrained variable in an invariant position that is
+                // not bound by the enclosing quantifier: e.g. `U` of
+                // `fst: |T|(self: Pair(T, U)) -> T` (the quantifier only lists the
+                // essential names). There is nothing to resolve it to, so keep it
+                if fv.is_generalized()
+                    && self.current_variance() == Variance::Invariant
+                    && sub_t == Never
+                    && super_t == Obj
+                    && !self.qnames.contains(&fv.unbound_name().unwrap())
+                {
+                    return Ok(Type::FreeVar(fv));
+                }
                 if self.level <= fv.level().unwrap() {
                     // we need to force linking to avoid infinite loop
                     // e.g. fv == ?T(<: Int, :> Add(?T))

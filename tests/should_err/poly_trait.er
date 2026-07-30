@@ -1,0 +1,18 @@
+MyTr|T| = Trait { .f = (self: Self, x: T) -> T }
+
+C = Class()
+C|<: MyTr(Int)|.
+    g(self) =
+        _ = self
+        1 # ERR: f is not implemented (and g is not in the trait)
+
+D = Class()
+D|<: MyTr(Int)|.
+    f(self, x: Str): Str =
+        _ = self
+        x # ERR: the type of f is mismatched
+
+# `MyTr T = Trait ...` (parameter syntax) is not supported
+MyTr2 T = Trait { .g = (self: Self) -> T } # ERR
+
+print! "ng"

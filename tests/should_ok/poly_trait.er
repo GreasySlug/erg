@@ -1,0 +1,36 @@
+# Test for user-defined polymorphic traits
+
+# definition
+MyTr|T| = Trait { .f = (self: Self, x: T) -> T }
+
+# implementation for a specific instantiation
+C = Class()
+C|<: MyTr(Int)|.
+    f(self, x: Int): Int = x + 1
+
+c = C.new()
+assert c.f(1) == 2
+
+# bounded generic function (concrete bound)
+apply|A <: MyTr(Int)|(a: A, x: Int): Int = a.f x
+assert apply(c, 41) == 42
+
+# bounded generic function (generic bound)
+apply2|T, A <: MyTr(T)|(a: A, x: T): T = a.f x
+assert apply2(c, 1) == 2
+
+# trait-typed annotation
+c2: MyTr(Int) = C.new()
+_ = c2
+
+# multi-parameter trait
+Conv|A, B| = Trait { .conv = (self: Self, x: A) -> B }
+C2 = Class()
+C2|<: Conv(Int, Str)|.
+    conv(self, x: Int): Str =
+        _ = self
+        str x
+c3 = C2.new()
+assert c3.conv(42) == "42"
+
+print! "poly trait test passed"

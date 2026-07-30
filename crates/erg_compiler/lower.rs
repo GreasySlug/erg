@@ -15,6 +15,7 @@ use erg_common::set;
 use erg_common::set::Set;
 use erg_common::traits::New;
 use erg_common::traits::OptionalTranspose;
+use erg_common::traits::StructuralEq;
 use erg_common::traits::{ExitStatus, Locational, NoTypeDisplay, Runnable, Stream};
 use erg_common::triple::Triple;
 use erg_common::{fmt_option, fn_name, log, switch_lang, Str};
@@ -33,13 +34,14 @@ use crate::ty::constructors::{
     free_var, from_str, func, guard, list_t, mono, poly, proc, refinement, set_t, singleton, ty_tp,
     unsized_list_t, v_enum,
 };
-use crate::ty::free::Constraint;
+use crate::ty::free::{Constraint, HasLevel};
 use crate::ty::typaram::TyParam;
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{
     CastTarget, Field, GuardType, HasType, ParamTy, Predicate, SubrType, Type, VisibilityModifier,
 };
 
+use crate::context::eval::Substituter;
 use crate::context::instantiate::TyVarCache;
 use crate::context::{
     ClassDefType, Context, ContextKind, ContextProvider, ControlKind, MethodContext, ModuleContext,
@@ -2268,6 +2270,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 VisibilityModifier::Public
             }
         };
+        let mut bound_instances = vec![];
         let res = match def.sig {
             ast::Signature::Subr(sig) => {
                 let tv_cache = match self
@@ -2303,6 +2306,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                         }
                     }
                 };
+                bound_instances = tv_cache
+                    .as_ref()
+                    .map(|tv_cache| tv_cache.ordered_instances())
+                    .unwrap_or_default();
                 self.module.context.grow(&name, kind, vis, tv_cache);
                 self.lower_var_def(sig, def.body, expect_body)
             }
@@ -2311,6 +2318,19 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         self.pop_append_errs();
         // remove from decls regardless of success or failure to lower
         self.module.context.decls.remove(&name);
+        // The type variables instantiated for lowering a polymorphic type definition
+        // are only meaningful within the definition (the registered contexts hold
+        // their own generalized variables); pin any that leaked into the HIR so that
+        // the module-level resolution does not fail on them
+        for tp in bound_instances {
+            if let Ok(t) = <&Type>::try_from(&tp) {
+                if t.as_free()
+                    .is_some_and(|fv| fv.is_unbound() && !fv.is_generalized())
+                {
+                    t.destructive_link(&Type::Never);
+                }
+            }
+        }
         res
     }
 
@@ -3341,11 +3361,29 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 !implemented_in_super && !class_decl
             })
         };
+        // `get_super_types` may return both the type itself and its derefined form
+        // (e.g. `MyTr(T)` twice for a polymorphic trait), which would double the
+        // required-method checks (and their errors). Structural duplicates that were
+        // not filtered by `implemented` are checked only once.
+        // NOTE: entries equal (`==`) to an `implemented` one must still be skipped
+        // *before* this deduplication: re-implementations of the same base trait
+        // (e.g. `C|<: Add(Int)|.` after `C|<: Add(Nat)|.`) are only verified against
+        // the derefined twin (the first form is filtered by `implemented`)
+        let mut seen: Vec<Type> = vec![];
+        let mut dedup = |sup: &Type| {
+            let key = sup.derefine();
+            if seen.iter().any(|s| s.structural_eq(&key)) {
+                true
+            } else {
+                seen.push(key);
+                false
+            }
+        };
         let tys_decls = if self.module.context.is_class(trait_type) {
             vec![(impl_trait.clone(), retained_decls(trait_ctx, &super_impls))]
         } else if let Some(sups) = self.module.context.get_super_types(trait_type) {
             sups.map(|sup| {
-                if implemented.linear_contains(&sup) {
+                if implemented.linear_contains(&sup) || dedup(&sup) {
                     return (sup, Dict::new());
                 }
                 let decls =
@@ -3365,6 +3403,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         } else {
             vec![(impl_trait.clone(), retained_decls(trait_ctx, &super_impls))]
         };
+        let spec_trait = impl_trait.clone();
         for (impl_trait, decls) in tys_decls {
             for (decl_name, decl_vi) in decls {
                 if let Some((name, vi)) = self.module.context.get_var_kv(decl_name.inspect()) {
@@ -3374,6 +3413,28 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                         .clone()
                         .replace(trait_type, &impl_trait)
                         .replace(&impl_trait, class);
+                    // The requirement methods of a user-defined polymorphic trait refer to
+                    // the trait's (generalized) type parameters and the mono form of `Self`
+                    // (e.g. `.f = (self: MyTr, x: T) -> T` for `MyTr|T| = Trait ...`).
+                    // Substitute them with the implementation's type arguments
+                    // (e.g. `T => Int`, `MyTr => C` for `C|<: MyTr(Int)|.`)
+                    let replaced_decl_t = if replaced_decl_t.has_qvar()
+                        && !matches!(replaced_decl_t, Type::Quantified(_))
+                        && !trait_type.is_monomorphic()
+                    {
+                        let _subs = Substituter::substitute_typarams(
+                            &self.module.context,
+                            trait_type,
+                            &spec_trait,
+                        )
+                        .ok()
+                        .flatten();
+                        let t = replaced_decl_t.replace(&mono(trait_type.qual_name()), class);
+                        // resolves the undoable links of `_subs` into a detached type
+                        self.module.context.instantiate_def_type(&t).unwrap_or(t)
+                    } else {
+                        replaced_decl_t
+                    };
                     unverified_names.remove(name);
                     if !self.module.context.supertype_of(&replaced_decl_t, def_t) {
                         let hint = self

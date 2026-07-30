@@ -27,4 +27,13 @@ Wrapper(T).
 w: Wrapper(Int) = Wrapper.new { value = 1 }
 assert w.unwrap() == 1
 
+# === Phase 7: 複数型パラメータ ===
+Pair|T, U| = Class { first = T; second = U }
+Pair(T, U).
+    fst(self): T = self::first
+    snd(self): U = self::second
+pair = Pair.new { first = 1; second = "a" }
+assert pair.fst() == 1
+assert pair.snd() == "a"
+
 print! "All polymorphic class tests passed!"

@@ -1398,15 +1398,19 @@ impl Context {
                             impl_trait: impl_trait.as_ref().map(|(t, _)| t.clone()),
                         };
                         // The type variables of the class spec (e.g. `T` of `Wrapper(T).`)
-                        // are created at the outer level; raise them to the methods
-                        // context's level so that `generalize_t` (which only generalizes
-                        // variables deeper than the registering context) quantifies them
-                        // into each method's type
+                        // are created at the outer level; raise them below the methods
+                        // context's level (== self.level + 1) so that `generalize_t`
+                        // (which only generalizes variables deeper than the registering
+                        // context) quantifies them into each method's type.
+                        // NOTE: `self.level + 2` (not `+ 1`) because a variable appearing
+                        // only in the `self` parameter's bound (e.g. `U` of
+                        // `Pair(T, U). fst(self): T = ...`) is generalized via
+                        // `generalize_constraint` without being lifted beforehand
                         for tv in tv_cache.tyvar_instances.values() {
-                            tv.lift();
+                            tv.set_level(self.level.saturating_add(2));
                         }
                         for tp in tv_cache.typaram_instances.values() {
-                            tp.lift();
+                            tp.set_level(self.level.saturating_add(2));
                         }
                         let tv_cache = (!tv_cache.is_empty()).then_some(tv_cache);
                         self.grow(&class.local_name(), kind, vis.clone(), tv_cache);
@@ -1689,15 +1693,18 @@ impl Context {
             ast::Signature::Subr(sig) => {
                 if sig.is_const() {
                     // `MyTr T = Trait ...` would silently degrade (`T` decays to `Never`),
-                    // so reject it explicitly. Use the `MyTr|T| = Trait ...` form instead
-                    // (which is also rejected for now, but with a proper feature error).
+                    // so reject it explicitly. Use the (supported) `MyTr|T| = Trait ...`
+                    // form instead.
                     if !sig.params.is_empty() && def.def_kind().is_trait() {
+                        let name = sig.ident.inspect();
                         return feature_error!(
                             TyCheckErrors,
                             TyCheckError,
                             self,
                             sig.loc(),
-                            "polymorphic trait definition"
+                            &format!(
+                                "polymorphic trait definition with parameter syntax (use `{name}|...| = Trait ...` instead)"
+                            )
                         );
                     }
                     // If the const subroutine has parameters, create a UserConstSubr
@@ -2401,13 +2408,39 @@ impl Context {
                     let res2 = self.register_gen_mono_type(ident, gen, ctx, Const);
                     concat_result(res, res2)
                 } else {
-                    feature_error!(
-                        CompileErrors,
-                        CompileError,
-                        self,
-                        ident.loc(),
-                        "polymorphic trait definition"
-                    )
+                    let params = gen
+                        .typ()
+                        .typarams()
+                        .into_iter()
+                        .map(|tp| {
+                            let name = tp.qual_name().unwrap_or(Str::ever("_"));
+                            ParamSpec::named_nd(name, self.get_tp_t(&tp).unwrap_or(Type::Obj))
+                        })
+                        .collect();
+                    let mut ctx = Self::poly_trait(
+                        gen.typ().qual_name(),
+                        params,
+                        self.cfg.clone(),
+                        self.shared.clone(),
+                        2,
+                        self.level,
+                    );
+                    let res = if let Some(TypeObj::Builtin {
+                        t: Type::Record(req),
+                        ..
+                    }) = gen.base_or_sup()
+                    {
+                        self.register_instance_attrs(&mut ctx, req, call)
+                    } else {
+                        Ok(())
+                    };
+                    // Generalize the trait's type parameters (in place; the variables are
+                    // shared with the requirement attribute types) so that each use of the
+                    // trait (e.g. `MyTr(Int)`, `MyTr(Str)`) instantiates fresh type variables
+                    gen.typ().lift();
+                    let _ = self.generalize_t(gen.typ().clone());
+                    let res2 = self.register_gen_poly_type(ident, gen, ctx, Const);
+                    concat_result(res, res2)
                 }
             }
             // `T = Structural Trait {...}`

@@ -639,6 +639,11 @@ fn exec_default_param_err() -> Result<(), ()> {
 
 #[test]
 fn exec_dependent_err() -> Result<(), ()> {
+#[test]
+fn exec_cyclic_type_def_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/cyclic_type_def.er", 0, 5)
+}
+
     expect_compile_failure("tests/should_err/dependent.er", 0, 5)
 }
 

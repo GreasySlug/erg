@@ -48,6 +48,31 @@ impl EvalError {
         )
     }
 
+    pub fn cyclic_definition_error(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        cycle: &str,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::only_loc(loc)],
+                switch_lang!(
+                    "japanese" => format!("循環定義が検出されました: {cycle}"),
+                    "simplified_chinese" => format!("检测到循环定义: {cycle}"),
+                    "traditional_chinese" => format!("檢測到循環定義: {cycle}"),
+                    "english" => format!("cyclic definition detected: {cycle}"),
+                ),
+                errno,
+                RecursionError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn invalid_literal(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
         Self::new(
             ErrorCore::new(

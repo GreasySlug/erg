@@ -1544,6 +1544,58 @@ impl Context {
                             };
                         if let Err(es) = self.register_gen_const(
                             def.sig.ident().unwrap(),
+    /// Detects cyclic class/trait definitions such as `C = Class D; D = Class C`.
+    /// Since forward references are only possible for pre-registered types (classes/traits),
+    /// it is sufficient to check the requirement (base) chains of the generated types.
+    /// Recursion through container types (e.g. `Node = Class { next = Node or NoneType }`)
+    /// is not flagged.
+    pub(crate) fn check_cyclic_definitions(&self) -> TyCheckErrors {
+        let mut errs = TyCheckErrors::empty();
+        // node: qual_name of the type, edge: qual_name of its requirement (base) type.
+        // Each node has at most one outgoing edge, so cycles can be found
+        // by simply following the chains.
+        let mut req_edges = Dict::new();
+        let mut nodes = vec![];
+        for (name, val) in self.consts.iter() {
+            let ValueObj::Type(TypeObj::Generated(gen)) = val else {
+                continue;
+            };
+            if !matches!(gen, GenTypeObj::Class(_) | GenTypeObj::Trait(_)) {
+                continue;
+            }
+            let Some(base) = gen.base_or_sup() else {
+                continue;
+            };
+            req_edges.insert(gen.typ().qual_name(), base.typ().qual_name());
+            nodes.push((name, gen.typ().qual_name()));
+        }
+        let local = |qn: &Str| qn.rsplit(&[':', '.'][..]).next().unwrap_or(qn).to_string();
+        for (name, start) in nodes.iter() {
+            let mut cur = start;
+            let mut path = vec![local(start)];
+            // The walk is bounded to guard against chains that fall into
+            // a cycle not containing `start`
+            for _ in 0..=req_edges.len() {
+                let Some(next) = req_edges.get(cur) else {
+                    break;
+                };
+                path.push(local(next));
+                if next == start {
+                    errs.push(TyCheckError::cyclic_definition_error(
+                        self.cfg.input.clone(),
+                        line!() as usize,
+                        name.loc(),
+                        self.caused_by(),
+                        &path.join(" -> "),
+                    ));
+                    break;
+                }
+                cur = next;
+            }
+        }
+        errs
+    }
+
                             obj,
                             call,
                             def.def_kind().is_other(),

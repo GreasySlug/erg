@@ -4031,3 +4031,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 }
+        let cyclic_errs = self.module.context.check_cyclic_definitions();
+        if !cyclic_errs.is_empty() {
+            self.errs.extend(cyclic_errs);
+        }

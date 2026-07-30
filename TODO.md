@@ -44,9 +44,9 @@
     - [x] Positional arguments
     - [x] Variable length arguments
     - [x] Keyword arguments
-  - [ ] Constant definition
+  - [x] Constant definition
     - [x] Simple constant definition
-    - [ ] Cyclicity check
+    - [x] Cyclicity check
   - [ ] Method definition
     - [x] Simple method definition
     - [x] Trait implementation

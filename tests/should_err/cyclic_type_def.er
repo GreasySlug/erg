@@ -1,0 +1,9 @@
+# Cyclic class/trait requirement chains can never be instantiated
+C = Class D # ERR
+D = Class C # ERR
+E = Class E # ERR
+T = Trait U # ERR
+U = Trait T # ERR
+
+# recursion through container types is allowed
+Node = Class { next = Node or NoneType }

@@ -563,6 +563,52 @@ fn escape_py_code(code: &str) -> String {
     code.replace('"', "\\\"").replace('`', "\\`")
 }
 
+#[cfg(unix)]
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        6 => "SIGABRT",
+        7 => "SIGBUS",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        13 => "SIGPIPE",
+        15 => "SIGTERM",
+        _ => "unknown signal",
+    }
+}
+
+/// Convert a terminated child process's [`ExitStatus`] into an exit code.
+///
+/// [`ExitStatus::code`] returns `None` when the process was terminated by a
+/// signal, so a bare `.code().unwrap_or(0)` makes a crashed child (e.g. a
+/// SIGSEGV in the Python interpreter caused by broken bytecode) look like a
+/// successful run. On Unix, this reports the signal to stderr and returns
+/// `128 + signal` (the shell convention, e.g. 139 for SIGSEGV). On other
+/// platforms `code()` is always `Some` for a finished process; `1` is
+/// returned as a defensive fallback.
+pub fn exit_code_from_status(process: &str, status: ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            eprintln!(
+                "{process} process terminated by signal {signal} ({})",
+                signal_name(signal)
+            );
+            return 128 + signal;
+        }
+    }
+    eprintln!("{process} process terminated abnormally");
+    1
+}
+
 /// Locate the Python interpreter to use. See [`crate::pyfinder`] for the
 /// discovery strategy (config / venv / conda / poetry / pyenv / PATH).
 pub fn _opt_which_python() -> Result<String, String> {
@@ -964,4 +1010,42 @@ pub fn exec_py_code(code: &str, args: &[&str]) -> std::io::Result<ExitStatus> {
     let res = exec_py(&tmp_file, args);
     remove_file(tmp_file)?;
     res
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::exit_code_from_status;
+    use std::process::Command;
+
+    /// A child killed by a signal has no exit code (`ExitStatus::code()` is
+    /// `None`); make sure it is not mistaken for a successful run.
+    /// Regression test: the erg runner used to swallow SIGSEGV of the child
+    /// Python process via `.code().unwrap_or(0)`.
+    #[test]
+    fn signal_death_is_reported_as_nonzero_exit() {
+        let status = Command::new("sh")
+            .arg("-c")
+            // simulates the Python child crashing with SIGSEGV (11)
+            .arg("kill -SEGV $$")
+            .status()
+            .expect("failed to spawn sh");
+        assert_eq!(status.code(), None);
+        assert_eq!(exit_code_from_status("Python", status), 128 + 11);
+    }
+
+    #[test]
+    fn normal_exit_code_is_preserved() {
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg("exit 42")
+            .status()
+            .expect("failed to spawn sh");
+        assert_eq!(exit_code_from_status("Python", status), 42);
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .status()
+            .expect("failed to spawn sh");
+        assert_eq!(exit_code_from_status("Python", status), 0);
+    }
 }

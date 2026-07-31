@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use erg_common::config::ErgConfig;
 use erg_common::error::MultiErrorDisplay;
-use erg_common::python_util::spawn_py;
+use erg_common::python_util::{exit_code_from_status, spawn_py};
 use erg_common::repl::{CompletionProvider, ReplCandidate, ReplCompletion};
 use erg_common::shared::Shared;
 use erg_common::traits::{ExitStatus, New, Runnable};
@@ -305,7 +305,9 @@ impl Runnable for DummyVM {
         })?;
         art.warns.write_all_to(&mut self.cfg_mut().output);
         let stat = art.object.exec(self.cfg()).expect("failed to execute");
-        let stat = ExitStatus::new(stat.code().unwrap_or(0), art.warns.len(), 0);
+        // `code()` is `None` if the child Python process was killed by a signal
+        // (e.g. SIGSEGV); report it instead of pretending the run succeeded
+        let stat = ExitStatus::new(exit_code_from_status("Python", stat), art.warns.len(), 0);
         Ok(stat)
     }
 
@@ -472,7 +474,7 @@ impl PackageManagerRunner {
             .args(cfg.runtime_args.as_ref())
             .output()
         {
-            Ok(out) => ExitStatus::new(out.status.code().unwrap_or(0), 0, 0),
+            Ok(out) => ExitStatus::new(exit_code_from_status("poise", out.status), 0, 0),
             Err(err) => {
                 eprintln!("Error: {}", err);
                 ExitStatus::ERR1

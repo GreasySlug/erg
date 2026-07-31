@@ -1,0 +1,6 @@
+# Two structural traits require a same-named method, and the receiver has
+# neither an annotation nor a bound: the attribute is truly ambiguous.
+S1 = Structural Trait { .f = (self: Self) -> Int }
+S2 = Structural Trait { .f = (self: Self) -> Str }
+
+h a = a.f() # ERR: cannot determine the type of attribute .f (S1 or S2?)

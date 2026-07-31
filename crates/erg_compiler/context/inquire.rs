@@ -4476,6 +4476,24 @@ impl Context {
         true
     }
 
+    /// The upper bounds of the type variables in the current scope
+    /// (e.g. `Structural(SAdd)` in the body of `add|A <: SAdd| x, y: A = ...`)
+    fn rec_tyvar_sup_bounds(&self) -> Vec<Type> {
+        let mut bounds = vec![];
+        let mut ctx = Some(self);
+        while let Some(cur) = ctx {
+            if let Some(tv_cache) = &cur.tv_cache {
+                for tyvar in tv_cache.tyvar_instances.values() {
+                    if let Some(sup) = tyvar.as_free().and_then(|fv| fv.get_super()) {
+                        bounds.push(sup);
+                    }
+                }
+            }
+            ctx = cur.get_outer_scope();
+        }
+        bounds
+    }
+
     fn get_attr_type<'m>(
         &self,
         obj: &hir::Expr,
@@ -4498,6 +4516,29 @@ impl Context {
                 .compatible(&attr.acc_kind(), self)
             {
                 return Triple::Ok(method_pair);
+            }
+        }
+        // Even if the receiver alone cannot narrow the candidates down (e.g. an untyped
+        // parameter), the type bounds in scope can: in
+        // `add|A <: SAdd| x, y: A = x.__add__ y`, only `SAdd` among the candidates
+        // appears as a bound, so `.__add__` is resolved to `SAdd`'s.
+        // Exact type equality is required because e.g. two structural traits with the
+        // same requirements are mutual supertypes.
+        if matches.len() > 1 {
+            let bounds = namespace.rec_tyvar_sup_bounds();
+            let bounded = matches
+                .iter()
+                .filter(|mp| bounds.iter().any(|bound| &mp.definition_type == bound))
+                .collect::<Vec<_>>();
+            if bounded.len() == 1 {
+                let method_pair = *bounded[0];
+                if method_pair
+                    .method_info
+                    .vis
+                    .compatible(&attr.acc_kind(), self)
+                {
+                    return Triple::Ok(method_pair);
+                }
             }
         }
         if self.same_shape(candidates.iter().map(|mp| &mp.method_info.t)) {

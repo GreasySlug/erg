@@ -1,0 +1,33 @@
+# Multiple structural traits requiring same-named methods must not break
+# resolution when the receiver is concrete or its type (bound) is specified.
+
+S1 = Structural Trait { .f = (self: Self) -> Int }
+S2 = Structural Trait { .f = (self: Self) -> Str }
+
+# a concrete receiver is resolved by its own method, not by trait scanning
+C = Class {.x = Int}
+C.
+    new x = C {.x = x}
+    f self = self.x + 1
+
+assert C.new(1).f() == 2
+
+# an annotated receiver is resolved by its bound
+g|A <: S1| a: A = a.f()
+assert g(C.new(1)) == 2
+
+# the receiver `x` is untyped (only `y` is annotated), but among the candidates
+# only `SAdd` appears as a bound in scope, so `.__add__` is resolved to it
+# (cf. doc/*/syntax/type/03_trait.md, the `SAdd` example)
+SAdd = Structural Trait { .__add__ = (self: Self, other: Self) -> Self }
+SAdd2 = Structural Trait { .__add__ = (self: Self, other: Self) -> Self }
+add|A <: SAdd| x, y: A = x.__add__ y
+add2|A <: SAdd2| x, y: A = x.__add__ y
+
+D = Class {.i = Int}
+D.
+    new i = D {.i = i}
+    __add__ self, other: Self = D.new(self.i + other.i)
+
+_ = add D.new(1), D.new(2)
+_ = add2 D.new(3), D.new(4)

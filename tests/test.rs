@@ -515,6 +515,11 @@ fn exec_structural_alias() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_structural_disambiguation() -> Result<(), ()> {
+    expect_success("tests/should_ok/structural_disambiguation.er", 0)
+}
+
+#[test]
 fn exec_structural_trait() -> Result<(), ()> {
     expect_success("tests/should_ok/structural_trait.er", 0)
 }
@@ -813,6 +818,11 @@ fn exec_side_effect_test() -> Result<(), ()> {
 #[test]
 fn exec_structural_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/structural.er", 1, 11)
+}
+
+#[test]
+fn exec_structural_ambiguity_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/structural_ambiguity.er", 0, 1)
 }
 
 #[test]

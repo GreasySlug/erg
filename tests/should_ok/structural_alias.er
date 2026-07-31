@@ -1,0 +1,23 @@
+# `Structural` exists only at compile time; a `Structural` type alias is bound to
+# the underlying type object at runtime (a record type / a trait class).
+
+SNamed = Structural {.name = Str}
+name x: SNamed = x.name
+
+C = Class {.name = Str}
+C.
+    new name = C {.name = name}
+
+assert name(C.new "erg") == "erg"
+
+# structuralization of a nominal trait
+Countable = Trait { .count = Nat }
+SCountable = Structural Countable
+
+D = Class {.count = Nat}
+D.
+    new count = D {.count = count}
+
+count x: SCountable = x.count
+# D never declares that it implements Countable
+assert count(D.new 5) == 5

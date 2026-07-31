@@ -2690,6 +2690,16 @@ impl PyCodeGenerator {
             "Del" => self.emit_del_instr(args),
             "not" => self.emit_not_instr(args),
             "discard" => self.emit_discard_instr(args),
+            // `Structural` exists only at compile time; the underlying type object
+            // is used at runtime (e.g. `V = Structural {.name = Str}` binds the record type)
+            "Structural" => {
+                let mut args = args;
+                if let Some(base) = args.remove_left_or_key("Type") {
+                    self.emit_expr(base);
+                } else {
+                    self.emit_load_const(ValueObj::None);
+                }
+            }
             "for" | "for!" => self.emit_for_instr(args),
             "while!" => self.emit_while_instr(args),
             "if" | "if!" => self.emit_if_instr(args),

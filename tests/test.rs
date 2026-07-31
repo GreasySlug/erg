@@ -510,18 +510,23 @@ fn exec_structural() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_structural_alias() -> Result<(), ()> {
+    expect_success("tests/should_ok/structural_alias.er", 0)
+}
+
+#[test]
 fn exec_structural_trait() -> Result<(), ()> {
     expect_success("tests/should_ok/structural_trait.er", 0)
 }
 
 #[test]
-fn exec_subtyping() -> Result<(), ()> {
-    expect_success("tests/should_ok/subtyping.er", 0)
+fn exec_trait_op_requirement() -> Result<(), ()> {
+    expect_success("tests/should_ok/trait_op_requirement.er", 0)
 }
 
 #[test]
-fn exec_trait_op_requirement() -> Result<(), ()> {
-    expect_success("tests/should_ok/trait_op_requirement.er", 0)
+fn exec_subtyping() -> Result<(), ()> {
+    expect_success("tests/should_ok/subtyping.er", 0)
 }
 
 #[test]

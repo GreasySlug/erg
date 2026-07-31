@@ -1,0 +1,31 @@
+# Operator-named trait requirements (e.g. `` .`_+_` ``) are normalized to their
+# dunder names (`__add__`), consistently with method definitions and call sites.
+# NOTE: requirement records are written on one line because a record attribute
+# following a line ending with an expression is parsed as an attribute access
+# continuation (a separate parser limitation).
+
+MyAdd = Trait { .`_+_` = (self: Self, other: Self) -> Self }
+
+C = Class {.val = Int}
+C|<: MyAdd|.
+    `_+_` self, other: Self = C.new(self.val + other.val)
+C.
+    new val = C {.val = val}
+
+add|A <: MyAdd| x, y: A = x.`_+_` y
+_ = add C.new(1), C.new(2)
+
+c3 = C.new(1).`_+_` C.new(2)
+assert c3.val == 3
+
+MyEq = Trait { .`==` = (self: Self, other: Self) -> Bool }
+
+E = Class {.x = Int}
+E|<: MyEq|.
+    `==` self, other: Self = self.x == other.x
+E.
+    new x = E {.x = x}
+
+eq|A <: MyEq| a, b: A = a.`==` b
+assert eq(E.new(1), E.new(1))
+assert E.new(2).`==` E.new(2)

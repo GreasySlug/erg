@@ -1721,7 +1721,58 @@ impl Desugarer {
     fn rec_desugar_acc(expr: Expr) -> Expr {
         match expr {
             Expr::Accessor(acc) => Self::desugar_acc_inner(acc),
+            // Record keys must agree with the spelling that method definitions and
+            // accessors are desugared to, or e.g. a trait requirement
+            // `Trait { .`_+_` = ... }` would never match its implementation
+            // `C.`_+_``, which is renamed to `C.__add__`.
+            Expr::Record(record) => {
+                let record = Self::desugar_record_op_keys(record);
+                Self::perform_desugar(Self::rec_desugar_acc, Expr::Record(record))
+            }
+            // `x.`_+_` y` => `x.__add__ y`
+            Expr::Call(mut call) => {
+                if let Some(attr) = call.attr_name.take() {
+                    call.attr_name = Some(Self::desugar_ident(attr));
+                }
+                Self::perform_desugar(Self::rec_desugar_acc, Expr::Call(call))
+            }
             expr => Self::perform_desugar(Self::rec_desugar_acc, expr),
+        }
+    }
+
+    /// `{ .`_+_` = ... }` => `{ .__add__ = ... }`
+    fn desugar_record_op_keys(record: Record) -> Record {
+        let rename_def_key = |def: &mut Def| match &mut def.sig {
+            Signature::Var(var) => {
+                if let VarPattern::Ident(ident) = &mut var.pat {
+                    if let Some(name) = symop_to_dname(ident.inspect()) {
+                        ident.name.rename(name.into());
+                    }
+                }
+            }
+            Signature::Subr(subr) => {
+                if let Some(name) = symop_to_dname(subr.ident.inspect()) {
+                    subr.ident.name.rename(name.into());
+                }
+            }
+        };
+        match record {
+            Record::Normal(mut rec) => {
+                for attr in rec.attrs.iter_mut() {
+                    rename_def_key(attr);
+                }
+                Record::Normal(rec)
+            }
+            Record::Mixed(mut rec) => {
+                for attr in rec.attrs.iter_mut() {
+                    // shorthand attrs (`{ x }`) also reference a variable of the same
+                    // name, so they are left untouched
+                    if let RecordAttrOrIdent::Attr(attr) = attr {
+                        rename_def_key(attr);
+                    }
+                }
+                Record::Mixed(rec)
+            }
         }
     }
 

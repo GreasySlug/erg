@@ -37,3 +37,17 @@ length x: SLen = x.__len__()
 assert length("abc") == 3
 assert length([1, 2]) == 2
 assert length({"a": 1}) == 1
+
+# operator spelling (as documented in doc/*/syntax/type/03_trait.md);
+# `` .`_-_` `` is normalized to `.__sub__` on both the requirement and the implementation
+SSub = Structural Trait { .`_-_` = (self: Self, other: Self) -> Self }
+sub|A <: SSub| x, y: A = x.`_-_` y
+
+D2 = Class {.j = Int}
+D2.
+    new j = D2 {.j = j}
+    `_-_` self, other: Self = D2.new(self.j - other.j)
+
+_ = sub D2.new(3), D2.new(2)
+d1 = D2.new(3).`_-_` D2.new(2)
+assert d1.j == 1

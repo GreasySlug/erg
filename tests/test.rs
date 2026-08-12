@@ -414,6 +414,14 @@ fn exec_pyimport_test() -> Result<(), ()> {
     }
 }
 
+/// Type-checks a representative sample of the `lib/pystd` declaration files.
+/// Compile-only: the point is to validate the `.d.er` declarations themselves,
+/// not to run the Python modules they describe.
+#[test]
+fn exec_pystd_decls() -> Result<(), ()> {
+    expect_compile_success("tests/should_ok/pystd_decls.er", 0)
+}
+
 #[test]
 fn exec_quantified() -> Result<(), ()> {
     expect_success("examples/quantified.er", 1)

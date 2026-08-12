@@ -1,0 +1,100 @@
+# Compile-time coverage for the pystd `.d.er` declaration files.
+# This is checked, not executed, so no module here is actually imported at runtime.
+
+# --- simple modules ---
+getopt = pyimport "getopt"
+opts, rest = getopt.getopt(["-v"], "v")
+assert opts.__len__() >= 0
+assert rest.__len__() >= 0
+
+reprlib = pyimport "reprlib"
+_: Str = reprlib.repr([1, 2, 3])
+
+token = pyimport "token"
+_: Bool = token.ISTERMINAL(token.NAME)
+
+stringprep = pyimport "stringprep"
+_: Bool = stringprep.in_table_a1("a")
+
+genericpath = pyimport "genericpath"
+_: Str = genericpath.commonprefix(["a/b", "a/c"])
+
+nturl2path = pyimport "nturl2path"
+_: Str = nturl2path.pathname2url("C:\\a")
+
+# --- procedures (side-effectful declarations) ---
+gc = pyimport "gc"
+_: Nat = gc.collect!()
+_: Bool = gc.isenabled!()
+
+sysconfig = pyimport "sysconfig"
+_: Str = sysconfig.get_platform!()
+
+linecache = pyimport "linecache"
+_: Str = linecache.getline! "tests/should_ok/pystd_decls.er", 1
+
+mimetypes = pyimport "mimetypes"
+_ = mimetypes.guess_type "a.txt"
+
+# --- classes ---
+sched = pyimport "sched"
+_ = sched.Scheduler!()
+
+selectors = pyimport "selectors"
+_ = selectors.DefaultSelector!()
+
+tracemalloc = pyimport "tracemalloc"
+tracemalloc.start!()
+snap = tracemalloc.take_snapshot!()
+_: [tracemalloc.Statistic; _] = snap.statistics "lineno"
+
+contextvars = pyimport "contextvars"
+_ = contextvars.copy_context!()
+_ = contextvars.ContextVar
+
+weakref = pyimport "weakref"
+_ = weakref.WeakSet!()
+_: Nat = weakref.getweakrefcount 1
+
+# --- packages ---
+futures = pyimport "concurrent/futures"
+_: Str = futures.ALL_COMPLETED
+
+et = pyimport "xml/etree/ElementTree"
+root = et.fromstring "<a><b/></a>"
+_: Str = root.tag
+_: [et.Element!; _] = root.findall "b"
+
+minidom = pyimport "xml/dom/minidom"
+doc = minidom.parseString! "<a/>"
+_: Str = doc.nodeName
+
+sax = pyimport "xml/sax"
+_: [Str; _] = sax.default_parser_list
+
+expat = pyimport "xml/parsers/expat"
+_: Str = expat.EXPAT_VERSION
+
+xmlrpc_client = pyimport "xmlrpc/client"
+_: Int = xmlrpc_client.APPLICATION_ERROR
+
+wsgiref_util = pyimport "wsgiref/util"
+_: Bool = wsgiref_util.is_hop_by_hop "Connection"
+
+mp = pyimport "multiprocessing"
+_: Nat = mp.cpu_count!()
+
+mp_pool = pyimport "multiprocessing/pool"
+_ = mp_pool.AsyncResult!
+
+dbm = pyimport "dbm"
+_ = dbm.Error
+
+# --- profiling ---
+pstats = pyimport "pstats"
+_ = pstats.SortKey
+
+cProfile = pyimport "cProfile"
+_ = cProfile.label
+
+print! "ok"

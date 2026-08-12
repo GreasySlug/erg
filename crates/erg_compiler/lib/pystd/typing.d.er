@@ -22,9 +22,17 @@
     .Hashable;
     .Reversible;
     .Sized;
-    .ContextManager;
-    .AsyncContextManager;
 } = pyimport "collections/abc"
+
+# `typing` defines these itself; they are not in `collections.abc`
+.ContextManager: ClassType
+.ContextManager.
+    __enter__: (self: ContextManager) -> ContextManager
+    __exit__: (self: ContextManager, exc_type: Type, exc_value: Obj, traceback: Obj) -> NoneType
+.AsyncContextManager: ClassType
+.AsyncContextManager.
+    __aenter__: (self: AsyncContextManager) -> AsyncContextManager
+    __aexit__: (self: AsyncContextManager, exc_type: Type, exc_value: Obj, traceback: Obj) -> NoneType
 {
     .DefaultDict;
     .OrderedDict!;
@@ -171,7 +179,6 @@
 .overload: |C <: GenericCallable|(func: C) -> C
 .override: |C <: GenericCallable|(func: C) -> C
 .reveal_type: (obj: Obj) -> NoneType
-.type_check_only: |C <: GenericCallable|(func: C) -> C
 .runtime_checkable: (cls: Type) -> Type
 
 .AbstractSet: ClassType

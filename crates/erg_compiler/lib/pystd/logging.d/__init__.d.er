@@ -65,7 +65,7 @@
 .RootLogger!: ClassType
 .RootLogger! <: .Logger!
 
-.LoggerAdaptor: ClassType
+.LoggerAdapter: ClassType
 
 .getLogger: (name: Str or NoneType := NoneType) -> .Logger!
 .getLoggerClass: () -> ClassType

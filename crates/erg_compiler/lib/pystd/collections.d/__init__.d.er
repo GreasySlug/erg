@@ -45,7 +45,7 @@
     most_common: (self: Ref(OrderedDict!), n := Nat) -> List((Obj, Int))
     subtract!: (self: RefMut(OrderedDict!), iterable_or_mapping: Iterable(Obj) or Mapping(Obj, Obj)) => NoneType
     total: (self: Ref(OrderedDict!)) -> Nat
-.DefaultDict = 'defaultDict': ClassType
+.DefaultDict = 'defaultdict': ClassType
 .UserDict: ClassType
 .UserList: ClassType
 .UserString: ClassType

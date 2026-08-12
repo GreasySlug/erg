@@ -8,7 +8,7 @@
 .hasjump: [Nat; _]
 .haslocal: [Nat; _]
 .hascompare: [Nat; _]
-.hasexec: [Nat; _]
+.hasexc: [Nat; _] # 3.11+
 
 .dis!: (
     x: Code or ClassType or TraitType or GenericCallable or Str or Bytes or NoneType := NoneType,

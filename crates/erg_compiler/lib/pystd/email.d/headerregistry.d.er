@@ -36,4 +36,4 @@
 
 .MessageIDHeader: ClassType
 
-.Headerregistry: ClassType
+.HeaderRegistry: ClassType

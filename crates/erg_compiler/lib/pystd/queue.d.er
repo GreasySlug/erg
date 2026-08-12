@@ -2,8 +2,8 @@
 .Empty <: Exception
 .Full: ClassType
 .Full <: Exception
-.Shutdown: ClassType
-.Shutdown <: Exception
+.ShutDown: ClassType # 3.13+
+.ShutDown <: Exception
 
 .Queue!: ClassType
 .Queue!.

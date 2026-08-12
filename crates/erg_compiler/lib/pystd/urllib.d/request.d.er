@@ -12,7 +12,7 @@ http = pyimport "http"
 .HTTPDefaultErrorHandler: ClassType
 .HTTPRedirectHandler: ClassType
 .HTTPCookieProcessor: ClassType
-.HTTPProxyHandler: ClassType
+.ProxyHandler: ClassType
 .HTTPPasswordMgr: ClassType
 .HTTPPasswordMgrWithDefaultRealm: ClassType
 .HTTPPasswordMgrWithPriorAuth: ClassType

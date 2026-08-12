@@ -2,4 +2,4 @@ inspect = pyimport "inspect"
 
 .print_tb!: (tb: inspect.Traceback, limit := Nat or NoneType, file := File! or NoneType) => NoneType
 
-.TracebackExeption: ClassType
+.TracebackException: ClassType

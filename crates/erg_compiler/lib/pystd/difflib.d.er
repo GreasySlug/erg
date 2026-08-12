@@ -1,6 +1,6 @@
 .Differ: ClassType
 
-.HTMLDiff: ClassType
+.HtmlDiff: ClassType
 
 .SequenceMatcher: ClassType
 

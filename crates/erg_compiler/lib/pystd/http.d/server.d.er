@@ -1,6 +1,6 @@
 .HTTPServer: ClassType
 
-.ThreadingServer: ClassType
+.ThreadingHTTPServer: ClassType
 
 .BaseHTTPRequestHandler!: ClassType
 .BaseHTTPRequestHandler!.

@@ -1,4 +1,3 @@
-.errno: {Nat: Str}
 
 .EPERM: Nat
 .ENOENT: Nat
@@ -123,8 +122,8 @@
 .EISNAM: Nat
 .EREMOTEIO: Nat
 .EDQUOT: Nat
-.EQFULL: Nat
-.ENOTCAPABLE: Nat
-.ECANCELLED: Nat
+.EQFULL: Nat # macOS only
+.ENOTCAPABLE: Nat # FreeBSD only
+.ECANCELED: Nat
 .EOWNERDEAD: Nat
 .ENOTRECOVERABLE: Nat

@@ -5,4 +5,5 @@
 
 .AbstractServer!: ClassType
 .AbstractEventLoop!: ClassType
+# removed in Python 3.14
 .AbstractEventLoopPolicy!: ClassType

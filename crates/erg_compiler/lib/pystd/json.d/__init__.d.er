@@ -46,12 +46,12 @@
     **kw: Obj,
 ) -> Obj
 
-.JsonDecoder: ClassType
-.JsonEncoder: ClassType
+.JSONDecoder: ClassType
+.JSONEncoder: ClassType
 
-.JsonDecodeError: ClassType
-.JsonDecodeError <: ValueError
-.JsonDecodeError.
+.JSONDecodeError: ClassType
+.JSONDecodeError <: ValueError
+.JSONDecodeError.
     msg: Str
     doc: Str
     pos: Nat

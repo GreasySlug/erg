@@ -13,8 +13,8 @@ logging = pyimport "logging"
 .RotatingFileHandler!: ClassType
 .RotatingFileHandler! <: BaseRotatingHandler!
 
-.TimeRotatingFileHandler!: ClassType
-.TimeRotatingFileHandler! <: BaseRotatingHandler!
+.TimedRotatingFileHandler!: ClassType
+.TimedRotatingFileHandler! <: BaseRotatingHandler!
 
 .WatchedFileHandler!: ClassType
 .WatchedFileHandler! <: logging.FileHandler!

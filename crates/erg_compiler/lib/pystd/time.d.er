@@ -2,7 +2,7 @@
 .CLOCK_MONOTONIC: Nat
 .CLOCK_MONOTONIC_RAW: Nat
 .CLOCK_PROCESS_CPUTIME_ID: Nat
-.CLOCK_PROF: Nat
+.CLOCK_PROF: Nat # FreeBSD/NetBSD only
 .CLOCK_REALTIME: Nat
 
 .altzone: Int
@@ -11,7 +11,6 @@
 .tzname: (Str, Str)
 
 .asctime!: (tm := StructTime) => Str
-.clock!: () => Float
 .clock_getres!: (clock_id: Nat) => Float
 .clock_gettime!: (clock_id: Nat) => Float
 .clock_gettime_ns!: (clock_id: Nat) => Int

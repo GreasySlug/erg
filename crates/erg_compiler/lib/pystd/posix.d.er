@@ -1,1 +1,1 @@
-.UnameResult: ClassType
+.UnameResult = 'uname_result': ClassType

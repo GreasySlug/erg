@@ -1,4 +1,4 @@
-.ST_MMODE: {0}
+.ST_MODE: {0}
 .ST_INO: {1}
 .ST_DEV: {2}
 .ST_NLINK: {3}

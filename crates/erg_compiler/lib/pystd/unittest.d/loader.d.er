@@ -11,6 +11,8 @@ re = pyimport "re"
 
 .defaultTestLoader: .TestLoader!
 
+# removed in Python 3.13
+# the three below were removed in Python 3.13
 .getTestCaseNames: (ClassType, prefix: Str) -> [Str; _]
 .makeSuite: (ClassType, prefix := Str) -> .suite.TestSuite!
 .findTestCases: (module: GenericModule, prefix := Str) -> [.case.TestCase!; _]

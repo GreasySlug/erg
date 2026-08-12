@@ -3,5 +3,5 @@
 .BytesGenerator: ClassType
 .BytesGenerator <: .Generator
 
-.DecodeGenerator: ClassType
-.DecodeGenerator <: .Generator
+.DecodedGenerator: ClassType
+.DecodedGenerator <: .Generator

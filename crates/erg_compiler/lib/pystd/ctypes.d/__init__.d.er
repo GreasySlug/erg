@@ -1,4 +1,4 @@
-._CData: ClassType
+_CData: ClassType
 ._SimpleCData: ClassType
 ._SimpleCData <: _CData
 

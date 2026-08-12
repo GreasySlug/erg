@@ -59,12 +59,4 @@
 .AsyncGenerator: ClassType
 .AsyncGenerator.
     __getitem__: (t := (Type, Type, Type)) -> Type
-.ContextManager: ClassType
-.ContextManager.
-    __enter__: (self: ContextManager) -> ContextManager
-    __exit__: (self: ContextManager, exc_type: Type, exc_value: Obj, traceback: Obj) -> NoneType
-.AsyncContextManager: ClassType
-.AsyncContextManager.
-    __aenter__: (self: AsyncContextManager) -> AsyncContextManager
-    __aexit__: (self: AsyncContextManager, exc_type: Type, exc_value: Obj, traceback: Obj) -> NoneType
 .Buffer: ClassType

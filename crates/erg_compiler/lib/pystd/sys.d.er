@@ -11,7 +11,7 @@ io = pyimport "io"
 .builtin_module_names: [Str; _]
 .byteorder: Str
 .dont_write_bytecode: Bool
-.dllhandle: Int
+.dllhandle: Int # Windows only
 .copyright: Str
 .exec_prefix: Str
 .executable: Str
@@ -35,7 +35,7 @@ io = pyimport "io"
     .safe_path = Bool;
     .int_max_str_digits = Int;
 }
-.float_indo: NamedTuple {
+.float_info: NamedTuple {
     .max = Float;
     .max_exp = Nat;
     .max_10_exp = Nat;
@@ -93,8 +93,8 @@ io = pyimport "io"
 .platform: Str
 .platlibdir: Str
 .prefix: Str
-.ps1: Str!
-.ps2: Str!
+.ps1: Str! # only defined in interactive mode
+.ps2: Str! # only defined in interactive mode
 .pycache_prefix: Str
 .stderr: io.TextIOWrapper!
 .stdin: io.TextIOWrapper!

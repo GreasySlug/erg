@@ -18,7 +18,7 @@
 .Expr <: Stmt
 .ExprContext = 'expr_context': ClassType
 .ExprContext <: AST
-.Module = 'module': ClassType
+.Module: ClassType
 .Module <: AST
 .Module.
     body: [Stmt; _]
@@ -476,7 +476,7 @@
     context_expr: Expr
     optional_vars: Expr or NoneType
 
-.MatchCase: ClassType
+.MatchCase = 'match_case': ClassType
 .MatchCase <: AST
 .MatchCase.
     pattern: Pattern

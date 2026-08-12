@@ -1,4 +1,4 @@
-.BreakPoint: ClassType
+.Breakpoint: ClassType
 .Bdb: ClassType
 
 .set_trace!: () => NoneType

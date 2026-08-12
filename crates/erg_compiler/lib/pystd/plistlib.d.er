@@ -1,0 +1,43 @@
+.PlistFormat: ClassType
+.PlistFormat <: Nat
+
+.FMT_XML: .PlistFormat
+.FMT_BINARY: .PlistFormat
+
+.InvalidFileException: ClassType
+.InvalidFileException <: ValueError
+.InvalidFileException.
+    __call__: (message := Str) -> .InvalidFileException
+
+.UID: ClassType
+.UID.
+    data: Nat
+    __call__: (data: Nat) -> .UID
+
+.load!: (
+    fp: Readable!,
+    fmt := .PlistFormat or NoneType,
+    dict_type := ClassType,
+    aware_datetime := Bool,
+) => Obj
+.loads: (
+    value: Bytes,
+    fmt := .PlistFormat or NoneType,
+    dict_type := ClassType,
+    aware_datetime := Bool,
+) -> Obj
+.dump!: (
+    value: Obj,
+    fp: Writable!,
+    fmt := .PlistFormat,
+    sort_keys := Bool,
+    skipkeys := Bool,
+    aware_datetime := Bool,
+) => NoneType
+.dumps: (
+    value: Obj,
+    fmt := .PlistFormat,
+    skipkeys := Bool,
+    sort_keys := Bool,
+    aware_datetime := Bool,
+) -> Bytes

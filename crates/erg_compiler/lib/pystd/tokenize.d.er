@@ -1,0 +1,27 @@
+token = pyimport "token"
+
+.tok_name: {Nat: Str}
+.EXACT_TOKEN_TYPES: {Str: Nat}
+
+.ISTERMINAL: (x: Nat) -> Bool
+.ISNONTERMINAL: (x: Nat) -> Bool
+.ISEOF: (x: Nat) -> Bool
+
+.TokenError: ClassType
+.TokenError <: Exception
+
+.TokenInfo: ClassType
+.TokenInfo.
+    type: Nat
+    string: Str
+    start: (Nat, Nat)
+    end: (Nat, Nat)
+    line: Str
+    exact_type: Nat
+    __call__: (type: Nat, string: Str, start: (Nat, Nat), end: (Nat, Nat), line: Str) -> .TokenInfo
+
+.tokenize!: (readline: () => Bytes) => Iterable(.TokenInfo)
+.generate_tokens!: (readline: () => Str) => Iterable(.TokenInfo)
+.detect_encoding!: (readline: () => Bytes) => (Str, [Bytes; _])
+.untokenize: (iterable: Iterable(.TokenInfo)) -> Str or Bytes
+.open!: (filename: PathLike) => File!

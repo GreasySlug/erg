@@ -1,0 +1,23 @@
+.Error: ClassType
+.Error <: Exception
+
+.BaseBrowser!: ClassType
+.BaseBrowser!.
+    name: Str
+    basename: Str
+    args: [Str; _]
+    __call__: (name := Str) -> .BaseBrowser!
+    open!: (self: RefMut(.BaseBrowser!), url: Str, new := Nat, autoraise := Bool) => Bool
+    open_new!: (self: RefMut(.BaseBrowser!), url: Str) => Bool
+    open_new_tab!: (self: RefMut(.BaseBrowser!), url: Str) => Bool
+
+.open!: (url: Str, new := Nat, autoraise := Bool) => Bool
+.open_new!: (url: Str) => Bool
+.open_new_tab!: (url: Str) => Bool
+.get!: (using := Str or NoneType) => .BaseBrowser!
+.register!: (
+    name: Str,
+    klass: ClassType or NoneType,
+    instance := .BaseBrowser! or NoneType,
+    preferred := Bool,
+) => NoneType

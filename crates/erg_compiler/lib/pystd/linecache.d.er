@@ -1,0 +1,5 @@
+.getline!: (filename: PathLike, lineno: Nat, module_globals := {Str: Obj} or NoneType) => Str
+.getlines!: (filename: PathLike, module_globals := {Str: Obj} or NoneType) => [Str; _]
+.clearcache!: () => NoneType
+.checkcache!: (filename := PathLike or NoneType) => NoneType
+.lazycache!: (filename: PathLike, module_globals: {Str: Obj}) => Bool

@@ -1,0 +1,13 @@
+# unix only
+.STDIN_FILENO: Nat
+.STDOUT_FILENO: Nat
+.STDERR_FILENO: Nat
+.CHILD: Nat
+
+.openpty!: () => (Nat, Nat)
+.fork!: () => (Nat, Nat)
+.spawn!: (
+    argv: Str or [Str; _],
+    master_read := (Nat) => Bytes,
+    stdin_read := (Nat) => Bytes,
+) => Int

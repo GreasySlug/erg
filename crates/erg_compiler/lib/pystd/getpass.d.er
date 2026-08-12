@@ -1,0 +1,5 @@
+.GetPassWarning: ClassType
+.GetPassWarning <: UserWarning
+
+.getpass!: (prompt := Str, stream := Writable!) => Str
+.getuser!: () => Str

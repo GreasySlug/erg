@@ -1,0 +1,31 @@
+.Event: ClassType
+.Event.
+    time: Float
+    priority: Int
+    action: GenericCallable
+    argument: [Obj; _]
+    kwargs: {Str: Obj}
+
+.Scheduler! = 'scheduler': ClassType
+.Scheduler!.
+    __call__: (timefunc := () => Float, delayfunc := (Float) => NoneType) -> .Scheduler!
+    enterabs!: (
+        self: RefMut(.Scheduler!),
+        time: Float,
+        priority: Int,
+        action: GenericCallable,
+        argument := [Obj; _],
+        kwargs := {Str: Obj},
+    ) => .Event
+    enter!: (
+        self: RefMut(.Scheduler!),
+        delay: Float,
+        priority: Int,
+        action: GenericCallable,
+        argument := [Obj; _],
+        kwargs := {Str: Obj},
+    ) => .Event
+    cancel!: (self: RefMut(.Scheduler!), event: .Event) => NoneType
+    empty: (self: Ref(.Scheduler!)) -> Bool
+    run!: (self: RefMut(.Scheduler!), blocking := Bool) => Float or NoneType
+    queue: (self: Ref(.Scheduler!)) -> [.Event; _]

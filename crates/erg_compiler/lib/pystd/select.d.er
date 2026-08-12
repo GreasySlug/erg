@@ -1,0 +1,61 @@
+.Error = 'error': ClassType
+.Error <: OSError
+
+.PIPE_BUF: Nat
+
+.POLLIN: Nat # unix only
+.POLLPRI: Nat # unix only
+.POLLOUT: Nat # unix only
+.POLLERR: Nat # unix only
+.POLLHUP: Nat # unix only
+.POLLNVAL: Nat # unix only
+.POLLRDHUP: Nat # linux only
+.POLLMSG: Nat # linux only
+.POLLRDBAND: Nat # unix only
+.POLLRDNORM: Nat # unix only
+.POLLWRBAND: Nat # unix only
+.POLLWRNORM: Nat # unix only
+
+.EPOLLIN: Nat # linux only
+.EPOLLOUT: Nat # linux only
+.EPOLLPRI: Nat # linux only
+.EPOLLERR: Nat # linux only
+.EPOLLHUP: Nat # linux only
+.EPOLLET: Nat # linux only
+.EPOLLONESHOT: Nat # linux only
+.EPOLLEXCLUSIVE: Nat # linux only
+.EPOLLRDHUP: Nat # linux only
+.EPOLLRDNORM: Nat # linux only
+.EPOLLRDBAND: Nat # linux only
+.EPOLLWRNORM: Nat # linux only
+.EPOLLWRBAND: Nat # linux only
+.EPOLLMSG: Nat # linux only
+.EPOLL_CLOEXEC: Nat # linux only
+
+.Poll! = 'poll': ClassType # unix only
+.Poll!.
+    register!: (self: RefMut(.Poll!), fd: Int or FileLike!, eventmask := Nat) => NoneType
+    modify!: (self: RefMut(.Poll!), fd: Int or FileLike!, eventmask: Nat) => NoneType
+    unregister!: (self: RefMut(.Poll!), fd: Int or FileLike!) => NoneType
+    poll!: (self: RefMut(.Poll!), timeout := Float or NoneType) => [(Nat, Nat); _]
+
+.Epoll! = 'epoll': ClassType # linux only
+.Epoll! <: ContextManager
+.Epoll!.
+    closed: Bool
+    __call__: (sizehint := Int, flags := Int) -> .Epoll!
+    close!: (self: RefMut(.Epoll!)) => NoneType
+    fileno: (self: Ref(.Epoll!)) -> Nat
+    register!: (self: RefMut(.Epoll!), fd: Int or FileLike!, eventmask := Nat) => NoneType
+    modify!: (self: RefMut(.Epoll!), fd: Int or FileLike!, eventmask: Nat) => NoneType
+    unregister!: (self: RefMut(.Epoll!), fd: Int or FileLike!) => NoneType
+    poll!: (self: RefMut(.Epoll!), timeout := Float or NoneType, maxevents := Int) => [(Nat, Nat); _]
+
+.poll!: () => .Poll! # unix only
+.epoll!: (sizehint := Int, flags := Int) => .Epoll! # linux only
+.select!: (
+    rlist: Iterable(Int or FileLike!),
+    wlist: Iterable(Int or FileLike!),
+    xlist: Iterable(Int or FileLike!),
+    timeout := Float or NoneType,
+) => ([Obj; _], [Obj; _], [Obj; _])

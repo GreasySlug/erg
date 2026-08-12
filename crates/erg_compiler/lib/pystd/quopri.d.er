@@ -1,0 +1,4 @@
+.decode!: (input: Readable!, output: Writable!, header := Bool) => NoneType
+.encode!: (input: Readable!, output: Writable!, quotetabs: Bool, header := Bool) => NoneType
+.decodestring: (s: Bytes, header := Bool) -> Bytes
+.encodestring: (s: Bytes, quotetabs := Bool, header := Bool) -> Bytes

@@ -1,0 +1,13 @@
+.NetrcParseError: ClassType
+.NetrcParseError <: Exception
+.NetrcParseError.
+    msg: Str
+    filename: Str or NoneType
+    lineno: Nat or NoneType
+
+.Netrc = 'netrc': ClassType
+.Netrc.
+    hosts: {Str: (Str, Str or NoneType, Str)}
+    macros: {Str: [Str; _]}
+    __call__: (file := PathLike) -> .Netrc
+    authenticators: (self: Ref(.Netrc), host: Str) -> (Str, Str or NoneType, Str) or NoneType

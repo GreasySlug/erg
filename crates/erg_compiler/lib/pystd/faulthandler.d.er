@@ -1,0 +1,8 @@
+.enable!: (file := Writable!, all_threads := Bool) => NoneType
+.disable!: () => NoneType
+.is_enabled!: () => Bool
+.dump_traceback!: (file := Writable!, all_threads := Bool) => NoneType
+.dump_traceback_later!: (timeout: Float, repeat := Bool, file := Writable!, exit := Bool) => NoneType
+.cancel_dump_traceback_later!: () => NoneType
+.register!: (signum: Int, file := Writable!, all_threads := Bool, chain := Bool) => NoneType
+.unregister!: (signum: Int) => Bool

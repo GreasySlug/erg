@@ -1,0 +1,52 @@
+# unix only
+.Error = 'error': ClassType
+.Error <: Exception
+
+.TCSANOW: Nat
+.TCSADRAIN: Nat
+.TCSAFLUSH: Nat
+
+.TCIFLUSH: Nat
+.TCOFLUSH: Nat
+.TCIOFLUSH: Nat
+
+.TCOOFF: Nat
+.TCOON: Nat
+.TCIOFF: Nat
+.TCION: Nat
+
+.VINTR: Nat
+.VQUIT: Nat
+.VERASE: Nat
+.VKILL: Nat
+.VEOF: Nat
+.VTIME: Nat
+.VMIN: Nat
+.VSTART: Nat
+.VSTOP: Nat
+.VSUSP: Nat
+.VEOL: Nat
+
+.ECHO: Nat
+.ICANON: Nat
+.ISIG: Nat
+.IEXTEN: Nat
+.IXON: Nat
+.IXOFF: Nat
+.ICRNL: Nat
+.INLCR: Nat
+.IGNCR: Nat
+.OPOST: Nat
+.CSIZE: Nat
+.CS8: Nat
+.PARENB: Nat
+.CSTOPB: Nat
+
+.tcgetattr!: (fd: Int or FileLike!) => [Obj; _]
+.tcsetattr!: (fd: Int or FileLike!, when: Nat, attributes: [Obj; _]) => NoneType
+.tcsendbreak!: (fd: Int or FileLike!, duration: Nat) => NoneType
+.tcdrain!: (fd: Int or FileLike!) => NoneType
+.tcflush!: (fd: Int or FileLike!, queue: Nat) => NoneType
+.tcflow!: (fd: Int or FileLike!, action: Nat) => NoneType
+.tcgetwinsize!: (fd: Int or FileLike!) => (Nat, Nat)
+.tcsetwinsize!: (fd: Int or FileLike!, winsize: (Nat, Nat)) => NoneType

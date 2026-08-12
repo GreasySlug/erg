@@ -1,0 +1,64 @@
+.EVENT_READ: Nat
+.EVENT_WRITE: Nat
+
+.SelectorKey: ClassType
+.SelectorKey.
+    fileobj: FileLike! or Nat
+    fd: Nat
+    events: Nat
+    data: Obj
+
+.BaseSelector!: ClassType
+.BaseSelector! <: ContextManager
+.BaseSelector!.
+    register!: (
+        self: RefMut(.BaseSelector!),
+        fileobj: FileLike! or Nat,
+        events: Nat,
+        data := Obj,
+    ) => .SelectorKey
+    unregister!: (self: RefMut(.BaseSelector!), fileobj: FileLike! or Nat) => .SelectorKey
+    modify!: (
+        self: RefMut(.BaseSelector!),
+        fileobj: FileLike! or Nat,
+        events: Nat,
+        data := Obj,
+    ) => .SelectorKey
+    select!: (self: RefMut(.BaseSelector!), timeout := Float or NoneType) => [(.SelectorKey, Nat); _]
+    close!: (self: RefMut(.BaseSelector!)) => NoneType
+    get_key: (self: Ref(.BaseSelector!), fileobj: FileLike! or Nat) -> .SelectorKey
+    get_map: (self: Ref(.BaseSelector!)) -> {Obj: .SelectorKey}
+
+.SelectSelector!: ClassType
+.SelectSelector! <: .BaseSelector!
+.SelectSelector!.
+    __call__: () -> .SelectSelector!
+
+.PollSelector!: ClassType
+.PollSelector! <: .BaseSelector!
+.PollSelector!.
+    __call__: () -> .PollSelector!
+    fileno: (self: Ref(.PollSelector!)) -> Nat
+
+.EpollSelector!: ClassType # Linux only
+.EpollSelector! <: .BaseSelector!
+.EpollSelector!.
+    __call__: () -> .EpollSelector!
+    fileno: (self: Ref(.EpollSelector!)) -> Nat
+
+.DevpollSelector!: ClassType # Solaris only
+.DevpollSelector! <: .BaseSelector!
+.DevpollSelector!.
+    __call__: () -> .DevpollSelector!
+    fileno: (self: Ref(.DevpollSelector!)) -> Nat
+
+.KqueueSelector!: ClassType # BSD only
+.KqueueSelector! <: .BaseSelector!
+.KqueueSelector!.
+    __call__: () -> .KqueueSelector!
+    fileno: (self: Ref(.KqueueSelector!)) -> Nat
+
+.DefaultSelector!: ClassType
+.DefaultSelector! <: .BaseSelector!
+.DefaultSelector!.
+    __call__: () -> .DefaultSelector!

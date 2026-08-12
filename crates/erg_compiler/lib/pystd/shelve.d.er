@@ -1,0 +1,44 @@
+.Shelf!: ClassType
+.Shelf! <: ContextManager
+.Shelf!.
+    writeback: Bool
+    keyencoding: Str
+    __call__: (
+        dict: {Str: Bytes},
+        protocol := Nat,
+        writeback := Bool,
+        keyencoding := Str,
+    ) -> .Shelf!
+    keys!: (self: Ref(.Shelf!)) => [Str; _]
+    get!: (self: Ref(.Shelf!), key: Str, default := Obj) => Obj
+    pop!: (self: RefMut(.Shelf!), key: Str, default := Obj) => Obj
+    setdefault!: (self: RefMut(.Shelf!), key: Str, default := Obj) => Obj
+    update!: (self: RefMut(.Shelf!), other: {Str: Obj}) => NoneType
+    sync!: (self: RefMut(.Shelf!)) => NoneType
+    close!: (self: RefMut(.Shelf!)) => NoneType
+
+.BsdDbShelf!: ClassType
+.BsdDbShelf! <: .Shelf!
+.BsdDbShelf!.
+    set_location!: (self: RefMut(.BsdDbShelf!), key: Str) => (Str, Obj)
+    next!: (self: RefMut(.BsdDbShelf!)) => (Str, Obj)
+    previous!: (self: RefMut(.BsdDbShelf!)) => (Str, Obj)
+    first!: (self: RefMut(.BsdDbShelf!)) => (Str, Obj)
+    last!: (self: RefMut(.BsdDbShelf!)) => (Str, Obj)
+
+.DbfilenameShelf!: ClassType
+.DbfilenameShelf! <: .Shelf!
+.DbfilenameShelf!.
+    __call__: (
+        filename: PathLike,
+        flag := Str,
+        protocol := Nat,
+        writeback := Bool,
+    ) -> .DbfilenameShelf!
+
+.open!: (
+    filename: PathLike,
+    flag := Str,
+    protocol := Nat,
+    writeback := Bool,
+) => .DbfilenameShelf!

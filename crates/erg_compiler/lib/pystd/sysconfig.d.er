@@ -1,0 +1,23 @@
+.get_scheme_names!: () => (Str,)
+.get_default_scheme!: () => Str
+.get_preferred_scheme!: (key: Str) => Str
+.get_path_names!: () => (Str,)
+.get_path!: (
+    name: Str,
+    scheme := Str,
+    vars := {Str: Str} or NoneType,
+    expand := Bool,
+) => Str
+.get_paths!: (
+    scheme := Str,
+    vars := {Str: Str} or NoneType,
+    expand := Bool,
+) => {Str: Str}
+.get_config_var!: (name: Str) => Obj
+.get_config_vars!: (*args: Str) => Obj
+.get_config_h_filename!: () => Str
+.get_makefile_filename!: () => Str
+.get_python_version!: () => Str
+.get_platform!: () => Str
+.is_python_build!: () => Bool
+.parse_config_h!: (fp: Readable!, vars := {Str: Obj} or NoneType) => {Str: Obj}

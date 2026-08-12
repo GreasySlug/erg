@@ -1,0 +1,82 @@
+.Frame: ClassType
+.Frame.
+    filename: Str
+    lineno: Nat
+
+.Traceback: ClassType
+.Traceback <: Iterable(.Frame)
+.Traceback.
+    total_nframe: Nat or NoneType
+    format: (self: Ref(.Traceback), limit := Nat or NoneType, most_recent_first := Bool) -> [Str; _]
+
+.Trace: ClassType
+.Trace.
+    domain: Nat
+    size: Nat
+    traceback: .Traceback
+
+.Statistic: ClassType
+.Statistic.
+    count: Nat
+    size: Nat
+    traceback: .Traceback
+
+.StatisticDiff: ClassType
+.StatisticDiff.
+    count: Nat
+    count_diff: Int
+    size: Nat
+    size_diff: Int
+    traceback: .Traceback
+
+.BaseFilter: ClassType
+.BaseFilter.
+    inclusive: Bool
+
+.DomainFilter: ClassType
+.DomainFilter <: .BaseFilter
+.DomainFilter.
+    domain: Nat
+    __call__: (inclusive: Bool, domain: Nat) -> .DomainFilter
+
+.Filter: ClassType
+.Filter <: .BaseFilter
+.Filter.
+    filename_pattern: Str
+    lineno: Nat or NoneType
+    all_frames: Bool
+    domain: Nat or NoneType
+    __call__: (
+        inclusive: Bool,
+        filename_pattern: Str,
+        lineno := Nat or NoneType,
+        all_frames := Bool,
+        domain := Nat or NoneType,
+    ) -> .Filter
+
+.Snapshot: ClassType
+.Snapshot.
+    traces: [.Trace; _]
+    traceback_limit: Nat
+    compare_to: (
+        self: Ref(.Snapshot),
+        old_snapshot: .Snapshot,
+        key_type: Str,
+        cumulative := Bool,
+    ) -> [.StatisticDiff; _]
+    dump!: (self: Ref(.Snapshot), filename: PathLike) => NoneType
+    filter_traces: (self: Ref(.Snapshot), filters: [.BaseFilter; _]) -> .Snapshot
+    statistics: (self: Ref(.Snapshot), key_type: Str, cumulative := Bool) -> [.Statistic; _]
+
+.load!: (filename: PathLike) => .Snapshot
+
+.start!: (nframe := Nat) => NoneType
+.stop!: () => NoneType
+.is_tracing!: () => Bool
+.clear_traces!: () => NoneType
+.get_object_traceback!: (obj: Obj) => .Traceback or NoneType
+.get_traceback_limit!: () => Nat
+.get_traced_memory!: () => (Nat, Nat)
+.get_tracemalloc_memory!: () => Nat
+.reset_peak!: () => NoneType
+.take_snapshot!: () => .Snapshot

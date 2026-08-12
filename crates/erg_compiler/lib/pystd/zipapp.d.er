@@ -1,0 +1,12 @@
+.ZipAppError: ClassType
+.ZipAppError <: ValueError
+
+.create_archive!: (
+    source: PathLike or FileLike!,
+    target := PathLike or FileLike! or NoneType,
+    interpreter := Str or NoneType,
+    main := Str or NoneType,
+    filter := (PathLike -> Bool) or NoneType,
+    compressed := Bool,
+) => NoneType
+.get_interpreter!: (archive: PathLike or FileLike!) => Str or NoneType

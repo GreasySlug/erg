@@ -1,0 +1,14 @@
+# unix only
+.StructPasswd = 'struct_passwd': ClassType
+.StructPasswd.
+    pw_name: Str
+    pw_passwd: Str
+    pw_uid: Nat
+    pw_gid: Nat
+    pw_gecos: Str
+    pw_dir: Str
+    pw_shell: Str
+
+.getpwuid!: (uid: Nat) => .StructPasswd
+.getpwnam!: (name: Str) => .StructPasswd
+.getpwall!: () => [.StructPasswd; _]

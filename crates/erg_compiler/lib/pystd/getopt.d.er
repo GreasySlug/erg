@@ -1,0 +1,20 @@
+.GetoptError: ClassType
+.GetoptError <: Exception
+.GetoptError.
+    msg: Str
+    opt: Str
+    __call__: (msg: Str, opt := Str) -> .GetoptError
+
+.Error = 'error': ClassType
+.Error <: .GetoptError
+
+.getopt: (
+    args: [Str; _],
+    shortopts: Str,
+    longopts := [Str; _],
+) -> ([(Str, Str); _], [Str; _])
+.gnu_getopt: (
+    args: [Str; _],
+    shortopts: Str,
+    longopts := [Str; _],
+) -> ([(Str, Str); _], [Str; _])

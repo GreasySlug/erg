@@ -1,0 +1,36 @@
+.Repr: ClassType
+.Repr.
+    maxlevel: Nat
+    maxtuple: Nat
+    maxlist: Nat
+    maxarray: Nat
+    maxdict: Nat
+    maxset: Nat
+    maxfrozenset: Nat
+    maxdeque: Nat
+    maxstring: Nat
+    maxlong: Nat
+    maxother: Nat
+    fillvalue: Str
+    indent: Nat or Str or NoneType
+    __call__: (
+        maxlevel := Nat,
+        maxtuple := Nat,
+        maxlist := Nat,
+        maxarray := Nat,
+        maxdict := Nat,
+        maxset := Nat,
+        maxfrozenset := Nat,
+        maxdeque := Nat,
+        maxstring := Nat,
+        maxlong := Nat,
+        maxother := Nat,
+        fillvalue := Str,
+        indent := Nat or Str or NoneType,
+    ) -> .Repr
+    repr: (self: Ref(.Repr), x: Obj) -> Str
+    repr1: (self: Ref(.Repr), x: Obj, level: Nat) -> Str
+
+.aRepr: .Repr
+.repr: (x: Obj) -> Str
+.recursive_repr: |F <: GenericCallable|(fillvalue := Str) -> (F -> F)

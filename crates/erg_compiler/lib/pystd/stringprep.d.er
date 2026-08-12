@@ -1,0 +1,27 @@
+.b1_set: {Nat}
+.b3_exceptions: {Nat: Str}
+.c22_specials: {Nat}
+.c6_set: {Nat}
+.c7_set: {Nat}
+.c8_set: {Nat}
+.c9_set: {Nat}
+
+.in_table_a1: (code: Str) -> Bool
+.in_table_b1: (code: Str) -> Bool
+.map_table_b2: (a: Str) -> Str
+.map_table_b3: (code: Str) -> Str
+.in_table_c11: (code: Str) -> Bool
+.in_table_c12: (code: Str) -> Bool
+.in_table_c11_c12: (code: Str) -> Bool
+.in_table_c21: (code: Str) -> Bool
+.in_table_c22: (code: Str) -> Bool
+.in_table_c21_c22: (code: Str) -> Bool
+.in_table_c3: (code: Str) -> Bool
+.in_table_c4: (code: Str) -> Bool
+.in_table_c5: (code: Str) -> Bool
+.in_table_c6: (code: Str) -> Bool
+.in_table_c7: (code: Str) -> Bool
+.in_table_c8: (code: Str) -> Bool
+.in_table_c9: (code: Str) -> Bool
+.in_table_d1: (code: Str) -> Bool
+.in_table_d2: (code: Str) -> Bool

@@ -1,0 +1,9 @@
+.constructor!: (object: GenericCallable) => NoneType
+.pickle!: (
+    ob_type: ClassType,
+    pickle_function: GenericCallable,
+    constructor_ob := GenericCallable or NoneType,
+) => NoneType
+.add_extension!: (module: Str, name: Str, code: Nat) => NoneType
+.remove_extension!: (module: Str, name: Str, code: Nat) => NoneType
+.clear_extension_cache!: () => NoneType

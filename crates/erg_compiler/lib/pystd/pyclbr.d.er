@@ -1,0 +1,25 @@
+.Function: ClassType
+.Function.
+    module: Str
+    name: Str
+    file: Str
+    lineno: Nat
+    end_lineno: Nat or NoneType
+    parent: Obj or NoneType
+    is_async: Bool
+    children: {Str: Obj}
+
+.Class: ClassType
+.Class.
+    module: Str
+    name: Str
+    super: [Obj; _]
+    methods: {Str: Nat}
+    file: Str
+    lineno: Nat
+    end_lineno: Nat or NoneType
+    parent: Obj or NoneType
+    children: {Str: Obj}
+
+.readmodule!: (module: Str, path := [Str; _] or NoneType) => {Str: .Class}
+.readmodule_ex!: (module: Str, path := [Str; _] or NoneType) => {Str: Obj}

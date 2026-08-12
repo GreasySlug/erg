@@ -1,0 +1,69 @@
+.ACCESS_DEFAULT: Nat
+.ACCESS_READ: Nat
+.ACCESS_WRITE: Nat
+.ACCESS_COPY: Nat
+.ALLOCATIONGRANULARITY: Nat
+.PAGESIZE: Nat
+
+.PROT_EXEC: Nat # unix only
+.PROT_READ: Nat # unix only
+.PROT_WRITE: Nat # unix only
+
+.MAP_ANON: Nat # unix only
+.MAP_ANONYMOUS: Nat # unix only
+.MAP_PRIVATE: Nat # unix only
+.MAP_SHARED: Nat # unix only
+.MAP_DENYWRITE: Nat # linux only
+.MAP_EXECUTABLE: Nat # linux only
+.MAP_NORESERVE: Nat # linux only
+.MAP_POPULATE: Nat # linux only
+.MAP_STACK: Nat # linux only
+
+.MADV_NORMAL: Nat # unix only
+.MADV_RANDOM: Nat # unix only
+.MADV_SEQUENTIAL: Nat # unix only
+.MADV_WILLNEED: Nat # unix only
+.MADV_DONTNEED: Nat # unix only
+.MADV_FREE: Nat # unix only
+.MADV_REMOVE: Nat # linux only
+.MADV_DONTFORK: Nat # linux only
+.MADV_DOFORK: Nat # linux only
+.MADV_MERGEABLE: Nat # linux only
+.MADV_UNMERGEABLE: Nat # linux only
+.MADV_HUGEPAGE: Nat # linux only
+.MADV_NOHUGEPAGE: Nat # linux only
+.MADV_DONTDUMP: Nat # linux only
+.MADV_DODUMP: Nat # linux only
+.MADV_HWPOISON: Nat # linux only
+
+.Error = 'error': ClassType
+.Error <: OSError
+
+.Mmap! = 'mmap': ClassType
+.Mmap! <: ContextManager
+.Mmap!.
+    closed: Bool
+    __call__: (
+        fileno: Int,
+        length: Nat,
+        flags := Nat,
+        prot := Nat,
+        access := Nat,
+        offset := Nat,
+    ) -> .Mmap!
+    close!: (self: RefMut(.Mmap!)) => NoneType
+    find: (self: Ref(.Mmap!), sub: Bytes, start := Nat, end := Nat) -> Int
+    rfind: (self: Ref(.Mmap!), sub: Bytes, start := Nat, end := Nat) -> Int
+    flush!: (self: RefMut(.Mmap!), offset := Nat, size := Nat) => NoneType
+    madvise!: (self: RefMut(.Mmap!), option: Nat, start := Nat, length := Nat) => NoneType
+    move!: (self: RefMut(.Mmap!), dest: Nat, src: Nat, count: Nat) => NoneType
+    read!: (self: RefMut(.Mmap!), n := Nat or NoneType) => Bytes
+    read_byte!: (self: RefMut(.Mmap!)) => Nat
+    readline!: (self: RefMut(.Mmap!)) => Bytes
+    resize!: (self: RefMut(.Mmap!), newsize: Nat) => NoneType
+    seek!: (self: RefMut(.Mmap!), pos: Int, whence := Nat) => NoneType
+    seekable: (self: Ref(.Mmap!)) -> Bool
+    size: (self: Ref(.Mmap!)) -> Nat
+    tell: (self: Ref(.Mmap!)) -> Nat
+    write!: (self: RefMut(.Mmap!), bytes: Bytes) => Nat
+    write_byte!: (self: RefMut(.Mmap!), byte: Nat) => NoneType

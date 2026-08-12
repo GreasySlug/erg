@@ -1,0 +1,37 @@
+# unix only
+.F_DUPFD: Nat
+.F_GETFD: Nat
+.F_SETFD: Nat
+.F_GETFL: Nat
+.F_SETFL: Nat
+.F_GETLK: Nat
+.F_SETLK: Nat
+.F_SETLKW: Nat
+.F_GETOWN: Nat
+.F_SETOWN: Nat
+.F_RDLCK: Nat
+.F_WRLCK: Nat
+.F_UNLCK: Nat
+
+.LOCK_SH: Nat
+.LOCK_EX: Nat
+.LOCK_NB: Nat
+.LOCK_UN: Nat
+
+.FD_CLOEXEC: Nat
+
+.fcntl!: (fd: Int or FileLike!, cmd: Int, arg := Int or Bytes) => Int or Bytes
+.ioctl!: (
+    fd: Int or FileLike!,
+    request: Int,
+    arg := Int or Bytes,
+    mutate_flag := Bool,
+) => Int or Bytes
+.flock!: (fd: Int or FileLike!, operation: Int) => NoneType
+.lockf!: (
+    fd: Int or FileLike!,
+    cmd: Int,
+    len := Int,
+    start := Int,
+    whence := Int,
+) => NoneType

@@ -1,0 +1,24 @@
+.Token: (T: Type) -> ClassType
+.Token(T).
+    var: .ContextVar(T)
+    old_value: T or Obj
+
+.ContextVar: (T: Type) -> ClassType
+.ContextVar(T).
+    name: Str
+    __call__: (name: Str, default := T) -> .ContextVar(T)
+    get: (self: Ref(.ContextVar(T)), default := T) -> T
+    set!: (self: RefMut(.ContextVar(T)), value: T) => .Token(T)
+    reset!: (self: RefMut(.ContextVar(T)), token: .Token(T)) => NoneType
+
+.Context: ClassType
+.Context.
+    __call__: () -> .Context
+    run!: (self: RefMut(.Context), callable: GenericCallable, *args: Obj) => Obj
+    copy: (self: Ref(.Context)) -> .Context
+    get: (self: Ref(.Context), key: Obj, default := Obj) -> Obj
+    keys: (self: Ref(.Context)) -> Iterable(Obj)
+    values: (self: Ref(.Context)) -> Iterable(Obj)
+    items: (self: Ref(.Context)) -> Iterable((Obj, Obj))
+
+.copy_context!: () => .Context

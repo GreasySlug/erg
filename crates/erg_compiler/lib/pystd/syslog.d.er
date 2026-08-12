@@ -1,0 +1,42 @@
+# unix only
+.LOG_EMERG: Nat
+.LOG_ALERT: Nat
+.LOG_CRIT: Nat
+.LOG_ERR: Nat
+.LOG_WARNING: Nat
+.LOG_NOTICE: Nat
+.LOG_INFO: Nat
+.LOG_DEBUG: Nat
+
+.LOG_PID: Nat
+.LOG_CONS: Nat
+.LOG_NDELAY: Nat
+.LOG_ODELAY: Nat
+.LOG_NOWAIT: Nat
+.LOG_PERROR: Nat
+
+.LOG_KERN: Nat
+.LOG_USER: Nat
+.LOG_MAIL: Nat
+.LOG_DAEMON: Nat
+.LOG_AUTH: Nat
+.LOG_LPR: Nat
+.LOG_NEWS: Nat
+.LOG_UUCP: Nat
+.LOG_CRON: Nat
+.LOG_SYSLOG: Nat
+.LOG_LOCAL0: Nat
+.LOG_LOCAL1: Nat
+.LOG_LOCAL2: Nat
+.LOG_LOCAL3: Nat
+.LOG_LOCAL4: Nat
+.LOG_LOCAL5: Nat
+.LOG_LOCAL6: Nat
+.LOG_LOCAL7: Nat
+
+.syslog!: (priority := Nat, message := Str) => NoneType
+.openlog!: (ident := Str, logoption := Nat, facility := Nat) => NoneType
+.closelog!: () => NoneType
+.setlogmask!: (maskpri: Nat) => Nat
+.LOG_MASK: (pri: Nat) -> Nat
+.LOG_UPTO: (pri: Nat) -> Nat

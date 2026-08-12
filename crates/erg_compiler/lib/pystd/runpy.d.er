@@ -1,0 +1,11 @@
+.run_module!: (
+    mod_name: Str,
+    init_globals := {Str: Obj} or NoneType,
+    run_name := Str or NoneType,
+    alter_sys := Bool,
+) => {Str: Obj}
+.run_path!: (
+    path_name: PathLike,
+    init_globals := {Str: Obj} or NoneType,
+    run_name := Str or NoneType,
+) => {Str: Obj}

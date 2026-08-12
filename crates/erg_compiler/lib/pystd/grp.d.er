@@ -1,0 +1,11 @@
+# unix only
+.StructGroup = 'struct_group': ClassType
+.StructGroup.
+    gr_name: Str
+    gr_passwd: Str or NoneType
+    gr_gid: Nat
+    gr_mem: [Str; _]
+
+.getgrgid!: (id: Nat) => .StructGroup
+.getgrnam!: (name: Str) => .StructGroup
+.getgrall!: () => [.StructGroup; _]

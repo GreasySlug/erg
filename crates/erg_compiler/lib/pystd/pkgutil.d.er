@@ -1,0 +1,18 @@
+.ModuleInfo: ClassType
+.ModuleInfo.
+    module_finder: Obj
+    name: Str
+    ispkg: Bool
+
+.extend_path: (path: [Str; _], name: Str) -> [Str; _]
+.get_data!: (package: Str, resource: Str) => Bytes or NoneType
+.get_importer!: (path_item: PathLike) => Obj
+.iter_importers!: (fullname := Str) => Iterable(Obj)
+.iter_modules!: (path := [Str; _] or NoneType, prefix := Str) => Iterable(.ModuleInfo)
+.walk_packages!: (
+    path := [Str; _] or NoneType,
+    prefix := Str,
+    onerror := (Str -> NoneType) or NoneType,
+) => Iterable(.ModuleInfo)
+.read_code!: (stream: Readable!) => Code or NoneType
+.resolve_name!: (name: Str) => Obj

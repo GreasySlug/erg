@@ -1,0 +1,27 @@
+.DEBUG_STATS: Nat
+.DEBUG_COLLECTABLE: Nat
+.DEBUG_UNCOLLECTABLE: Nat
+.DEBUG_SAVEALL: Nat
+.DEBUG_LEAK: Nat
+
+.garbage: [Obj; _]
+.callbacks: [GenericCallable; _]
+
+.enable!: () => NoneType
+.disable!: () => NoneType
+.isenabled!: () => Bool
+.collect!: (generation := Nat) => Nat
+.set_debug!: (flags: Nat) => NoneType
+.get_debug!: () => Nat
+.get_objects!: (generation := Nat or NoneType) => [Obj; _]
+.get_stats!: () => [{Str: Nat}; _]
+.set_threshold!: (threshold0: Nat, threshold1 := Nat, threshold2 := Nat) => NoneType
+.get_threshold!: () => (Nat, Nat, Nat)
+.get_count!: () => (Nat, Nat, Nat)
+.freeze!: () => NoneType
+.unfreeze!: () => NoneType
+.get_freeze_count!: () => Nat
+.get_referrers!: (*objs: Obj) => [Obj; _]
+.get_referents!: (*objs: Obj) => [Obj; _]
+.is_tracked!: (obj: Obj) => Bool
+.is_finalized!: (obj: Obj) => Bool

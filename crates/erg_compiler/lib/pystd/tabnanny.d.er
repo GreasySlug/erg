@@ -1,0 +1,13 @@
+.verbose: Nat
+.filename_only: Nat
+
+.NannyNag: ClassType
+.NannyNag <: Exception
+.NannyNag.
+    __call__: (lineno: Nat, msg: Str, line: Str) -> .NannyNag
+    get_lineno: (self: Ref(.NannyNag)) -> Nat
+    get_msg: (self: Ref(.NannyNag)) -> Str
+    get_line: (self: Ref(.NannyNag)) -> Str
+
+.check!: (file: PathLike) => NoneType
+.process_tokens: (tokens: Iterable(Obj)) -> NoneType

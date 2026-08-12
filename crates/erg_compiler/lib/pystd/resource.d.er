@@ -1,0 +1,47 @@
+# unix only
+.RLIMIT_CORE: Nat
+.RLIMIT_CPU: Nat
+.RLIMIT_FSIZE: Nat
+.RLIMIT_DATA: Nat
+.RLIMIT_STACK: Nat
+.RLIMIT_RSS: Nat
+.RLIMIT_NPROC: Nat
+.RLIMIT_NOFILE: Nat
+.RLIMIT_OFILE: Nat
+.RLIMIT_MEMLOCK: Nat
+.RLIMIT_AS: Nat
+.RLIMIT_MSGQUEUE: Nat # linux only
+.RLIMIT_NICE: Nat # linux only
+.RLIMIT_RTPRIO: Nat # linux only
+.RLIMIT_RTTIME: Nat # linux only
+.RLIMIT_SIGPENDING: Nat # linux only
+.RLIM_INFINITY: Int
+
+.RUSAGE_SELF: Int
+.RUSAGE_CHILDREN: Int
+.RUSAGE_THREAD: Int # linux only
+
+.StructRusage = 'struct_rusage': ClassType
+.StructRusage.
+    ru_utime: Float
+    ru_stime: Float
+    ru_maxrss: Nat
+    ru_ixrss: Nat
+    ru_idrss: Nat
+    ru_isrss: Nat
+    ru_minflt: Nat
+    ru_majflt: Nat
+    ru_nswap: Nat
+    ru_inblock: Nat
+    ru_oublock: Nat
+    ru_msgsnd: Nat
+    ru_msgrcv: Nat
+    ru_nsignals: Nat
+    ru_nvcsw: Nat
+    ru_nivcsw: Nat
+
+.getrlimit!: (resource: Nat) => (Int, Int)
+.setrlimit!: (resource: Nat, limits: (Int, Int)) => NoneType
+.prlimit!: (pid: Int, resource: Nat, limits := (Int, Int) or NoneType) => (Int, Int)
+.getrusage!: (who: Int) => .StructRusage
+.getpagesize!: () => Nat

@@ -1,0 +1,52 @@
+.Error: ClassType
+.Error <: Exception
+
+.WaveParams = '_wave_params': ClassType
+.WaveParams.
+    nchannels: Nat
+    sampwidth: Nat
+    framerate: Nat
+    nframes: Nat
+    comptype: Str
+    compname: Str
+
+.WaveRead! = 'Wave_read': ClassType
+.WaveRead! <: ContextManager
+.WaveRead!.
+    getnchannels: (self: Ref(.WaveRead!)) -> Nat
+    getsampwidth: (self: Ref(.WaveRead!)) -> Nat
+    getframerate: (self: Ref(.WaveRead!)) -> Nat
+    getnframes: (self: Ref(.WaveRead!)) -> Nat
+    getcomptype: (self: Ref(.WaveRead!)) -> Str
+    getcompname: (self: Ref(.WaveRead!)) -> Str
+    getparams: (self: Ref(.WaveRead!)) -> .WaveParams
+    getmarkers: (self: Ref(.WaveRead!)) -> NoneType
+    getfp: (self: Ref(.WaveRead!)) -> FileLike!
+    readframes!: (self: RefMut(.WaveRead!), n: Nat) => Bytes
+    rewind!: (self: RefMut(.WaveRead!)) => NoneType
+    setpos!: (self: RefMut(.WaveRead!), pos: Nat) => NoneType
+    tell!: (self: Ref(.WaveRead!)) => Nat
+    close!: (self: RefMut(.WaveRead!)) => NoneType
+
+.WaveWrite! = 'Wave_write': ClassType
+.WaveWrite! <: ContextManager
+.WaveWrite!.
+    setnchannels!: (self: RefMut(.WaveWrite!), n: Nat) => NoneType
+    setsampwidth!: (self: RefMut(.WaveWrite!), n: Nat) => NoneType
+    setframerate!: (self: RefMut(.WaveWrite!), n: Nat) => NoneType
+    setnframes!: (self: RefMut(.WaveWrite!), n: Nat) => NoneType
+    setcomptype!: (self: RefMut(.WaveWrite!), type: Str, name: Str) => NoneType
+    setparams!: (self: RefMut(.WaveWrite!), params: .WaveParams) => NoneType
+    getnchannels: (self: Ref(.WaveWrite!)) -> Nat
+    getsampwidth: (self: Ref(.WaveWrite!)) -> Nat
+    getframerate: (self: Ref(.WaveWrite!)) -> Nat
+    getnframes: (self: Ref(.WaveWrite!)) -> Nat
+    getcomptype: (self: Ref(.WaveWrite!)) -> Str
+    getcompname: (self: Ref(.WaveWrite!)) -> Str
+    getparams: (self: Ref(.WaveWrite!)) -> .WaveParams
+    writeframes!: (self: RefMut(.WaveWrite!), data: Bytes) => NoneType
+    writeframesraw!: (self: RefMut(.WaveWrite!), data: Bytes) => NoneType
+    tell!: (self: Ref(.WaveWrite!)) => Nat
+    close!: (self: RefMut(.WaveWrite!)) => NoneType
+
+.open!: (f: PathLike or FileLike!, mode := Str) => .WaveRead! or .WaveWrite!

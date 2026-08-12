@@ -4,12 +4,13 @@
 
 .library: Str
 
-.Dbm! = 'dbm': ClassType
-.Dbm! <: ContextManager
-.Dbm!.
-    keys!: (self: Ref(.Dbm!)) => [Bytes; _]
-    get!: (self: Ref(.Dbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
-    setdefault!: (self: RefMut(.Dbm!), key: Str or Bytes, default := Bytes) => Bytes
-    close!: (self: RefMut(.Dbm!)) => NoneType
+# `dbm.ndbm` does not expose the database class itself, so it is module-private here
+Ndbm! : ClassType
+Ndbm! <: ContextManager
+Ndbm!.
+    keys!: (self: Ref(Ndbm!)) => [Bytes; _]
+    get!: (self: Ref(Ndbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
+    setdefault!: (self: RefMut(Ndbm!), key: Str or Bytes, default := Bytes) => Bytes
+    close!: (self: RefMut(Ndbm!)) => NoneType
 
-.open!: (filename: PathLike, flag := Str, mode := Nat) => .Dbm!
+.open!: (filename: PathLike, flag := Str, mode := Nat) => Ndbm!

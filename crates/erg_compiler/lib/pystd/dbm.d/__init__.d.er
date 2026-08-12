@@ -3,16 +3,11 @@
 .ndbm = pyimport "ndbm"
 .sqlite3 = pyimport "sqlite3"
 
+{Dumbdbm!;} = pyimport "dumb"
+
 .Error = 'error': ClassType
 .Error <: Exception
 
-.Database!: ClassType
-.Database! <: ContextManager
-.Database!.
-    keys!: (self: Ref(.Database!)) => [Bytes; _]
-    get!: (self: Ref(.Database!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
-    setdefault!: (self: RefMut(.Database!), key: Str or Bytes, default := Bytes) => Bytes
-    close!: (self: RefMut(.Database!)) => NoneType
-
 .whichdb!: (filename: PathLike) => Str or NoneType
-.open!: (file: PathLike, flag := Str, mode := Nat) => .Database!
+# the concrete class depends on which backend is available at runtime
+.open!: (file: PathLike, flag := Str, mode := Nat) => Dumbdbm!

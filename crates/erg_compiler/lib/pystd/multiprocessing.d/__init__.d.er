@@ -1,5 +1,9 @@
 .pool = pyimport "pool"
 .connection = pyimport "connection"
+.managers = pyimport "managers"
+
+{Connection!;} = pyimport "connection"
+{SyncManager!;} = pyimport "managers"
 
 .ProcessError: ClassType
 .ProcessError <: Exception
@@ -105,40 +109,10 @@
     reset!: (self: RefMut(.Barrier!)) => NoneType
     abort!: (self: RefMut(.Barrier!)) => NoneType
 
-.Connection! = 'Connection': ClassType
-.Connection! <: ContextManager
-.Connection!.
-    closed: Bool
-    readable: Bool
-    writable: Bool
-    send!: (self: RefMut(.Connection!), obj: Obj) => NoneType
-    recv!: (self: RefMut(.Connection!)) => Obj
-    fileno: (self: Ref(.Connection!)) -> Nat
-    close!: (self: RefMut(.Connection!)) => NoneType
-    poll!: (self: RefMut(.Connection!), timeout := Float or NoneType) => Bool
-    send_bytes!: (
-        self: RefMut(.Connection!),
-        buffer: Bytes,
-        offset := Nat,
-        size := Nat or NoneType,
-    ) => NoneType
-    recv_bytes!: (self: RefMut(.Connection!), maxlength := Nat or NoneType) => Bytes
-    recv_bytes_into!: (self: RefMut(.Connection!), buffer: ByteArray!, offset := Nat) => Nat
 
-.SyncManager!: ClassType
-.SyncManager! <: ContextManager
-.SyncManager!.
-    start!: (self: RefMut(.SyncManager!), initializer := GenericCallable or NoneType) => NoneType
-    shutdown!: (self: RefMut(.SyncManager!)) => NoneType
-    dict!: (self: RefMut(.SyncManager!)) => {Obj: Obj}
-    list!: (self: RefMut(.SyncManager!)) => [Obj; _]
-    Value!: (self: RefMut(.SyncManager!), typecode: Str, value: Obj) => Obj
-    Queue!: (self: RefMut(.SyncManager!), maxsize := Nat) => .Queue!
-    Lock!: (self: RefMut(.SyncManager!)) => .Lock!
-    Event!: (self: RefMut(.SyncManager!)) => .Event!
 
-.Manager!: () => .SyncManager!
-.Pipe!: (duplex := Bool) => (.Connection!, .Connection!)
+.Manager!: () => SyncManager!
+.Pipe!: (duplex := Bool) => (Connection!, Connection!)
 
 .Value!: (typecode_or_type: Str or ClassType, *args: Obj, lock := Bool) => Obj
 .RawValue!: (typecode_or_type: Str or ClassType, *args: Obj) => Obj

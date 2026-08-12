@@ -67,8 +67,7 @@
     dump!: (self: Ref(.Snapshot), filename: PathLike) => NoneType
     filter_traces: (self: Ref(.Snapshot), filters: [.BaseFilter; _]) -> .Snapshot
     statistics: (self: Ref(.Snapshot), key_type: Str, cumulative := Bool) -> [.Statistic; _]
-
-.load!: (filename: PathLike) => .Snapshot
+    load!: (filename: PathLike) => .Snapshot
 
 .start!: (nframe := Nat) => NoneType
 .stop!: () => NoneType

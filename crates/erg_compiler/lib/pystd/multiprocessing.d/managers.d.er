@@ -1,0 +1,68 @@
+{Connection!;} = pyimport "connection"
+
+.BaseProxy!: ClassType
+.BaseProxy!.
+    __call__: (token: Obj, serializer: Str) -> .BaseProxy!
+
+.Namespace!: ClassType
+
+.Token: ClassType
+.Token.
+    typeid: Str or NoneType
+    address: Obj
+    id: Obj
+
+.BaseManager!: ClassType
+.BaseManager! <: ContextManager
+.BaseManager!.
+    address: Obj
+    __call__: (
+        address := Obj or NoneType,
+        authkey := Bytes or NoneType,
+        serializer := Str,
+        ctx := Obj or NoneType,
+    ) -> .BaseManager!
+    start!: (
+        self: RefMut(.BaseManager!),
+        initializer := GenericCallable or NoneType,
+        initargs := [Obj; _],
+    ) => NoneType
+    get_server!: (self: RefMut(.BaseManager!)) => Obj
+    connect!: (self: RefMut(.BaseManager!)) => NoneType
+    shutdown!: (self: RefMut(.BaseManager!)) => NoneType
+    register!: (
+        self: RefMut(.BaseManager!),
+        typeid: Str,
+        callable := GenericCallable or NoneType,
+        proxytype := ClassType or NoneType,
+    ) => NoneType
+
+.SyncManager!: ClassType
+.SyncManager! <: .BaseManager!
+.SyncManager!.
+    Namespace!: (self: RefMut(.SyncManager!)) => .Namespace!
+    Barrier!: (
+        self: RefMut(.SyncManager!),
+        parties: Nat,
+        action := GenericCallable or NoneType,
+        timeout := Float or NoneType,
+    ) => Obj
+    BoundedSemaphore!: (self: RefMut(.SyncManager!), value := Nat) => Obj
+    Condition!: (self: RefMut(.SyncManager!), lock := Obj or NoneType) => Obj
+    Event!: (self: RefMut(.SyncManager!)) => Obj
+    Lock!: (self: RefMut(.SyncManager!)) => Obj
+    RLock!: (self: RefMut(.SyncManager!)) => Obj
+    Semaphore!: (self: RefMut(.SyncManager!), value := Nat) => Obj
+    Queue!: (self: RefMut(.SyncManager!), maxsize := Nat) => Obj
+    JoinableQueue!: (self: RefMut(.SyncManager!), maxsize := Nat) => Obj
+    Value!: (self: RefMut(.SyncManager!), typecode: Str or ClassType, value: Obj) => Obj
+    Array!: (
+        self: RefMut(.SyncManager!),
+        typecode: Str or ClassType,
+        sequence: Iterable(Obj),
+    ) => Obj
+    dict!: (self: RefMut(.SyncManager!)) => {Obj: Obj}
+    list!: (self: RefMut(.SyncManager!)) => [Obj; _]
+
+.SharedMemoryManager!: ClassType # added in Python 3.8
+.SharedMemoryManager! <: .BaseManager!

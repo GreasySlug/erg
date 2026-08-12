@@ -1,0 +1,13 @@
+.Error = 'error': ClassType
+.Error <: OSError
+
+.Dumbdbm! = '_Database': ClassType
+.Dumbdbm! <: ContextManager
+.Dumbdbm!.
+    keys!: (self: Ref(.Dumbdbm!)) => [Bytes; _]
+    iterkeys!: (self: Ref(.Dumbdbm!)) => Iterable(Bytes)
+    items!: (self: Ref(.Dumbdbm!)) => [(Bytes, Bytes); _]
+    sync!: (self: RefMut(.Dumbdbm!)) => NoneType
+    close!: (self: RefMut(.Dumbdbm!)) => NoneType
+
+.open!: (file: PathLike, flag := Str, mode := Nat) => .Dumbdbm!

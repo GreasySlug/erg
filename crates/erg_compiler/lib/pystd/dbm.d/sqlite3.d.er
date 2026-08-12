@@ -1,0 +1,13 @@
+# added in Python 3.13
+.Error = 'error': ClassType
+.Error <: OSError
+
+.Sqlite3Dbm! = '_Database': ClassType
+.Sqlite3Dbm! <: ContextManager
+.Sqlite3Dbm!.
+    keys!: (self: Ref(.Sqlite3Dbm!)) => [Bytes; _]
+    get!: (self: Ref(.Sqlite3Dbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
+    setdefault!: (self: RefMut(.Sqlite3Dbm!), key: Str or Bytes, default := Bytes) => Bytes
+    close!: (self: RefMut(.Sqlite3Dbm!)) => NoneType
+
+.open!: (filename: PathLike, flag := Str, mode := Nat) => .Sqlite3Dbm!

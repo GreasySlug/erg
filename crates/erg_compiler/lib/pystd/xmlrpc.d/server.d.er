@@ -1,0 +1,69 @@
+.SimpleXMLRPCRequestHandler!: ClassType
+.SimpleXMLRPCRequestHandler!.
+    rpc_paths: (Str,)
+    encode_threshold: Int or NoneType
+    do_POST!: (self: RefMut(.SimpleXMLRPCRequestHandler!)) => NoneType
+
+.SimpleXMLRPCDispatcher!: ClassType
+.SimpleXMLRPCDispatcher!.
+    __call__: (allow_none := Bool, encoding := Str or NoneType) -> .SimpleXMLRPCDispatcher!
+    register_instance!: (
+        self: RefMut(.SimpleXMLRPCDispatcher!),
+        instance: Obj,
+        allow_dotted_names := Bool,
+    ) => NoneType
+    register_function!: (
+        self: RefMut(.SimpleXMLRPCDispatcher!),
+        function := GenericCallable or NoneType,
+        name := Str or NoneType,
+    ) => GenericCallable
+    register_introspection_functions!: (self: RefMut(.SimpleXMLRPCDispatcher!)) => NoneType
+    register_multicall_functions!: (self: RefMut(.SimpleXMLRPCDispatcher!)) => NoneType
+
+.SimpleXMLRPCServer!: ClassType
+.SimpleXMLRPCServer! <: .SimpleXMLRPCDispatcher!
+.SimpleXMLRPCServer!.
+    allow_reuse_address: Bool
+    __call__: (
+        addr: (Str, Nat),
+        requestHandler := ClassType,
+        logRequests := Bool,
+        allow_none := Bool,
+        encoding := Str or NoneType,
+        bind_and_activate := Bool,
+        use_builtin_types := Bool,
+    ) -> .SimpleXMLRPCServer!
+    serve_forever!: (self: RefMut(.SimpleXMLRPCServer!), poll_interval := Float) => NoneType
+    shutdown!: (self: RefMut(.SimpleXMLRPCServer!)) => NoneType
+    handle_request!: (self: RefMut(.SimpleXMLRPCServer!)) => NoneType
+    server_close!: (self: RefMut(.SimpleXMLRPCServer!)) => NoneType
+
+.MultiPathXMLRPCServer!: ClassType
+.MultiPathXMLRPCServer! <: .SimpleXMLRPCServer!
+
+.CGIXMLRPCRequestHandler!: ClassType
+.CGIXMLRPCRequestHandler! <: .SimpleXMLRPCDispatcher!
+.CGIXMLRPCRequestHandler!.
+    handle_request!: (self: RefMut(.CGIXMLRPCRequestHandler!), request_text := Str or NoneType) => NoneType
+
+.DocXMLRPCServer!: ClassType
+.DocXMLRPCServer! <: .SimpleXMLRPCServer!
+.DocXMLRPCServer!.
+    set_server_title!: (self: RefMut(.DocXMLRPCServer!), server_title: Str) => NoneType
+    set_server_name!: (self: RefMut(.DocXMLRPCServer!), server_name: Str) => NoneType
+    set_server_documentation!: (self: RefMut(.DocXMLRPCServer!), server_documentation: Str) => NoneType
+
+.DocCGIXMLRPCRequestHandler!: ClassType
+.DocCGIXMLRPCRequestHandler! <: .CGIXMLRPCRequestHandler!
+
+.XMLRPCDocGenerator!: ClassType
+.XMLRPCDocGenerator!.
+    set_server_title!: (self: RefMut(.XMLRPCDocGenerator!), server_title: Str) => NoneType
+    set_server_name!: (self: RefMut(.XMLRPCDocGenerator!), server_name: Str) => NoneType
+    set_server_documentation!: (
+        self: RefMut(.XMLRPCDocGenerator!),
+        server_documentation: Str,
+    ) => NoneType
+
+.list_public_methods: (obj: Obj) -> [Str; _]
+.resolve_dotted_attribute: (obj: Obj, attr: Str, allow_dotted_names := Bool) -> Obj

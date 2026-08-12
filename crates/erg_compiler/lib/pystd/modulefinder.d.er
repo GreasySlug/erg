@@ -1,0 +1,44 @@
+.LOAD_CONST: Nat
+.IMPORT_NAME: Nat
+.STORE_NAME: Nat
+.STORE_GLOBAL: Nat
+.STORE_OPS: [Nat; _]
+.EXTENDED_ARG: Nat
+
+.Module: ClassType
+.Module.
+    __name__: Str
+    __file__: Str or NoneType
+    __path__: [Str; _] or NoneType
+    __code__: Code or NoneType
+    globalnames: {Str: Nat}
+    starimports: {Str: Nat}
+
+.ModuleFinder!: ClassType
+.ModuleFinder!.
+    modules: {Str: .Module}
+    badmodules: {Str: {Str: Nat}}
+    path: [Str; _]
+    debug: Nat
+    excludes: [Str; _]
+    __call__: (
+        path := [Str; _] or NoneType,
+        debug := Nat,
+        excludes := [Str; _] or NoneType,
+        replace_paths := [(Str, Str); _] or NoneType,
+    ) -> .ModuleFinder!
+    run_script!: (self: RefMut(.ModuleFinder!), pathname: PathLike) => NoneType
+    load_file!: (self: RefMut(.ModuleFinder!), pathname: PathLike) => NoneType
+    import_hook!: (
+        self: RefMut(.ModuleFinder!),
+        name: Str,
+        caller := .Module or NoneType,
+        fromlist := [Str; _] or NoneType,
+        level := Int,
+    ) => .Module or NoneType
+    report!: (self: Ref(.ModuleFinder!)) => NoneType
+    any_missing!: (self: Ref(.ModuleFinder!)) => [Str; _]
+    any_missing_maybe!: (self: Ref(.ModuleFinder!)) => ([Str; _], [Str; _])
+
+.AddPackagePath!: (packagename: Str, path: PathLike) => NoneType
+.ReplacePackage!: (oldname: Str, newname: Str) => NoneType

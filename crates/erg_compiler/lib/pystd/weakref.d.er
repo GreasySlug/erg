@@ -2,4 +2,61 @@
 .ReferenceType(T).
     __call__: (self: .ReferenceType(T)) -> T
 
-.ref: |T|(obj: T) -> ReferenceType T
+.ProxyType: ClassType
+.CallableProxyType: ClassType
+.ProxyTypes: (ClassType, ClassType)
+
+# `ref` is a reserved word in Erg, so it is exposed as `reference`
+.reference = 'ref': |U|(obj: U, callback := GenericCallable or NoneType) -> .ReferenceType(U)
+.proxy: |U|(obj: U, callback := GenericCallable or NoneType) -> U
+.getweakrefcount: (obj: Obj) -> Nat
+.getweakrefs: (obj: Obj) -> [Obj; _]
+
+.WeakMethod: ClassType
+.WeakMethod.
+    __call__: (method: GenericCallable, callback := GenericCallable or NoneType) -> .WeakMethod
+
+.WeakKeyDictionary!: ClassType
+.WeakKeyDictionary!.
+    __call__: (dict := {Obj: Obj} or NoneType) -> .WeakKeyDictionary!
+    keys: (self: Ref(.WeakKeyDictionary!)) -> Iterable(Obj)
+    values: (self: Ref(.WeakKeyDictionary!)) -> Iterable(Obj)
+    items: (self: Ref(.WeakKeyDictionary!)) -> Iterable((Obj, Obj))
+    get: (self: Ref(.WeakKeyDictionary!), key: Obj, default := Obj) -> Obj
+    keyrefs: (self: Ref(.WeakKeyDictionary!)) -> [Obj; _]
+    copy: (self: Ref(.WeakKeyDictionary!)) -> .WeakKeyDictionary!
+    pop!: (self: RefMut(.WeakKeyDictionary!), key: Obj, default := Obj) => Obj
+    setdefault!: (self: RefMut(.WeakKeyDictionary!), key: Obj, default := Obj) => Obj
+    update!: (self: RefMut(.WeakKeyDictionary!), other: {Obj: Obj}) => NoneType
+
+.WeakValueDictionary!: ClassType
+.WeakValueDictionary!.
+    __call__: (dict := {Obj: Obj} or NoneType) -> .WeakValueDictionary!
+    keys: (self: Ref(.WeakValueDictionary!)) -> Iterable(Obj)
+    values: (self: Ref(.WeakValueDictionary!)) -> Iterable(Obj)
+    items: (self: Ref(.WeakValueDictionary!)) -> Iterable((Obj, Obj))
+    get: (self: Ref(.WeakValueDictionary!), key: Obj, default := Obj) -> Obj
+    valuerefs: (self: Ref(.WeakValueDictionary!)) -> [Obj; _]
+    copy: (self: Ref(.WeakValueDictionary!)) -> .WeakValueDictionary!
+    pop!: (self: RefMut(.WeakValueDictionary!), key: Obj, default := Obj) => Obj
+    setdefault!: (self: RefMut(.WeakValueDictionary!), key: Obj, default := Obj) => Obj
+    update!: (self: RefMut(.WeakValueDictionary!), other: {Obj: Obj}) => NoneType
+
+.WeakSet!: ClassType
+.WeakSet!.
+    __call__: (elements := Iterable(Obj) or NoneType) -> .WeakSet!
+    add!: (self: RefMut(.WeakSet!), item: Obj) => NoneType
+    discard!: (self: RefMut(.WeakSet!), item: Obj) => NoneType
+    remove!: (self: RefMut(.WeakSet!), item: Obj) => NoneType
+    pop!: (self: RefMut(.WeakSet!)) => Obj
+    clear!: (self: RefMut(.WeakSet!)) => NoneType
+    copy: (self: Ref(.WeakSet!)) -> .WeakSet!
+    update!: (self: RefMut(.WeakSet!), other: Iterable(Obj)) => NoneType
+
+.Finalize! = 'finalize': ClassType
+.Finalize!.
+    alive: Bool
+    atexit: Bool
+    __call__: (obj: Obj, func: GenericCallable, *args: Obj) -> .Finalize!
+    detach!: (self: RefMut(.Finalize!)) => (Obj, GenericCallable, [Obj; _], {Str: Obj}) or NoneType
+    peek!: (self: Ref(.Finalize!)) => (Obj, GenericCallable, [Obj; _], {Str: Obj}) or NoneType

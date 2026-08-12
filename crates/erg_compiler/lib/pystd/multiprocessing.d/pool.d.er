@@ -1,0 +1,89 @@
+.AsyncResult!: ClassType
+.AsyncResult!.
+    get!: (self: RefMut(.AsyncResult!), timeout := Float or NoneType) => Obj
+    wait!: (self: RefMut(.AsyncResult!), timeout := Float or NoneType) => NoneType
+    ready!: (self: Ref(.AsyncResult!)) => Bool
+    successful!: (self: Ref(.AsyncResult!)) => Bool
+
+.ApplyResult!: ClassType
+.ApplyResult! <: .AsyncResult!
+
+.MapResult!: ClassType
+.MapResult! <: .AsyncResult!
+
+.Pool!: ClassType
+.Pool! <: ContextManager
+.Pool!.
+    __call__: (
+        processes := Nat or NoneType,
+        initializer := GenericCallable or NoneType,
+        initargs := [Obj; _],
+        maxtasksperchild := Nat or NoneType,
+        context := Obj or NoneType,
+    ) -> .Pool!
+    apply!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        args := [Obj; _],
+        kwds := {Str: Obj},
+    ) => Obj
+    apply_async!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        args := [Obj; _],
+        kwds := {Str: Obj},
+        callback := GenericCallable or NoneType,
+        error_callback := GenericCallable or NoneType,
+    ) => .AsyncResult!
+    map!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat or NoneType,
+    ) => [Obj; _]
+    map_async!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat or NoneType,
+        callback := GenericCallable or NoneType,
+        error_callback := GenericCallable or NoneType,
+    ) => .AsyncResult!
+    starmap!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat or NoneType,
+    ) => [Obj; _]
+    starmap_async!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat or NoneType,
+        callback := GenericCallable or NoneType,
+        error_callback := GenericCallable or NoneType,
+    ) => .AsyncResult!
+    imap!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat,
+    ) => Iterable(Obj)
+    imap_unordered!: (
+        self: RefMut(.Pool!),
+        func: GenericCallable,
+        iterable: Iterable(Obj),
+        chunksize := Nat,
+    ) => Iterable(Obj)
+    close!: (self: RefMut(.Pool!)) => NoneType
+    terminate!: (self: RefMut(.Pool!)) => NoneType
+    join!: (self: RefMut(.Pool!)) => NoneType
+
+.ThreadPool!: ClassType
+.ThreadPool! <: .Pool!
+.ThreadPool!.
+    __call__: (
+        processes := Nat or NoneType,
+        initializer := GenericCallable or NoneType,
+        initargs := [Obj; _],
+    ) -> .ThreadPool!

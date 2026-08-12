@@ -1,0 +1,13 @@
+.FileWrapper!: ClassType
+.FileWrapper! <: Iterable(Bytes)
+.FileWrapper!.
+    filelike: Readable!
+    blksize: Nat
+    __call__: (filelike: Readable!, blksize := Nat) -> .FileWrapper!
+
+.guess_scheme: (environ: {Str: Obj}) -> Str
+.application_uri: (environ: {Str: Obj}) -> Str
+.request_uri: (environ: {Str: Obj}, include_query := Bool) -> Str
+.shift_path_info!: (environ: {Str: Obj}) => Str or NoneType
+.setup_testing_defaults!: (environ: {Str: Obj}) => NoneType
+.is_hop_by_hop: (header_name: Str) -> Bool

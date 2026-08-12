@@ -1,0 +1,9 @@
+.dis!: (
+    pickle: Bytes or Readable!,
+    out := Writable! or NoneType,
+    memo := {Nat: Obj} or NoneType,
+    indentlevel := Nat,
+    annotate := Nat,
+) => NoneType
+.genops: (pickle: Bytes or Readable!) -> Iterable((Obj, Obj, Nat or NoneType))
+.optimize: (p: Bytes) -> Bytes

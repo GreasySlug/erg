@@ -1,0 +1,15 @@
+# available only if the ndbm library is installed
+.Error = 'error': ClassType
+.Error <: OSError
+
+.library: Str
+
+.Dbm! = 'dbm': ClassType
+.Dbm! <: ContextManager
+.Dbm!.
+    keys!: (self: Ref(.Dbm!)) => [Bytes; _]
+    get!: (self: Ref(.Dbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
+    setdefault!: (self: RefMut(.Dbm!), key: Str or Bytes, default := Bytes) => Bytes
+    close!: (self: RefMut(.Dbm!)) => NoneType
+
+.open!: (filename: PathLike, flag := Str, mode := Nat) => .Dbm!

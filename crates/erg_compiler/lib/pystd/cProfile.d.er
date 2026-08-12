@@ -1,0 +1,32 @@
+.Profile!: ClassType
+.Profile! <: ContextManager
+.Profile!.
+    __call__: (
+        timer := GenericCallable or NoneType,
+        timeunit := Float,
+        subcalls := Bool,
+        builtins := Bool,
+    ) -> .Profile!
+    enable!: (self: RefMut(.Profile!)) => NoneType
+    disable!: (self: RefMut(.Profile!)) => NoneType
+    run!: (self: RefMut(.Profile!), cmd: Str) => .Profile!
+    runctx!: (
+        self: RefMut(.Profile!),
+        cmd: Str,
+        globals: {Str: Obj},
+        locals: {Str: Obj},
+    ) => .Profile!
+    runcall!: (self: RefMut(.Profile!), func: GenericCallable, *args: Obj) => Obj
+    create_stats!: (self: RefMut(.Profile!)) => NoneType
+    print_stats!: (self: RefMut(.Profile!), sort := Str or Int) => NoneType
+    dump_stats!: (self: RefMut(.Profile!), file: PathLike) => NoneType
+
+.run!: (statement: Str, filename := PathLike or NoneType, sort := Str or Int) => NoneType
+.runctx!: (
+    statement: Str,
+    globals: {Str: Obj},
+    locals: {Str: Obj},
+    filename := PathLike or NoneType,
+    sort := Str or Int,
+) => NoneType
+.label: (code: Code or Obj) -> (Str, Nat, Str)

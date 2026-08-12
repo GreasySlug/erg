@@ -1,0 +1,168 @@
+.pool = pyimport "pool"
+.connection = pyimport "connection"
+
+.ProcessError: ClassType
+.ProcessError <: Exception
+.BufferTooShort: ClassType
+.BufferTooShort <: .ProcessError
+.TimeoutError: ClassType
+.TimeoutError <: .ProcessError
+.AuthenticationError: ClassType
+.AuthenticationError <: .ProcessError
+
+.Process!: ClassType
+.Process!.
+    name: Str
+    daemon: Bool
+    pid: Nat or NoneType
+    exitcode: Int or NoneType
+    authkey: Bytes
+    sentinel: Nat
+    __call__: (
+        group := NoneType,
+        target := GenericCallable or NoneType,
+        name := Str or NoneType,
+        args := [Obj; _],
+        kwargs := {Str: Obj} or NoneType,
+        daemon := Bool or NoneType,
+    ) -> .Process!
+    run!: (self: RefMut(.Process!)) => NoneType
+    start!: (self: RefMut(.Process!)) => NoneType
+    join!: (self: RefMut(.Process!), timeout := Float or NoneType) => NoneType
+    is_alive!: (self: Ref(.Process!)) => Bool
+    terminate!: (self: RefMut(.Process!)) => NoneType
+    kill!: (self: RefMut(.Process!)) => NoneType
+    close!: (self: RefMut(.Process!)) => NoneType
+
+.Queue!: ClassType
+.Queue!.
+    put!: (self: RefMut(.Queue!), obj: Obj, block := Bool, timeout := Float or NoneType) => NoneType
+    put_nowait!: (self: RefMut(.Queue!), obj: Obj) => NoneType
+    get!: (self: RefMut(.Queue!), block := Bool, timeout := Float or NoneType) => Obj
+    get_nowait!: (self: RefMut(.Queue!)) => Obj
+    qsize!: (self: Ref(.Queue!)) => Nat
+    empty!: (self: Ref(.Queue!)) => Bool
+    full!: (self: Ref(.Queue!)) => Bool
+    close!: (self: RefMut(.Queue!)) => NoneType
+    join_thread!: (self: RefMut(.Queue!)) => NoneType
+    cancel_join_thread!: (self: RefMut(.Queue!)) => NoneType
+
+.JoinableQueue!: ClassType
+.JoinableQueue! <: .Queue!
+.JoinableQueue!.
+    task_done!: (self: RefMut(.JoinableQueue!)) => NoneType
+    join!: (self: RefMut(.JoinableQueue!)) => NoneType
+
+.SimpleQueue!: ClassType
+.SimpleQueue!.
+    empty!: (self: Ref(.SimpleQueue!)) => Bool
+    get!: (self: RefMut(.SimpleQueue!)) => Obj
+    put!: (self: RefMut(.SimpleQueue!), obj: Obj) => NoneType
+    close!: (self: RefMut(.SimpleQueue!)) => NoneType
+
+.Lock!: ClassType
+.Lock! <: ContextManager
+.Lock!.
+    acquire!: (self: RefMut(.Lock!), block := Bool, timeout := Float or NoneType) => Bool
+    release!: (self: RefMut(.Lock!)) => NoneType
+
+.RLock!: ClassType
+.RLock! <: .Lock!
+
+.Semaphore!: ClassType
+.Semaphore! <: .Lock!
+
+.BoundedSemaphore!: ClassType
+.BoundedSemaphore! <: .Semaphore!
+
+.Event!: ClassType
+.Event!.
+    is_set!: (self: Ref(.Event!)) => Bool
+    set!: (self: RefMut(.Event!)) => NoneType
+    clear!: (self: RefMut(.Event!)) => NoneType
+    wait!: (self: RefMut(.Event!), timeout := Float or NoneType) => Bool
+
+.Condition!: ClassType
+.Condition! <: ContextManager
+.Condition!.
+    acquire!: (self: RefMut(.Condition!), block := Bool, timeout := Float or NoneType) => Bool
+    release!: (self: RefMut(.Condition!)) => NoneType
+    wait!: (self: RefMut(.Condition!), timeout := Float or NoneType) => Bool
+    wait_for!: (
+        self: RefMut(.Condition!),
+        predicate: () => Bool,
+        timeout := Float or NoneType,
+    ) => Bool
+    notify!: (self: RefMut(.Condition!), n := Nat) => NoneType
+    notify_all!: (self: RefMut(.Condition!)) => NoneType
+
+.Barrier!: ClassType
+.Barrier!.
+    parties: Nat
+    n_waiting: Nat
+    broken: Bool
+    wait!: (self: RefMut(.Barrier!), timeout := Float or NoneType) => Nat
+    reset!: (self: RefMut(.Barrier!)) => NoneType
+    abort!: (self: RefMut(.Barrier!)) => NoneType
+
+.Connection! = 'Connection': ClassType
+.Connection! <: ContextManager
+.Connection!.
+    closed: Bool
+    readable: Bool
+    writable: Bool
+    send!: (self: RefMut(.Connection!), obj: Obj) => NoneType
+    recv!: (self: RefMut(.Connection!)) => Obj
+    fileno: (self: Ref(.Connection!)) -> Nat
+    close!: (self: RefMut(.Connection!)) => NoneType
+    poll!: (self: RefMut(.Connection!), timeout := Float or NoneType) => Bool
+    send_bytes!: (
+        self: RefMut(.Connection!),
+        buffer: Bytes,
+        offset := Nat,
+        size := Nat or NoneType,
+    ) => NoneType
+    recv_bytes!: (self: RefMut(.Connection!), maxlength := Nat or NoneType) => Bytes
+    recv_bytes_into!: (self: RefMut(.Connection!), buffer: ByteArray!, offset := Nat) => Nat
+
+.SyncManager!: ClassType
+.SyncManager! <: ContextManager
+.SyncManager!.
+    start!: (self: RefMut(.SyncManager!), initializer := GenericCallable or NoneType) => NoneType
+    shutdown!: (self: RefMut(.SyncManager!)) => NoneType
+    dict!: (self: RefMut(.SyncManager!)) => {Obj: Obj}
+    list!: (self: RefMut(.SyncManager!)) => [Obj; _]
+    Value!: (self: RefMut(.SyncManager!), typecode: Str, value: Obj) => Obj
+    Queue!: (self: RefMut(.SyncManager!), maxsize := Nat) => .Queue!
+    Lock!: (self: RefMut(.SyncManager!)) => .Lock!
+    Event!: (self: RefMut(.SyncManager!)) => .Event!
+
+.Manager!: () => .SyncManager!
+.Pipe!: (duplex := Bool) => (.Connection!, .Connection!)
+
+.Value!: (typecode_or_type: Str or ClassType, *args: Obj, lock := Bool) => Obj
+.RawValue!: (typecode_or_type: Str or ClassType, *args: Obj) => Obj
+.Array!: (
+    typecode_or_type: Str or ClassType,
+    size_or_initializer: Nat or Iterable(Obj),
+    lock := Bool,
+) => Obj
+.RawArray!: (
+    typecode_or_type: Str or ClassType,
+    size_or_initializer: Nat or Iterable(Obj),
+) => Obj
+
+.cpu_count!: () => Nat
+.current_process!: () => .Process!
+.parent_process!: () => .Process! or NoneType
+.active_children!: () => [.Process!; _]
+.freeze_support!: () => NoneType
+.get_all_start_methods!: () => [Str; _]
+.get_start_method!: (allow_none := Bool) => Str or NoneType
+.set_start_method!: (method: Str or NoneType, force := Bool) => NoneType
+.get_context!: (method := Str or NoneType) => GenericModule
+.set_executable!: (executable: PathLike) => NoneType
+.set_forkserver_preload!: (module_names: [Str; _]) => NoneType
+.allow_connection_pickling!: () => NoneType
+.get_logger!: () => Obj
+.log_to_stderr!: (level := Nat or Str or NoneType) => Obj

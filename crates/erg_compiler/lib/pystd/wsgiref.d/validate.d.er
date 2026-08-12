@@ -1,0 +1,4 @@
+.WSGIWarning: ClassType
+.WSGIWarning <: Warning
+
+.validator: (application: GenericCallable) -> GenericCallable

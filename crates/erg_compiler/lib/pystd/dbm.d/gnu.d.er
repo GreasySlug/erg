@@ -1,0 +1,19 @@
+# available only if the GNU dbm library is installed
+.Error = 'error': ClassType
+.Error <: OSError
+
+.open_flags: Str
+
+.Gdbm! = 'gdbm': ClassType
+.Gdbm! <: ContextManager
+.Gdbm!.
+    firstkey!: (self: Ref(.Gdbm!)) => Bytes or NoneType
+    nextkey!: (self: Ref(.Gdbm!), key: Str or Bytes) => Bytes or NoneType
+    reorganize!: (self: RefMut(.Gdbm!)) => NoneType
+    sync!: (self: RefMut(.Gdbm!)) => NoneType
+    keys!: (self: Ref(.Gdbm!)) => [Bytes; _]
+    get!: (self: Ref(.Gdbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
+    setdefault!: (self: RefMut(.Gdbm!), key: Str or Bytes, default := Bytes) => Bytes
+    close!: (self: RefMut(.Gdbm!)) => NoneType
+
+.open!: (filename: PathLike, flag := Str, mode := Nat) => .Gdbm!

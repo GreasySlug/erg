@@ -1,0 +1,14 @@
+.ENABLE_USER_SITE: Bool or NoneType
+.PREFIXES: [Str; _]
+.USER_SITE: Str or NoneType
+.USER_BASE: Str or NoneType
+
+.main!: () => NoneType
+.addsitedir!: (sitedir: PathLike, known_paths := {Str} or NoneType) => {Str} or NoneType
+.getsitepackages!: (prefixes := [Str; _] or NoneType) => [Str; _]
+.getuserbase!: () => Str
+.getusersitepackages!: () => Str
+.enablerlcompleter!: () => NoneType
+.execsitecustomize!: () => NoneType
+.execusercustomize!: () => NoneType
+.check_enableusersite!: () => Bool or NoneType

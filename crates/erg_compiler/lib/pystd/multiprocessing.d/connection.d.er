@@ -1,0 +1,48 @@
+.BUFSIZE: Nat
+
+.Connection!: ClassType
+.Connection! <: ContextManager
+.Connection!.
+    closed: Bool
+    readable: Bool
+    writable: Bool
+    send!: (self: RefMut(.Connection!), obj: Obj) => NoneType
+    recv!: (self: RefMut(.Connection!)) => Obj
+    fileno: (self: Ref(.Connection!)) -> Nat
+    close!: (self: RefMut(.Connection!)) => NoneType
+    poll!: (self: RefMut(.Connection!), timeout := Float or NoneType) => Bool
+    send_bytes!: (
+        self: RefMut(.Connection!),
+        buffer: Bytes,
+        offset := Nat,
+        size := Nat or NoneType,
+    ) => NoneType
+    recv_bytes!: (self: RefMut(.Connection!), maxlength := Nat or NoneType) => Bytes
+    recv_bytes_into!: (self: RefMut(.Connection!), buffer: ByteArray!, offset := Nat) => Nat
+
+.Listener!: ClassType
+.Listener! <: ContextManager
+.Listener!.
+    address: Obj
+    last_accepted: Obj or NoneType
+    __call__: (
+        address := Obj or NoneType,
+        family := Str or NoneType,
+        backlog := Nat,
+        authkey := Bytes or NoneType,
+    ) -> .Listener!
+    accept!: (self: RefMut(.Listener!)) => .Connection!
+    close!: (self: RefMut(.Listener!)) => NoneType
+
+.Client!: (
+    address: Obj,
+    family := Str or NoneType,
+    authkey := Bytes or NoneType,
+) => .Connection!
+.Pipe!: (duplex := Bool) => (.Connection!, .Connection!)
+.wait!: (
+    object_list: Iterable(Obj),
+    timeout := Float or NoneType,
+) => [Obj; _]
+.deliver_challenge!: (connection: .Connection!, authkey: Bytes) => NoneType
+.answer_challenge!: (connection: .Connection!, authkey: Bytes) => NoneType

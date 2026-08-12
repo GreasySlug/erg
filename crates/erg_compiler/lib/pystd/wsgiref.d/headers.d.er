@@ -1,0 +1,10 @@
+.Headers!: ClassType
+.Headers!.
+    __call__: (headers := [(Str, Str); _] or NoneType) -> .Headers!
+    get: (self: Ref(.Headers!), name: Str, default := Str or NoneType) -> Str or NoneType
+    get_all: (self: Ref(.Headers!), name: Str) -> [Str; _]
+    keys: (self: Ref(.Headers!)) -> [Str; _]
+    values: (self: Ref(.Headers!)) -> [Str; _]
+    items: (self: Ref(.Headers!)) -> [(Str, Str); _]
+    setdefault!: (self: RefMut(.Headers!), name: Str, value: Str) => Str
+    add_header!: (self: RefMut(.Headers!), _name: Str, _value: Str or NoneType, **_params: Obj) => NoneType

@@ -1,0 +1,2 @@
+.client = pyimport "client"
+.server = pyimport "server"

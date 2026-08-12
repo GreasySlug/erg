@@ -1,0 +1,127 @@
+.MAXINT: Int
+.MININT: Int
+
+.PARSE_ERROR: Int
+.SERVER_ERROR: Int
+.APPLICATION_ERROR: Int
+.SYSTEM_ERROR: Int
+.TRANSPORT_ERROR: Int
+.NOT_WELLFORMED_ERROR: Int
+.UNSUPPORTED_ENCODING: Int
+.INVALID_ENCODING_CHAR: Int
+.INVALID_XMLRPC: Int
+.METHOD_NOT_FOUND: Int
+.INVALID_METHOD_PARAMS: Int
+.INTERNAL_ERROR: Int
+
+.Error = 'Error': ClassType
+.Error <: Exception
+
+.ProtocolError: ClassType
+.ProtocolError <: .Error
+.ProtocolError.
+    url: Str
+    errcode: Int
+    errmsg: Str
+    headers: Obj
+    __call__: (url: Str, errcode: Int, errmsg: Str, headers: Obj) -> .ProtocolError
+
+.ResponseError: ClassType
+.ResponseError <: .Error
+
+.Fault: ClassType
+.Fault <: .Error
+.Fault.
+    faultCode: Int
+    faultString: Str
+    __call__: (faultCode: Int, faultString: Str, **extra: Obj) -> .Fault
+
+.Boolean: ClassType
+.Boolean <: Int
+
+.DateTime: ClassType
+.DateTime.
+    value: Str
+    __call__: (value := Str or Nat or Float or Obj) -> .DateTime
+    timetuple: (self: Ref(.DateTime)) -> Obj
+    decode!: (self: RefMut(.DateTime), data: Str) => NoneType
+    encode!: (self: Ref(.DateTime), out: Writable!) => NoneType
+
+.Binary: ClassType
+.Binary.
+    data: Bytes
+    __call__: (data := Bytes or NoneType) -> .Binary
+    decode!: (self: RefMut(.Binary), data: Bytes) => NoneType
+    encode!: (self: Ref(.Binary), out: Writable!) => NoneType
+
+.Marshaller!: ClassType
+.Marshaller!.
+    __call__: (encoding := Str or NoneType, allow_none := Bool) -> .Marshaller!
+    dumps!: (self: RefMut(.Marshaller!), values: Obj) => Str
+
+.Unmarshaller!: ClassType
+.Unmarshaller!.
+    __call__: (
+        use_datetime := Bool,
+        use_builtin_types := Bool,
+    ) -> .Unmarshaller!
+    close!: (self: RefMut(.Unmarshaller!)) => [Obj; _]
+    getmethodname!: (self: Ref(.Unmarshaller!)) => Str or NoneType
+    feed!: (self: RefMut(.Unmarshaller!), data: Str or Bytes) => NoneType
+
+.Transport!: ClassType
+.Transport!.
+    user_agent: Str
+    __call__: (
+        use_datetime := Bool,
+        use_builtin_types := Bool,
+        headers := [(Str, Str); _],
+    ) -> .Transport!
+    request!: (
+        self: RefMut(.Transport!),
+        host: Str,
+        handler: Str,
+        request_body: Bytes,
+        verbose := Bool,
+    ) => [Obj; _]
+
+.SafeTransport!: ClassType
+.SafeTransport! <: .Transport!
+
+.ServerProxy!: ClassType
+.ServerProxy! <: ContextManager
+.ServerProxy!.
+    __call__: (
+        uri: Str,
+        transport := .Transport! or NoneType,
+        encoding := Str or NoneType,
+        verbose := Bool,
+        allow_none := Bool,
+        use_datetime := Bool,
+        use_builtin_types := Bool,
+        headers := [(Str, Str); _],
+        context := Obj or NoneType,
+    ) -> .ServerProxy!
+
+.Server!: ClassType
+.Server! <: .ServerProxy!
+
+.MultiCall!: ClassType
+.MultiCall!.
+    __call__: (server: .ServerProxy!) -> .MultiCall!
+
+.getparser: (use_datetime := Bool, use_builtin_types := Bool) -> (.Unmarshaller!, .Unmarshaller!)
+.dumps: (
+    params: [Obj; _] or .Fault,
+    methodname := Str or NoneType,
+    methodresponse := Bool or NoneType,
+    encoding := Str or NoneType,
+    allow_none := Bool,
+) -> Str
+.loads: (
+    data: Str or Bytes,
+    use_datetime := Bool,
+    use_builtin_types := Bool,
+) -> ([Obj; _], Str or NoneType)
+.gzip_encode: (data: Bytes) -> Bytes
+.gzip_decode: (data: Bytes, max_decode := Int) -> Bytes

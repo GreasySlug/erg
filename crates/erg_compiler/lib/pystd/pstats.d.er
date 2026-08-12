@@ -1,0 +1,44 @@
+.SortKey: ClassType
+.SortKey <: Str
+.SortKey.
+    CALLS: .SortKey
+    CUMULATIVE: .SortKey
+    FILENAME: .SortKey
+    LINE: .SortKey
+    NAME: .SortKey
+    NFL: .SortKey
+    PCALLS: .SortKey
+    STDNAME: .SortKey
+    TIME: .SortKey
+
+.FunctionProfile: ClassType
+.FunctionProfile.
+    ncalls: Str
+    tottime: Float
+    percall_tottime: Float
+    cumtime: Float
+    percall_cumtime: Float
+    file_name: Str
+    line_number: Nat
+
+.StatsProfile: ClassType
+.StatsProfile.
+    total_tt: Float
+    func_profiles: {Str: .FunctionProfile}
+
+.Stats!: ClassType
+.Stats!.
+    total_calls: Nat
+    prim_calls: Nat
+    total_tt: Float
+    __call__: (*args: Obj, stream := Writable! or NoneType) -> .Stats!
+    strip_dirs!: (self: RefMut(.Stats!)) => .Stats!
+    add!: (self: RefMut(.Stats!), *filenames: PathLike) => .Stats!
+    dump_stats!: (self: Ref(.Stats!), filename: PathLike) => NoneType
+    sort_stats!: (self: RefMut(.Stats!), *keys: Str) => .Stats!
+    reverse_order!: (self: RefMut(.Stats!)) => .Stats!
+    print_stats!: (self: RefMut(.Stats!), *restrictions: Obj) => .Stats!
+    print_callers!: (self: RefMut(.Stats!), *restrictions: Obj) => .Stats!
+    print_callees!: (self: RefMut(.Stats!), *restrictions: Obj) => .Stats!
+    get_stats_profile!: (self: Ref(.Stats!)) => .StatsProfile
+    load_stats!: (self: RefMut(.Stats!), arg: PathLike or Obj) => NoneType

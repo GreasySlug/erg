@@ -1,0 +1,72 @@
+headers = pyimport "headers"
+
+.BaseHandler!: ClassType
+.BaseHandler!.
+    wsgi_version: (Nat, Nat)
+    wsgi_multithread: Bool
+    wsgi_multiprocess: Bool
+    wsgi_run_once: Bool
+    origin_server: Bool
+    http_version: Str
+    server_software: Str or NoneType
+    os_environ: {Str: Str}
+    wsgi_file_wrapper: ClassType or NoneType
+    headers_class: ClassType
+    traceback_limit: Nat or NoneType
+    error_status: Str
+    error_headers: [(Str, Str); _]
+    error_body: Bytes
+    run!: (self: RefMut(.BaseHandler!), application: GenericCallable) => NoneType
+    setup_environ!: (self: RefMut(.BaseHandler!)) => NoneType
+    finish_response!: (self: RefMut(.BaseHandler!)) => NoneType
+    get_scheme!: (self: Ref(.BaseHandler!)) => Str
+    set_content_length!: (self: RefMut(.BaseHandler!)) => NoneType
+    cleanup_headers!: (self: RefMut(.BaseHandler!)) => NoneType
+    start_response!: (
+        self: RefMut(.BaseHandler!),
+        status: Str,
+        headers: [(Str, Str); _],
+        exc_info := Obj or NoneType,
+    ) => (Bytes) => NoneType
+    send_preamble!: (self: RefMut(.BaseHandler!)) => NoneType
+    write!: (self: RefMut(.BaseHandler!), data: Bytes) => NoneType
+    sendfile!: (self: RefMut(.BaseHandler!)) => Bool
+    finish_content!: (self: RefMut(.BaseHandler!)) => NoneType
+    close!: (self: RefMut(.BaseHandler!)) => NoneType
+    send_headers!: (self: RefMut(.BaseHandler!)) => NoneType
+    result_is_file!: (self: Ref(.BaseHandler!)) => Bool
+    client_is_modern!: (self: Ref(.BaseHandler!)) => Bool
+    log_exception!: (self: Ref(.BaseHandler!), exc_info: Obj) => NoneType
+    handle_error!: (self: RefMut(.BaseHandler!)) => NoneType
+    error_output!: (
+        self: RefMut(.BaseHandler!),
+        environ: {Str: Obj},
+        start_response: GenericCallable,
+    ) => [Bytes; _]
+
+.SimpleHandler!: ClassType
+.SimpleHandler! <: .BaseHandler!
+.SimpleHandler!.
+    __call__: (
+        stdin: Readable!,
+        stdout: Writable!,
+        stderr: Writable!,
+        environ: {Str: Str},
+        multithread := Bool,
+        multiprocess := Bool,
+    ) -> .SimpleHandler!
+
+.BaseCGIHandler!: ClassType
+.BaseCGIHandler! <: .SimpleHandler!
+
+.CGIHandler!: ClassType
+.CGIHandler! <: .BaseCGIHandler!
+.CGIHandler!.
+    __call__: () -> .CGIHandler!
+
+.IISCGIHandler!: ClassType
+.IISCGIHandler! <: .BaseCGIHandler!
+.IISCGIHandler!.
+    __call__: () -> .IISCGIHandler!
+
+.read_environ!: () => {Str: Str}

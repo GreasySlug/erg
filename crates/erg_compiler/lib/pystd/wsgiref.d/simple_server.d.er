@@ -1,0 +1,41 @@
+.server_version: Str
+.sys_version: Str
+.software_version: Str
+
+.ServerHandler!: ClassType
+.ServerHandler!.
+    server_software: Str
+    close!: (self: RefMut(.ServerHandler!)) => NoneType
+
+.WSGIServer!: ClassType
+.WSGIServer!.
+    application: GenericCallable or NoneType
+    __call__: (
+        server_address: (Str, Nat),
+        RequestHandlerClass: ClassType,
+        bind_and_activate := Bool,
+    ) -> .WSGIServer!
+    server_bind!: (self: RefMut(.WSGIServer!)) => NoneType
+    setup_environ!: (self: RefMut(.WSGIServer!)) => NoneType
+    get_app: (self: Ref(.WSGIServer!)) -> GenericCallable or NoneType
+    set_app!: (self: RefMut(.WSGIServer!), application: GenericCallable) => NoneType
+    serve_forever!: (self: RefMut(.WSGIServer!), poll_interval := Float) => NoneType
+    handle_request!: (self: RefMut(.WSGIServer!)) => NoneType
+    shutdown!: (self: RefMut(.WSGIServer!)) => NoneType
+    server_close!: (self: RefMut(.WSGIServer!)) => NoneType
+
+.WSGIRequestHandler!: ClassType
+.WSGIRequestHandler!.
+    server_version: Str
+    get_environ!: (self: Ref(.WSGIRequestHandler!)) => {Str: Str}
+    get_stderr!: (self: Ref(.WSGIRequestHandler!)) => Writable!
+    handle!: (self: RefMut(.WSGIRequestHandler!)) => NoneType
+
+.demo_app!: (environ: {Str: Obj}, start_response: GenericCallable) => [Bytes; _]
+.make_server!: (
+    host: Str,
+    port: Nat,
+    app: GenericCallable,
+    server_class := ClassType,
+    handler_class := ClassType,
+) => .WSGIServer!

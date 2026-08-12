@@ -1,0 +1,7 @@
+.Completer!: ClassType
+.Completer!.
+    namespace: {Str: Obj}
+    __call__: (namespace := {Str: Obj} or NoneType) -> .Completer!
+    complete!: (self: RefMut(.Completer!), text: Str, state: Nat) => Str or NoneType
+    global_matches!: (self: RefMut(.Completer!), text: Str) => [Str; _]
+    attr_matches!: (self: RefMut(.Completer!), text: Str) => [Str; _]

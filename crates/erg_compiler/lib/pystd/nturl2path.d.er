@@ -1,0 +1,2 @@
+.url2pathname: (url: Str) -> Str
+.pathname2url: (p: Str) -> Str

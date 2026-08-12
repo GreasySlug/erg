@@ -1,0 +1,53 @@
+.EXPAT_VERSION: Str
+.version_info: (Nat, Nat, Nat)
+.native_encoding: Str
+
+.ExpatError: ClassType
+.ExpatError <: Exception
+.ExpatError.
+    code: Nat
+    lineno: Nat
+    offset: Nat
+
+.Error = 'error': ClassType
+.Error <: .ExpatError
+
+.XMLParserType!: ClassType
+.XMLParserType!.
+    buffer_size: Nat
+    buffer_text: Bool
+    buffer_used: Nat
+    namespace_prefixes: Bool
+    ordered_attributes: Bool
+    specified_attributes: Bool
+    ErrorByteIndex: Nat
+    ErrorCode: Nat
+    ErrorColumnNumber: Nat
+    ErrorLineNumber: Nat
+    CurrentByteIndex: Nat
+    CurrentColumnNumber: Nat
+    CurrentLineNumber: Nat
+    Parse!: (self: RefMut(.XMLParserType!), data: Str or Bytes, isfinal := Bool) => Nat
+    ParseFile!: (self: RefMut(.XMLParserType!), file: Readable!) => Nat
+    SetBase!: (self: RefMut(.XMLParserType!), base: Str) => NoneType
+    GetBase!: (self: Ref(.XMLParserType!)) => Str or NoneType
+    GetInputContext!: (self: Ref(.XMLParserType!)) => Bytes or NoneType
+    ExternalEntityParserCreate!: (
+        self: RefMut(.XMLParserType!),
+        context: Str or NoneType,
+        encoding := Str,
+    ) => .XMLParserType!
+    SetParamEntityParsing!: (self: RefMut(.XMLParserType!), flag: Nat) => Nat
+    UseForeignDTD!: (self: RefMut(.XMLParserType!), flag := Bool) => NoneType
+    SetReparseDeferralEnabled!: (self: RefMut(.XMLParserType!), enabled: Bool) => NoneType
+    GetReparseDeferralEnabled!: (self: Ref(.XMLParserType!)) => Bool
+
+.XML_PARAM_ENTITY_PARSING_NEVER: Nat
+.XML_PARAM_ENTITY_PARSING_UNLESS_STANDALONE: Nat
+.XML_PARAM_ENTITY_PARSING_ALWAYS: Nat
+
+.ParserCreate!: (
+    encoding := Str or NoneType,
+    namespace_separator := Str or NoneType,
+) => .XMLParserType!
+.ErrorString: (code: Nat) -> Str or NoneType

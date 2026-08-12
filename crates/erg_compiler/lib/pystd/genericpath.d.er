@@ -1,0 +1,14 @@
+.commonprefix: (m: [PathLike; _]) -> Str
+.exists!: (path: PathLike or Int) => Bool
+.lexists!: (path: PathLike) => Bool
+.isdir!: (s: PathLike or Int) => Bool
+.isfile!: (path: PathLike or Int) => Bool
+.islink!: (path: PathLike) => Bool
+.isjunction!: (path: PathLike) => Bool
+.getatime!: (filename: PathLike or Int) => Float
+.getctime!: (filename: PathLike or Int) => Float
+.getmtime!: (filename: PathLike or Int) => Float
+.getsize!: (filename: PathLike or Int) => Nat
+.samefile!: (f1: PathLike or Int, f2: PathLike or Int) => Bool
+.sameopenfile!: (fp1: Int, fp2: Int) => Bool
+.samestat!: (s1: Obj, s2: Obj) => Bool

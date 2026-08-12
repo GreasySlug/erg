@@ -1,0 +1,4 @@
+.etree = pyimport "etree"
+.dom = pyimport "dom"
+.sax = pyimport "sax"
+.parsers = pyimport "parsers"

@@ -1,0 +1,161 @@
+.SUPPRESS_HELP: Str
+.SUPPRESS_USAGE: Str
+
+.OptParseError: ClassType
+.OptParseError <: Exception
+.OptParseError.
+    msg: Str
+
+.OptionError: ClassType
+.OptionError <: .OptParseError
+
+.OptionConflictError: ClassType
+.OptionConflictError <: .OptionError
+
+.OptionValueError: ClassType
+.OptionValueError <: .OptParseError
+
+.BadOptionError: ClassType
+.BadOptionError <: .OptParseError
+.BadOptionError.
+    opt_str: Str
+
+.AmbiguousOptionError: ClassType
+.AmbiguousOptionError <: .BadOptionError
+
+.Values!: ClassType
+.Values!.
+    __call__: (defaults := {Str: Obj} or NoneType) -> .Values!
+    ensure_value!: (self: RefMut(.Values!), attr: Str, value: Obj) => Obj
+    read_file!: (self: RefMut(.Values!), filename: PathLike, mode := Str) => NoneType
+    read_module!: (self: RefMut(.Values!), modname: Str, mode := Str) => NoneType
+
+.Option: ClassType
+.Option.
+    ACTIONS: (Str,)
+    STORE_ACTIONS: (Str,)
+    TYPED_ACTIONS: (Str,)
+    ALWAYS_TYPED_ACTIONS: (Str,)
+    CONST_ACTIONS: (Str,)
+    TYPES: (Str,)
+    ATTRS: [Str; _]
+    __call__: (*opts: Str, **attrs: Obj) -> .Option
+    get_opt_string: (self: Ref(.Option)) -> Str
+    takes_value: (self: Ref(.Option)) -> Bool
+    check_value: (self: Ref(.Option), opt: Str, value: Str) -> Obj
+    convert_value: (self: Ref(.Option), opt: Str, value: Str) -> Obj
+
+.HelpFormatter!: ClassType
+.HelpFormatter!.
+    NO_DEFAULT_VALUE: Str
+    __call__: (
+        indent_increment: Nat,
+        max_help_position: Nat,
+        width: Nat or NoneType,
+        short_first: Bool,
+    ) -> .HelpFormatter!
+    indent!: (self: RefMut(.HelpFormatter!)) => NoneType
+    dedent!: (self: RefMut(.HelpFormatter!)) => NoneType
+    set_parser!: (self: RefMut(.HelpFormatter!), parser: .OptionParser!) => NoneType
+    format_usage: (self: Ref(.HelpFormatter!), usage: Str) -> Str
+    format_heading: (self: Ref(.HelpFormatter!), heading: Str) -> Str
+    format_description: (self: Ref(.HelpFormatter!), description: Str) -> Str
+    format_epilog: (self: Ref(.HelpFormatter!), epilog: Str) -> Str
+    format_option: (self: Ref(.HelpFormatter!), option: .Option) -> Str
+    format_option_strings: (self: Ref(.HelpFormatter!), option: .Option) -> Str
+
+.IndentedHelpFormatter!: ClassType
+.IndentedHelpFormatter! <: .HelpFormatter!
+.IndentedHelpFormatter!.
+    __call__: (
+        indent_increment := Nat,
+        max_help_position := Nat,
+        width := Nat or NoneType,
+        short_first := Bool,
+    ) -> .IndentedHelpFormatter!
+
+.TitledHelpFormatter!: ClassType
+.TitledHelpFormatter! <: .HelpFormatter!
+.TitledHelpFormatter!.
+    __call__: (
+        indent_increment := Nat,
+        max_help_position := Nat,
+        width := Nat or NoneType,
+        short_first := Bool,
+    ) -> .TitledHelpFormatter!
+
+.OptionContainer!: ClassType
+.OptionContainer!.
+    add_option!: (self: RefMut(.OptionContainer!), *args: Obj, **kwargs: Obj) => .Option
+    add_options!: (self: RefMut(.OptionContainer!), option_list: [.Option; _]) => NoneType
+    get_option: (self: Ref(.OptionContainer!), opt_str: Str) -> .Option or NoneType
+    has_option: (self: Ref(.OptionContainer!), opt_str: Str) -> Bool
+    remove_option!: (self: RefMut(.OptionContainer!), opt_str: Str) => NoneType
+    set_description!: (self: RefMut(.OptionContainer!), description: Str) => NoneType
+    get_description: (self: Ref(.OptionContainer!)) -> Str
+    set_conflict_handler!: (self: RefMut(.OptionContainer!), handler: Str) => NoneType
+    format_help: (self: Ref(.OptionContainer!), formatter: .HelpFormatter!) -> Str
+
+.OptionGroup!: ClassType
+.OptionGroup! <: .OptionContainer!
+.OptionGroup!.
+    title: Str
+    __call__: (
+        parser: .OptionParser!,
+        title: Str,
+        description := Str or NoneType,
+    ) -> .OptionGroup!
+    set_title!: (self: RefMut(.OptionGroup!), title: Str) => NoneType
+
+.OptionParser!: ClassType
+.OptionParser! <: .OptionContainer!
+.OptionParser!.
+    usage: Str or NoneType
+    prog: Str or NoneType
+    epilog: Str or NoneType
+    version: Str or NoneType
+    values: .Values!
+    __call__: (
+        usage := Str or NoneType,
+        option_list := [.Option; _] or NoneType,
+        option_class := ClassType,
+        version := Str or NoneType,
+        conflict_handler := Str,
+        description := Str or NoneType,
+        formatter := .HelpFormatter! or NoneType,
+        add_help_option := Bool,
+        prog := Str or NoneType,
+        epilog := Str or NoneType,
+    ) -> .OptionParser!
+    parse_args!: (
+        self: RefMut(.OptionParser!),
+        args := [Str; _] or NoneType,
+        values := .Values! or NoneType,
+    ) => (.Values!, [Str; _])
+    add_option_group!: (self: RefMut(.OptionParser!), *args: Obj, **kwargs: Obj) => .OptionGroup!
+    get_option_group: (self: Ref(.OptionParser!), opt_str: Str) -> .OptionGroup! or NoneType
+    set_default!: (self: RefMut(.OptionParser!), dest: Str, value: Obj) => NoneType
+    set_defaults!: (self: RefMut(.OptionParser!), **kwargs: Obj) => NoneType
+    get_default_values!: (self: Ref(.OptionParser!)) => .Values!
+    enable_interspersed_args!: (self: RefMut(.OptionParser!)) => NoneType
+    disable_interspersed_args!: (self: RefMut(.OptionParser!)) => NoneType
+    get_prog_name: (self: Ref(.OptionParser!)) -> Str
+    get_usage: (self: Ref(.OptionParser!)) -> Str
+    get_version: (self: Ref(.OptionParser!)) -> Str
+    expand_prog_name: (self: Ref(.OptionParser!), s: Str) -> Str
+    format_help: (self: Ref(.OptionParser!), formatter := .HelpFormatter! or NoneType) -> Str
+    format_option_help: (self: Ref(.OptionParser!), formatter := .HelpFormatter! or NoneType) -> Str
+    format_epilog: (self: Ref(.OptionParser!), formatter: .HelpFormatter!) -> Str
+    print_usage!: (self: Ref(.OptionParser!), file := Writable!) => NoneType
+    print_help!: (self: Ref(.OptionParser!), file := Writable!) => NoneType
+    print_version!: (self: Ref(.OptionParser!), file := Writable!) => NoneType
+    error!: (self: Ref(.OptionParser!), msg: Str) => Never
+    exit!: (self: Ref(.OptionParser!), status := Nat, msg := Str or NoneType) => Never
+    check_values!: (
+        self: RefMut(.OptionParser!),
+        values: .Values!,
+        args: [Str; _],
+    ) => (.Values!, [Str; _])
+
+.make_option: (*opts: Str, **attrs: Obj) -> .Option
+.check_choice: (option: .Option, opt: Str, value: Str) -> Str

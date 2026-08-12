@@ -1,0 +1,44 @@
+.handler = pyimport "handler"
+.saxutils = pyimport "saxutils"
+.xmlreader = pyimport "xmlreader"
+
+{ContentHandler!; ErrorHandler!;} = pyimport "handler"
+{InputSource!; XMLReader!;} = pyimport "xmlreader"
+
+.default_parser_list: [Str; _]
+
+.SAXException: ClassType
+.SAXException <: Exception
+.SAXException.
+    __call__: (msg: Str, exception := Exception or NoneType) -> .SAXException
+    getMessage: (self: Ref(.SAXException)) -> Str
+    getException: (self: Ref(.SAXException)) -> Exception or NoneType
+
+.SAXParseException: ClassType
+.SAXParseException <: .SAXException
+.SAXParseException.
+    getColumnNumber: (self: Ref(.SAXParseException)) -> Nat or NoneType
+    getLineNumber: (self: Ref(.SAXParseException)) -> Nat or NoneType
+    getPublicId: (self: Ref(.SAXParseException)) -> Str or NoneType
+    getSystemId: (self: Ref(.SAXParseException)) -> Str or NoneType
+
+.SAXNotRecognizedException: ClassType
+.SAXNotRecognizedException <: .SAXException
+
+.SAXNotSupportedException: ClassType
+.SAXNotSupportedException <: .SAXException
+
+.SAXReaderNotAvailable: ClassType
+.SAXReaderNotAvailable <: .SAXNotSupportedException
+
+.make_parser!: (parser_list := Iterable(Str)) => XMLReader!
+.parse!: (
+    source: PathLike or Readable! or InputSource!,
+    handler: ContentHandler!,
+    errorHandler := ErrorHandler!,
+) => NoneType
+.parseString!: (
+    string: Str or Bytes,
+    handler: ContentHandler!,
+    errorHandler := ErrorHandler!,
+) => NoneType

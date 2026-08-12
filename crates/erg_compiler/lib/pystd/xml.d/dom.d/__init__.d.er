@@ -1,0 +1,87 @@
+.minidom = pyimport "minidom"
+
+.EMPTY_NAMESPACE: NoneType
+.EMPTY_PREFIX: NoneType
+.XML_NAMESPACE: Str
+.XMLNS_NAMESPACE: Str
+.XHTML_NAMESPACE: Str
+
+.INDEX_SIZE_ERR: Nat
+.DOMSTRING_SIZE_ERR: Nat
+.HIERARCHY_REQUEST_ERR: Nat
+.WRONG_DOCUMENT_ERR: Nat
+.INVALID_CHARACTER_ERR: Nat
+.NO_DATA_ALLOWED_ERR: Nat
+.NO_MODIFICATION_ALLOWED_ERR: Nat
+.NOT_FOUND_ERR: Nat
+.NOT_SUPPORTED_ERR: Nat
+.INUSE_ATTRIBUTE_ERR: Nat
+.INVALID_STATE_ERR: Nat
+.SYNTAX_ERR: Nat
+.INVALID_MODIFICATION_ERR: Nat
+.NAMESPACE_ERR: Nat
+.INVALID_ACCESS_ERR: Nat
+.VALIDATION_ERR: Nat
+
+.Node: ClassType
+.Node.
+    ELEMENT_NODE: Nat
+    ATTRIBUTE_NODE: Nat
+    TEXT_NODE: Nat
+    CDATA_SECTION_NODE: Nat
+    ENTITY_REFERENCE_NODE: Nat
+    ENTITY_NODE: Nat
+    PROCESSING_INSTRUCTION_NODE: Nat
+    COMMENT_NODE: Nat
+    DOCUMENT_NODE: Nat
+    DOCUMENT_TYPE_NODE: Nat
+    DOCUMENT_FRAGMENT_NODE: Nat
+    NOTATION_NODE: Nat
+
+.UserDataHandler: ClassType
+.UserDataHandler.
+    NODE_CLONED: Nat
+    NODE_IMPORTED: Nat
+    NODE_DELETED: Nat
+    NODE_RENAMED: Nat
+
+.DOMException: ClassType
+.DOMException <: Exception
+.DOMException.
+    code: Nat
+
+.IndexSizeErr: ClassType
+.IndexSizeErr <: .DOMException
+.DomstringSizeErr: ClassType
+.DomstringSizeErr <: .DOMException
+.HierarchyRequestErr: ClassType
+.HierarchyRequestErr <: .DOMException
+.WrongDocumentErr: ClassType
+.WrongDocumentErr <: .DOMException
+.InvalidCharacterErr: ClassType
+.InvalidCharacterErr <: .DOMException
+.NoDataAllowedErr: ClassType
+.NoDataAllowedErr <: .DOMException
+.NoModificationAllowedErr: ClassType
+.NoModificationAllowedErr <: .DOMException
+.NotFoundErr: ClassType
+.NotFoundErr <: .DOMException
+.NotSupportedErr: ClassType
+.NotSupportedErr <: .DOMException
+.InuseAttributeErr: ClassType
+.InuseAttributeErr <: .DOMException
+.InvalidStateErr: ClassType
+.InvalidStateErr <: .DOMException
+.SyntaxErr: ClassType
+.SyntaxErr <: .DOMException
+.InvalidModificationErr: ClassType
+.InvalidModificationErr <: .DOMException
+.NamespaceErr: ClassType
+.NamespaceErr <: .DOMException
+.InvalidAccessErr: ClassType
+.InvalidAccessErr <: .DOMException
+.ValidationErr: ClassType
+.ValidationErr <: .DOMException
+
+.getDOMImplementation!: (features := Str or NoneType) => Obj or NoneType
+.registerDOMImplementation!: (name: Str, factory: GenericCallable) => NoneType

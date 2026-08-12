@@ -1,0 +1,24 @@
+{ContentHandler!;} = pyimport "handler"
+{InputSource!; XMLReader!;} = pyimport "xmlreader"
+
+.escape: (data: Str, entities := {Str: Str}) -> Str
+.unescape: (data: Str, entities := {Str: Str}) -> Str
+.quoteattr: (data: Str, entities := {Str: Str}) -> Str
+
+.XMLGenerator!: ClassType
+.XMLGenerator! <: ContentHandler!
+.XMLGenerator!.
+    __call__: (
+        out := Writable! or NoneType,
+        encoding := Str,
+        short_empty_elements := Bool,
+    ) -> .XMLGenerator!
+
+.XMLFilterBase!: ClassType
+.XMLFilterBase! <: XMLReader!
+.XMLFilterBase!.
+    __call__: (parent := XMLReader! or NoneType) -> .XMLFilterBase!
+    getParent: (self: Ref(.XMLFilterBase!)) -> XMLReader! or NoneType
+    setParent!: (self: RefMut(.XMLFilterBase!), parent: XMLReader!) => NoneType
+
+.prepare_input_source!: (source: PathLike or Readable! or InputSource!, base := Str) => InputSource!

@@ -1,0 +1,70 @@
+.FIRST_COMPLETED: Str
+.FIRST_EXCEPTION: Str
+.ALL_COMPLETED: Str
+
+.CancelledError: ClassType
+.CancelledError <: Exception
+.InvalidStateError: ClassType
+.InvalidStateError <: Exception
+.TimeoutError: ClassType
+.TimeoutError <: OSError
+.BrokenExecutor: ClassType
+.BrokenExecutor <: RuntimeError
+
+.Future!: (T: Type) -> ClassType
+.Future!(T).
+    __call__: () -> .Future!(T)
+    cancel!: (self: RefMut(.Future!(T))) => Bool
+    cancelled: (self: Ref(.Future!(T))) -> Bool
+    running: (self: Ref(.Future!(T))) -> Bool
+    done: (self: Ref(.Future!(T))) -> Bool
+    result!: (self: Ref(.Future!(T)), timeout := Float or NoneType) => T
+    exception!: (self: Ref(.Future!(T)), timeout := Float or NoneType) => Exception or NoneType
+    add_done_callback!: (self: RefMut(.Future!(T)), fn: (.Future!(T)) => NoneType) => NoneType
+    set_running_or_notify_cancel!: (self: RefMut(.Future!(T))) => Bool
+    set_result!: (self: RefMut(.Future!(T)), result: T) => NoneType
+    set_exception!: (self: RefMut(.Future!(T)), exception: Exception) => NoneType
+
+.Executor!: ClassType
+.Executor! <: ContextManager
+.Executor!.
+    submit!: (self: RefMut(.Executor!), fn: GenericCallable, *args: Obj) => .Future!(Obj)
+    map!: (
+        self: RefMut(.Executor!),
+        fn: GenericCallable,
+        *iterables: Iterable(Obj),
+        timeout := Float or NoneType,
+        chunksize := Nat,
+    ) => Iterable(Obj)
+    shutdown!: (self: RefMut(.Executor!), wait := Bool, cancel_futures := Bool) => NoneType
+
+.ThreadPoolExecutor!: ClassType
+.ThreadPoolExecutor! <: .Executor!
+.ThreadPoolExecutor!.
+    __call__: (
+        max_workers := Nat or NoneType,
+        thread_name_prefix := Str,
+        initializer := GenericCallable or NoneType,
+        initargs := [Obj; _],
+    ) -> .ThreadPoolExecutor!
+
+.ProcessPoolExecutor!: ClassType
+.ProcessPoolExecutor! <: .Executor!
+.ProcessPoolExecutor!.
+    __call__: (
+        max_workers := Nat or NoneType,
+        mp_context := Obj or NoneType,
+        initializer := GenericCallable or NoneType,
+        initargs := [Obj; _],
+        max_tasks_per_child := Nat or NoneType,
+    ) -> .ProcessPoolExecutor!
+
+.wait!: (
+    fs: Iterable(.Future!(Obj)),
+    timeout := Float or NoneType,
+    return_when := Str,
+) => ({.Future!(Obj)}, {.Future!(Obj)})
+.as_completed!: (
+    fs: Iterable(.Future!(Obj)),
+    timeout := Float or NoneType,
+) => Iterable(.Future!(Obj))

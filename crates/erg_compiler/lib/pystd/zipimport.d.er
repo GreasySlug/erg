@@ -1,0 +1,15 @@
+.ZipImportError: ClassType
+.ZipImportError <: ImportError
+
+.ZipImporter! = 'zipimporter': ClassType
+.ZipImporter!.
+    archive: Str
+    prefix: Str
+    __call__: (path: PathLike) -> .ZipImporter!
+    find_spec!: (self: Ref(.ZipImporter!), fullname: Str, target := Obj or NoneType) => Obj or NoneType
+    get_code!: (self: Ref(.ZipImporter!), fullname: Str) => Code
+    get_data!: (self: Ref(.ZipImporter!), pathname: PathLike) => Bytes
+    get_filename!: (self: Ref(.ZipImporter!), fullname: Str) => Str
+    get_source!: (self: Ref(.ZipImporter!), fullname: Str) => Str or NoneType
+    is_package!: (self: Ref(.ZipImporter!), fullname: Str) => Bool
+    invalidate_caches!: (self: RefMut(.ZipImporter!)) => NoneType

@@ -1,0 +1,135 @@
+.SMTP_PORT: Nat
+.SMTP_SSL_PORT: Nat
+.CRLF: Str
+.bCRLF: Bytes
+
+.SMTPException: ClassType
+.SMTPException <: OSError
+
+.SMTPNotSupportedError: ClassType
+.SMTPNotSupportedError <: .SMTPException
+
+.SMTPServerDisconnected: ClassType
+.SMTPServerDisconnected <: .SMTPException
+
+.SMTPResponseException: ClassType
+.SMTPResponseException <: .SMTPException
+.SMTPResponseException.
+    smtp_code: Nat
+    smtp_error: Bytes or Str
+
+.SMTPSenderRefused: ClassType
+.SMTPSenderRefused <: .SMTPResponseException
+.SMTPSenderRefused.
+    sender: Str
+
+.SMTPRecipientsRefused: ClassType
+.SMTPRecipientsRefused <: .SMTPException
+.SMTPRecipientsRefused.
+    recipients: {Str: (Nat, Bytes)}
+
+.SMTPDataError: ClassType
+.SMTPDataError <: .SMTPResponseException
+
+.SMTPConnectError: ClassType
+.SMTPConnectError <: .SMTPResponseException
+
+.SMTPHeloError: ClassType
+.SMTPHeloError <: .SMTPResponseException
+
+.SMTPAuthenticationError: ClassType
+.SMTPAuthenticationError <: .SMTPResponseException
+
+.SMTP!: ClassType
+.SMTP! <: ContextManager
+.SMTP!.
+    debuglevel: Nat
+    does_esmtp: Bool
+    esmtp_features: {Str: Str}
+    __call__: (
+        host := Str,
+        port := Nat,
+        local_hostname := Str or NoneType,
+        timeout := Float,
+        source_address := (Str, Nat) or NoneType,
+    ) -> .SMTP!
+    set_debuglevel!: (self: RefMut(.SMTP!), debuglevel: Nat) => NoneType
+    connect!: (
+        self: RefMut(.SMTP!),
+        host := Str,
+        port := Nat,
+        source_address := (Str, Nat) or NoneType,
+    ) => (Nat, Bytes)
+    docmd!: (self: RefMut(.SMTP!), cmd: Str, args := Str) => (Nat, Bytes)
+    helo!: (self: RefMut(.SMTP!), name := Str) => (Nat, Bytes)
+    ehlo!: (self: RefMut(.SMTP!), name := Str) => (Nat, Bytes)
+    ehlo_or_helo_if_needed!: (self: RefMut(.SMTP!)) => NoneType
+    has_extn: (self: Ref(.SMTP!), name: Str) -> Bool
+    verify!: (self: RefMut(.SMTP!), address: Str) => (Nat, Bytes)
+    vrfy!: (self: RefMut(.SMTP!), address: Str) => (Nat, Bytes)
+    expn!: (self: RefMut(.SMTP!), address: Str) => (Nat, Bytes)
+    login!: (
+        self: RefMut(.SMTP!),
+        user: Str,
+        password: Str,
+        initial_response_ok := Bool,
+    ) => (Nat, Bytes)
+    auth!: (
+        self: RefMut(.SMTP!),
+        mechanism: Str,
+        authobject: GenericCallable,
+        initial_response_ok := Bool,
+    ) => (Nat, Bytes)
+    starttls!: (self: RefMut(.SMTP!), context := Obj or NoneType) => (Nat, Bytes)
+    sendmail!: (
+        self: RefMut(.SMTP!),
+        from_addr: Str,
+        to_addrs: Str or [Str; _],
+        msg: Str or Bytes,
+        mail_options := [Str; _],
+        rcpt_options := [Str; _],
+    ) => {Str: (Nat, Bytes)}
+    send_message!: (
+        self: RefMut(.SMTP!),
+        msg: Obj,
+        from_addr := Str or NoneType,
+        to_addrs := Str or [Str; _] or NoneType,
+        mail_options := [Str; _],
+        rcpt_options := [Str; _],
+    ) => {Str: (Nat, Bytes)}
+    mail!: (self: RefMut(.SMTP!), sender: Str, options := [Str; _]) => (Nat, Bytes)
+    rcpt!: (self: RefMut(.SMTP!), recip: Str, options := [Str; _]) => (Nat, Bytes)
+    data!: (self: RefMut(.SMTP!), msg: Str or Bytes) => (Nat, Bytes)
+    noop!: (self: RefMut(.SMTP!)) => (Nat, Bytes)
+    rset!: (self: RefMut(.SMTP!)) => (Nat, Bytes)
+    quit!: (self: RefMut(.SMTP!)) => (Nat, Bytes)
+    close!: (self: RefMut(.SMTP!)) => NoneType
+    getreply!: (self: RefMut(.SMTP!)) => (Nat, Bytes)
+    putcmd!: (self: RefMut(.SMTP!), cmd: Str, args := Str) => NoneType
+    send!: (self: RefMut(.SMTP!), s: Str or Bytes) => NoneType
+
+.SMTP_SSL!: ClassType
+.SMTP_SSL! <: .SMTP!
+.SMTP_SSL!.
+    __call__: (
+        host := Str,
+        port := Nat,
+        local_hostname := Str or NoneType,
+        timeout := Float,
+        source_address := (Str, Nat) or NoneType,
+        context := Obj or NoneType,
+    ) -> .SMTP_SSL!
+
+.LMTP!: ClassType
+.LMTP! <: .SMTP!
+.LMTP!.
+    __call__: (
+        host := Str,
+        port := Nat,
+        local_hostname := Str or NoneType,
+        source_address := (Str, Nat) or NoneType,
+        timeout := Float,
+    ) -> .LMTP!
+
+.quoteaddr: (addrstring: Str) -> Str
+.quotedata: (data: Str) -> Str

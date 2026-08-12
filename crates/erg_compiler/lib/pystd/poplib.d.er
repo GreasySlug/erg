@@ -1,0 +1,42 @@
+.POP3_PORT: Nat
+.POP3_SSL_PORT: Nat
+.CR: Bytes
+.LF: Bytes
+.CRLF: Bytes
+
+.ErrorProto = 'error_proto': ClassType
+.ErrorProto <: Exception
+
+.POP3!: ClassType
+.POP3!.
+    encoding: Str
+    __call__: (host: Str, port := Nat, timeout := Float) -> .POP3!
+    set_debuglevel!: (self: RefMut(.POP3!), level: Nat) => NoneType
+    getwelcome!: (self: RefMut(.POP3!)) => Bytes
+    capa!: (self: RefMut(.POP3!)) => {Str: [Str; _]}
+    user!: (self: RefMut(.POP3!), user: Str) => Bytes
+    pass_!: (self: RefMut(.POP3!), pswd: Str) => Bytes
+    apop!: (self: RefMut(.POP3!), user: Str, password: Str) => Bytes
+    rpop!: (self: RefMut(.POP3!), user: Str) => Bytes
+    stat!: (self: RefMut(.POP3!)) => (Nat, Nat)
+    list!: (self: RefMut(.POP3!), which := Nat or NoneType) => (Bytes, [Bytes; _], Nat)
+    retr!: (self: RefMut(.POP3!), which: Nat) => (Bytes, [Bytes; _], Nat)
+    dele!: (self: RefMut(.POP3!), which: Nat) => Bytes
+    rset!: (self: RefMut(.POP3!)) => Bytes
+    noop!: (self: RefMut(.POP3!)) => Bytes
+    quit!: (self: RefMut(.POP3!)) => Bytes
+    close!: (self: RefMut(.POP3!)) => NoneType
+    top!: (self: RefMut(.POP3!), which: Nat, howmuch: Nat) => (Bytes, [Bytes; _], Nat)
+    uidl!: (self: RefMut(.POP3!), which := Nat or NoneType) => Bytes or (Bytes, [Bytes; _], Nat)
+    utf8!: (self: RefMut(.POP3!)) => Bytes
+    stls!: (self: RefMut(.POP3!), context := Obj or NoneType) => Bytes
+
+.POP3_SSL!: ClassType
+.POP3_SSL! <: .POP3!
+.POP3_SSL!.
+    __call__: (
+        host: Str,
+        port := Nat,
+        timeout := Float,
+        context := Obj or NoneType,
+    ) -> .POP3_SSL!

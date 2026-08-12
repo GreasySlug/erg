@@ -1,0 +1,71 @@
+{ContentHandler!; DTDHandler!; EntityResolver!; ErrorHandler!;} = pyimport "handler"
+
+.InputSource!: ClassType
+.InputSource!.
+    __call__: (system_id := Str or NoneType) -> .InputSource!
+    setPublicId!: (self: RefMut(.InputSource!), public_id: Str or NoneType) => NoneType
+    getPublicId: (self: Ref(.InputSource!)) -> Str or NoneType
+    setSystemId!: (self: RefMut(.InputSource!), system_id: Str or NoneType) => NoneType
+    getSystemId: (self: Ref(.InputSource!)) -> Str or NoneType
+    setEncoding!: (self: RefMut(.InputSource!), encoding: Str or NoneType) => NoneType
+    getEncoding: (self: Ref(.InputSource!)) -> Str or NoneType
+    setByteStream!: (self: RefMut(.InputSource!), bytefile: Readable!) => NoneType
+    getByteStream: (self: Ref(.InputSource!)) -> Readable! or NoneType
+    setCharacterStream!: (self: RefMut(.InputSource!), charfile: Readable!) => NoneType
+    getCharacterStream: (self: Ref(.InputSource!)) -> Readable! or NoneType
+
+.Locator: ClassType
+.Locator.
+    getColumnNumber: (self: Ref(.Locator)) -> Nat or NoneType
+    getLineNumber: (self: Ref(.Locator)) -> Nat or NoneType
+    getPublicId: (self: Ref(.Locator)) -> Str or NoneType
+    getSystemId: (self: Ref(.Locator)) -> Str or NoneType
+
+.AttributesImpl: ClassType
+.AttributesImpl.
+    __call__: (attrs: {Str: Str}) -> .AttributesImpl
+    getLength: (self: Ref(.AttributesImpl)) -> Nat
+    getNames: (self: Ref(.AttributesImpl)) -> [Str; _]
+    getType: (self: Ref(.AttributesImpl), name: Str) -> Str
+    getValue: (self: Ref(.AttributesImpl), name: Str) -> Str
+    getValueByQName: (self: Ref(.AttributesImpl), name: Str) -> Str
+    getNameByQName: (self: Ref(.AttributesImpl), name: Str) -> Str
+    getQNameByName: (self: Ref(.AttributesImpl), name: Str) -> Str
+    getQNames: (self: Ref(.AttributesImpl)) -> [Str; _]
+    get: (self: Ref(.AttributesImpl), name: Str, alternative := Str or NoneType) -> Str or NoneType
+    copy: (self: Ref(.AttributesImpl)) -> .AttributesImpl
+    keys: (self: Ref(.AttributesImpl)) -> [Str; _]
+    items: (self: Ref(.AttributesImpl)) -> [(Str, Str); _]
+    values: (self: Ref(.AttributesImpl)) -> [Str; _]
+
+.AttributesNSImpl: ClassType
+.AttributesNSImpl <: .AttributesImpl
+.AttributesNSImpl.
+    __call__: (attrs: {Str: Str}, qnames: {Str: Str}) -> .AttributesNSImpl
+
+.XMLReader!: ClassType
+.XMLReader!.
+    __call__: () -> .XMLReader!
+    parse!: (self: RefMut(.XMLReader!), source: PathLike or Readable! or .InputSource!) => NoneType
+    getContentHandler: (self: Ref(.XMLReader!)) -> ContentHandler!
+    setContentHandler!: (self: RefMut(.XMLReader!), handler: ContentHandler!) => NoneType
+    getDTDHandler: (self: Ref(.XMLReader!)) -> DTDHandler!
+    setDTDHandler!: (self: RefMut(.XMLReader!), handler: DTDHandler!) => NoneType
+    getEntityResolver: (self: Ref(.XMLReader!)) -> EntityResolver!
+    setEntityResolver!: (self: RefMut(.XMLReader!), resolver: EntityResolver!) => NoneType
+    getErrorHandler: (self: Ref(.XMLReader!)) -> ErrorHandler!
+    setErrorHandler!: (self: RefMut(.XMLReader!), handler: ErrorHandler!) => NoneType
+    setLocale!: (self: RefMut(.XMLReader!), locale: Str) => NoneType
+    getFeature: (self: Ref(.XMLReader!), featurename: Str) -> Obj
+    setFeature!: (self: RefMut(.XMLReader!), featurename: Str, value: Obj) => NoneType
+    getProperty: (self: Ref(.XMLReader!), propertyname: Str) -> Obj
+    setProperty!: (self: RefMut(.XMLReader!), propertyname: Str, value: Obj) => NoneType
+
+.IncrementalParser!: ClassType
+.IncrementalParser! <: .XMLReader!
+.IncrementalParser!.
+    __call__: (bufsize := Nat) -> .IncrementalParser!
+    feed!: (self: RefMut(.IncrementalParser!), data: Str or Bytes) => NoneType
+    prepareParser!: (self: RefMut(.IncrementalParser!), source: .InputSource!) => NoneType
+    close!: (self: RefMut(.IncrementalParser!)) => NoneType
+    reset!: (self: RefMut(.IncrementalParser!)) => NoneType

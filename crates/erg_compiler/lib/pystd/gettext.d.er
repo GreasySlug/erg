@@ -1,0 +1,63 @@
+.NullTranslations!: ClassType
+.NullTranslations!.
+    __call__: (fp := Readable! or NoneType) -> .NullTranslations!
+    gettext: (self: Ref(.NullTranslations!), message: Str) -> Str
+    ngettext: (self: Ref(.NullTranslations!), msgid1: Str, msgid2: Str, n: Nat) -> Str
+    pgettext: (self: Ref(.NullTranslations!), context: Str, message: Str) -> Str
+    npgettext: (
+        self: Ref(.NullTranslations!),
+        context: Str,
+        msgid1: Str,
+        msgid2: Str,
+        n: Nat,
+    ) -> Str
+    info: (self: Ref(.NullTranslations!)) -> {Str: Str}
+    charset: (self: Ref(.NullTranslations!)) -> Str or NoneType
+    install!: (self: Ref(.NullTranslations!), names := [Str; _] or NoneType) => NoneType
+    add_fallback!: (self: RefMut(.NullTranslations!), fallback: .NullTranslations!) => NoneType
+
+.GNUTranslations!: ClassType
+.GNUTranslations! <: .NullTranslations!
+.GNUTranslations!.
+    LE_MAGIC: Nat
+    BE_MAGIC: Nat
+    CONTEXT: Str
+    __call__: (fp := Readable! or NoneType) -> .GNUTranslations!
+
+.find!: (
+    domain: Str,
+    localedir := PathLike or NoneType,
+    languages := [Str; _] or NoneType,
+    all := Bool,
+) => Str or [Str; _] or NoneType
+.translation!: (
+    domain: Str,
+    localedir := PathLike or NoneType,
+    languages := [Str; _] or NoneType,
+    class_ := ClassType or NoneType,
+    fallback := Bool,
+) => .NullTranslations!
+.install!: (
+    domain: Str,
+    localedir := PathLike or NoneType,
+    names := [Str; _] or NoneType,
+) => NoneType
+.Catalog!: (
+    domain: Str,
+    localedir := PathLike or NoneType,
+    languages := [Str; _] or NoneType,
+    class_ := ClassType or NoneType,
+    fallback := Bool,
+) => .NullTranslations!
+
+.textdomain!: (domain := Str or NoneType) => Str
+.bindtextdomain!: (domain: Str, localedir := PathLike or NoneType) => Str
+
+.gettext: (message: Str) -> Str
+.dgettext: (domain: Str, message: Str) -> Str
+.ngettext: (msgid1: Str, msgid2: Str, n: Nat) -> Str
+.dngettext: (domain: Str, msgid1: Str, msgid2: Str, n: Nat) -> Str
+.pgettext: (context: Str, message: Str) -> Str
+.dpgettext: (domain: Str, context: Str, message: Str) -> Str
+.npgettext: (context: Str, msgid1: Str, msgid2: Str, n: Nat) -> Str
+.dnpgettext: (domain: Str, context: Str, msgid1: Str, msgid2: Str, n: Nat) -> Str

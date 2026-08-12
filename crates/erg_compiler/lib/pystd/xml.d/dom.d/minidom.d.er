@@ -1,0 +1,187 @@
+.Node!: ClassType
+.Node!.
+    nodeType: Nat
+    nodeName: Str
+    nodeValue: Str or NoneType
+    parentNode: .Node! or NoneType
+    childNodes: [.Node!; _]
+    firstChild: .Node! or NoneType
+    lastChild: .Node! or NoneType
+    previousSibling: .Node! or NoneType
+    nextSibling: .Node! or NoneType
+    attributes: Obj or NoneType
+    ownerDocument: .Document! or NoneType
+    namespaceURI: Str or NoneType
+    prefix: Str or NoneType
+    localName: Str or NoneType
+    appendChild!: (self: RefMut(.Node!), node: .Node!) => .Node!
+    insertBefore!: (self: RefMut(.Node!), newChild: .Node!, refChild: .Node! or NoneType) => .Node!
+    removeChild!: (self: RefMut(.Node!), oldChild: .Node!) => .Node!
+    replaceChild!: (self: RefMut(.Node!), newChild: .Node!, oldChild: .Node!) => .Node!
+    hasChildNodes: (self: Ref(.Node!)) -> Bool
+    cloneNode: (self: Ref(.Node!), deep: Bool) -> .Node!
+    normalize!: (self: RefMut(.Node!)) => NoneType
+    unlink!: (self: RefMut(.Node!)) => NoneType
+    toxml: (self: Ref(.Node!), encoding := Str or NoneType) -> Str or Bytes
+    toprettyxml: (
+        self: Ref(.Node!),
+        indent := Str,
+        newl := Str,
+        encoding := Str or NoneType,
+        standalone := Bool or NoneType,
+    ) -> Str or Bytes
+    writexml!: (
+        self: Ref(.Node!),
+        writer: Writable!,
+        indent := Str,
+        addindent := Str,
+        newl := Str,
+    ) => NoneType
+
+.Attr!: ClassType
+.Attr! <: .Node!
+.Attr!.
+    name: Str
+    value: Str
+    specified: Bool
+    isId: Bool
+    ownerElement: .Element! or NoneType
+
+.CharacterData!: ClassType
+.CharacterData! <: .Node!
+.CharacterData!.
+    data: Str
+    length: Nat
+    appendData!: (self: RefMut(.CharacterData!), arg: Str) => NoneType
+    insertData!: (self: RefMut(.CharacterData!), offset: Nat, arg: Str) => NoneType
+    deleteData!: (self: RefMut(.CharacterData!), offset: Nat, count: Nat) => NoneType
+    replaceData!: (self: RefMut(.CharacterData!), offset: Nat, count: Nat, arg: Str) => NoneType
+    substringData: (self: Ref(.CharacterData!), offset: Nat, count: Nat) -> Str
+
+.Text!: ClassType
+.Text! <: .CharacterData!
+.Text!.
+    splitText!: (self: RefMut(.Text!), offset: Nat) => .Text!
+
+.CDATASection!: ClassType
+.CDATASection! <: .Text!
+
+.Comment!: ClassType
+.Comment! <: .CharacterData!
+
+.ProcessingInstruction!: ClassType
+.ProcessingInstruction! <: .CharacterData!
+.ProcessingInstruction!.
+    target: Str
+
+.Element!: ClassType
+.Element! <: .Node!
+.Element!.
+    tagName: Str
+    getAttribute: (self: Ref(.Element!), attname: Str) -> Str
+    getAttributeNS: (self: Ref(.Element!), namespaceURI: Str or NoneType, localName: Str) -> Str
+    getAttributeNode: (self: Ref(.Element!), attrname: Str) -> .Attr! or NoneType
+    getAttributeNodeNS: (
+        self: Ref(.Element!),
+        namespaceURI: Str or NoneType,
+        localName: Str,
+    ) -> .Attr! or NoneType
+    setAttribute!: (self: RefMut(.Element!), attname: Str, value: Str) => NoneType
+    setAttributeNS!: (
+        self: RefMut(.Element!),
+        namespaceURI: Str or NoneType,
+        qualifiedName: Str,
+        value: Str,
+    ) => NoneType
+    setAttributeNode!: (self: RefMut(.Element!), attr: .Attr!) => .Attr! or NoneType
+    removeAttribute!: (self: RefMut(.Element!), name: Str) => NoneType
+    removeAttributeNS!: (
+        self: RefMut(.Element!),
+        namespaceURI: Str or NoneType,
+        localName: Str,
+    ) => NoneType
+    removeAttributeNode!: (self: RefMut(.Element!), node: .Attr!) => .Attr!
+    hasAttribute: (self: Ref(.Element!), name: Str) -> Bool
+    hasAttributeNS: (self: Ref(.Element!), namespaceURI: Str or NoneType, localName: Str) -> Bool
+    hasAttributes: (self: Ref(.Element!)) -> Bool
+    getElementsByTagName: (self: Ref(.Element!), name: Str) -> [.Element!; _]
+    getElementsByTagNameNS: (
+        self: Ref(.Element!),
+        namespaceURI: Str or NoneType,
+        localName: Str,
+    ) -> [.Element!; _]
+
+.DocumentFragment!: ClassType
+.DocumentFragment! <: .Node!
+
+.DocumentType!: ClassType
+.DocumentType! <: .Node!
+.DocumentType!.
+    name: Str or NoneType
+    publicId: Str or NoneType
+    systemId: Str or NoneType
+    internalSubset: Str or NoneType
+    entities: Obj
+    notations: Obj
+
+.DOMImplementation!: ClassType
+.DOMImplementation!.
+    hasFeature: (self: Ref(.DOMImplementation!), feature: Str, version: Str or NoneType) -> Bool
+    createDocument!: (
+        self: Ref(.DOMImplementation!),
+        namespaceURI: Str or NoneType,
+        qualifiedName: Str or NoneType,
+        doctype: .DocumentType! or NoneType,
+    ) => .Document!
+    createDocumentType!: (
+        self: Ref(.DOMImplementation!),
+        qualifiedName: Str,
+        publicId: Str or NoneType,
+        systemId: Str or NoneType,
+    ) => .DocumentType!
+
+.Document!: ClassType
+.Document! <: .Node!
+.Document!.
+    doctype: .DocumentType! or NoneType
+    documentElement: .Element! or NoneType
+    implementation: .DOMImplementation!
+    createElement!: (self: RefMut(.Document!), tagName: Str) => .Element!
+    createElementNS!: (
+        self: RefMut(.Document!),
+        namespaceURI: Str or NoneType,
+        qualifiedName: Str,
+    ) => .Element!
+    createTextNode!: (self: RefMut(.Document!), data: Str) => .Text!
+    createComment!: (self: RefMut(.Document!), data: Str) => .Comment!
+    createCDATASection!: (self: RefMut(.Document!), data: Str) => .CDATASection!
+    createProcessingInstruction!: (
+        self: RefMut(.Document!),
+        target: Str,
+        data: Str,
+    ) => .ProcessingInstruction!
+    createAttribute!: (self: RefMut(.Document!), qName: Str) => .Attr!
+    createAttributeNS!: (
+        self: RefMut(.Document!),
+        namespaceURI: Str or NoneType,
+        qualifiedName: Str,
+    ) => .Attr!
+    createDocumentFragment!: (self: RefMut(.Document!)) => .DocumentFragment!
+    getElementById: (self: Ref(.Document!), id: Str) -> .Element! or NoneType
+    getElementsByTagName: (self: Ref(.Document!), name: Str) -> [.Element!; _]
+    getElementsByTagNameNS: (
+        self: Ref(.Document!),
+        namespaceURI: Str or NoneType,
+        localName: Str,
+    ) -> [.Element!; _]
+    importNode!: (self: RefMut(.Document!), node: .Node!, deep: Bool) => .Node!
+    renameNode!: (
+        self: RefMut(.Document!),
+        n: .Node!,
+        namespaceURI: Str or NoneType,
+        name: Str,
+    ) => .Node!
+
+.getDOMImplementation!: (features := Str or NoneType) => .DOMImplementation! or NoneType
+.parse!: (file: PathLike or Readable!, parser := Obj or NoneType, bufsize := Nat or NoneType) => .Document!
+.parseString!: (string: Str or Bytes, parser := Obj or NoneType) => .Document!

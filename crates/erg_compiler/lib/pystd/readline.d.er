@@ -1,0 +1,37 @@
+# unix only (or with a readline-compatible library installed)
+.backend: Str
+
+.parse_and_bind!: (string: Str) => NoneType
+.read_init_file!: (filename := PathLike or NoneType) => NoneType
+
+.get_line_buffer!: () => Str
+.insert_text!: (string: Str) => NoneType
+.redisplay!: () => NoneType
+
+.read_history_file!: (filename := PathLike or NoneType) => NoneType
+.write_history_file!: (filename := PathLike or NoneType) => NoneType
+.append_history_file!: (nelements: Nat, filename := PathLike or NoneType) => NoneType
+.get_history_length!: () => Int
+.set_history_length!: (length: Int) => NoneType
+
+.clear_history!: () => NoneType
+.get_current_history_length!: () => Nat
+.get_history_item!: (index: Nat) => Str
+.remove_history_item!: (pos: Nat) => NoneType
+.replace_history_item!: (pos: Nat, line: Str) => NoneType
+.add_history!: (string: Str) => NoneType
+.set_auto_history!: (enabled: Bool) => NoneType
+
+.set_startup_hook!: (function := (() => NoneType) or NoneType) => NoneType
+.set_pre_input_hook!: (function := (() => NoneType) or NoneType) => NoneType
+
+.set_completer!: (function := ((Str, Nat) => Str or NoneType) or NoneType) => NoneType
+.get_completer!: () => GenericCallable or NoneType
+.get_completion_type!: () => Nat
+.get_begidx!: () => Nat
+.get_endidx!: () => Nat
+.set_completer_delims!: (string: Str) => NoneType
+.get_completer_delims!: () => Str
+.set_completion_display_matches_hook!: (
+    function := ((substitution: Str, matches: [Str; _], longest_match_length: Nat) => NoneType) or NoneType,
+) => NoneType

@@ -1,0 +1,88 @@
+.feature_namespaces: Str
+.feature_namespace_prefixes: Str
+.feature_string_interning: Str
+.feature_validation: Str
+.feature_external_ges: Str
+.feature_external_pes: Str
+.all_features: [Str; _]
+
+.property_lexical_handler: Str
+.property_declaration_handler: Str
+.property_dom_node: Str
+.property_xml_string: Str
+.property_encoding: Str
+.property_interning_dict: Str
+.all_properties: [Str; _]
+
+.ContentHandler!: ClassType
+.ContentHandler!.
+    __call__: () -> .ContentHandler!
+    setDocumentLocator!: (self: RefMut(.ContentHandler!), locator: Obj) => NoneType
+    startDocument!: (self: RefMut(.ContentHandler!)) => NoneType
+    endDocument!: (self: RefMut(.ContentHandler!)) => NoneType
+    startPrefixMapping!: (self: RefMut(.ContentHandler!), prefix: Str or NoneType, uri: Str) => NoneType
+    endPrefixMapping!: (self: RefMut(.ContentHandler!), prefix: Str or NoneType) => NoneType
+    startElement!: (self: RefMut(.ContentHandler!), name: Str, attrs: Obj) => NoneType
+    endElement!: (self: RefMut(.ContentHandler!), name: Str) => NoneType
+    startElementNS!: (
+        self: RefMut(.ContentHandler!),
+        name: (Str or NoneType, Str),
+        qname: Str or NoneType,
+        attrs: Obj,
+    ) => NoneType
+    endElementNS!: (
+        self: RefMut(.ContentHandler!),
+        name: (Str or NoneType, Str),
+        qname: Str or NoneType,
+    ) => NoneType
+    characters!: (self: RefMut(.ContentHandler!), content: Str) => NoneType
+    ignorableWhitespace!: (self: RefMut(.ContentHandler!), whitespace: Str) => NoneType
+    processingInstruction!: (self: RefMut(.ContentHandler!), target: Str, data: Str) => NoneType
+    skippedEntity!: (self: RefMut(.ContentHandler!), name: Str) => NoneType
+
+.DTDHandler!: ClassType
+.DTDHandler!.
+    __call__: () -> .DTDHandler!
+    notationDecl!: (
+        self: RefMut(.DTDHandler!),
+        name: Str,
+        publicId: Str or NoneType,
+        systemId: Str,
+    ) => NoneType
+    unparsedEntityDecl!: (
+        self: RefMut(.DTDHandler!),
+        name: Str,
+        publicId: Str or NoneType,
+        systemId: Str,
+        ndata: Str,
+    ) => NoneType
+
+.EntityResolver!: ClassType
+.EntityResolver!.
+    __call__: () -> .EntityResolver!
+    resolveEntity!: (
+        self: RefMut(.EntityResolver!),
+        publicId: Str or NoneType,
+        systemId: Str,
+    ) => Str
+
+.ErrorHandler!: ClassType
+.ErrorHandler!.
+    __call__: () -> .ErrorHandler!
+    error!: (self: RefMut(.ErrorHandler!), exception: Exception) => NoneType
+    fatalError!: (self: RefMut(.ErrorHandler!), exception: Exception) => NoneType
+    warning!: (self: RefMut(.ErrorHandler!), exception: Exception) => NoneType
+
+.LexicalHandler!: ClassType
+.LexicalHandler!.
+    __call__: () -> .LexicalHandler!
+    comment!: (self: RefMut(.LexicalHandler!), content: Str) => NoneType
+    startDTD!: (
+        self: RefMut(.LexicalHandler!),
+        name: Str,
+        public_id: Str or NoneType,
+        system_id: Str or NoneType,
+    ) => NoneType
+    endDTD!: (self: RefMut(.LexicalHandler!)) => NoneType
+    startCDATA!: (self: RefMut(.LexicalHandler!)) => NoneType
+    endCDATA!: (self: RefMut(.LexicalHandler!)) => NoneType

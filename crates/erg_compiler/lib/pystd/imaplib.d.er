@@ -1,0 +1,113 @@
+.IMAP4_PORT: Nat
+.IMAP4_SSL_PORT: Nat
+.Commands: {Str: (Str,)}
+
+.IMAP4!: ClassType
+.IMAP4! <: ContextManager
+.IMAP4!.
+    Error = 'error': ClassType
+    Abort = 'abort': ClassType
+    ReadOnly = 'readonly': ClassType
+    PROTOCOL_VERSION: Str
+    debug: Nat
+    state: Str
+    literal: Bytes or NoneType
+    tagged_commands: {Bytes: Obj}
+    untagged_responses: {Str: [Obj; _]}
+    capabilities: (Str,)
+    __call__: (host := Str, port := Nat, timeout := Float or NoneType) -> .IMAP4!
+    open!: (self: RefMut(.IMAP4!), host := Str, port := Nat, timeout := Float or NoneType) => NoneType
+    read!: (self: RefMut(.IMAP4!), size: Nat) => Bytes
+    readline!: (self: RefMut(.IMAP4!)) => Bytes
+    send!: (self: RefMut(.IMAP4!), data: Bytes) => NoneType
+    shutdown!: (self: RefMut(.IMAP4!)) => NoneType
+    socket!: (self: Ref(.IMAP4!)) => Obj
+    recent!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    response!: (self: RefMut(.IMAP4!), code: Str) => (Str, [Obj; _])
+    append!: (
+        self: RefMut(.IMAP4!),
+        mailbox: Str,
+        flags: Str,
+        date_time: Str,
+        message: Bytes,
+    ) => (Str, [Obj; _])
+    authenticate!: (
+        self: RefMut(.IMAP4!),
+        mechanism: Str,
+        authobject: GenericCallable,
+    ) => (Str, [Obj; _])
+    capability!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    check!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    close!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    copy!: (self: RefMut(.IMAP4!), message_set: Str, new_mailbox: Str) => (Str, [Obj; _])
+    create!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    delete!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    deleteacl!: (self: RefMut(.IMAP4!), mailbox: Str, who: Str) => (Str, [Obj; _])
+    enable!: (self: RefMut(.IMAP4!), capability: Str) => (Str, [Obj; _])
+    expunge!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    fetch!: (self: RefMut(.IMAP4!), message_set: Str, message_parts: Str) => (Str, [Obj; _])
+    getacl!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    getannotation!: (
+        self: RefMut(.IMAP4!),
+        mailbox: Str,
+        entry: Str,
+        attribute: Str,
+    ) => (Str, [Obj; _])
+    getquota!: (self: RefMut(.IMAP4!), root: Str) => (Str, [Obj; _])
+    getquotaroot!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    list!: (self: RefMut(.IMAP4!), directory := Str, pattern := Str) => (Str, [Obj; _])
+    login!: (self: RefMut(.IMAP4!), user: Str, password: Str) => (Str, [Obj; _])
+    login_cram_md5!: (self: RefMut(.IMAP4!), user: Str, password: Str) => (Str, [Obj; _])
+    logout!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    lsub!: (self: RefMut(.IMAP4!), directory := Str, pattern := Str) => (Str, [Obj; _])
+    myrights!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    namespace!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    noop!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    proxyauth!: (self: RefMut(.IMAP4!), user: Str) => (Str, [Obj; _])
+    rename!: (self: RefMut(.IMAP4!), oldmailbox: Str, newmailbox: Str) => (Str, [Obj; _])
+    search!: (self: RefMut(.IMAP4!), charset: Str or NoneType, *criteria: Str) => (Str, [Obj; _])
+    select!: (self: RefMut(.IMAP4!), mailbox := Str, readonly := Bool) => (Str, [Obj; _])
+    setacl!: (self: RefMut(.IMAP4!), mailbox: Str, who: Str, what: Str) => (Str, [Obj; _])
+    setannotation!: (self: RefMut(.IMAP4!), *args: Str) => (Str, [Obj; _])
+    setquota!: (self: RefMut(.IMAP4!), root: Str, limits: Str) => (Str, [Obj; _])
+    sort!: (
+        self: RefMut(.IMAP4!),
+        sort_criteria: Str,
+        charset: Str,
+        *search_criteria: Str,
+    ) => (Str, [Obj; _])
+    starttls!: (self: RefMut(.IMAP4!), ssl_context := Obj or NoneType) => (Str, [Obj; _])
+    status!: (self: RefMut(.IMAP4!), mailbox: Str, names: Str) => (Str, [Obj; _])
+    store!: (self: RefMut(.IMAP4!), message_set: Str, command: Str, flags: Str) => (Str, [Obj; _])
+    subscribe!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    thread!: (
+        self: RefMut(.IMAP4!),
+        threading_algorithm: Str,
+        charset: Str,
+        *search_criteria: Str,
+    ) => (Str, [Obj; _])
+    uid!: (self: RefMut(.IMAP4!), command: Str, *args: Str) => (Str, [Obj; _])
+    unselect!: (self: RefMut(.IMAP4!)) => (Str, [Obj; _])
+    unsubscribe!: (self: RefMut(.IMAP4!), mailbox: Str) => (Str, [Obj; _])
+    xatom!: (self: RefMut(.IMAP4!), name: Str, *args: Str) => (Str, [Obj; _])
+    print_log!: (self: Ref(.IMAP4!)) => NoneType
+
+.IMAP4_SSL!: ClassType
+.IMAP4_SSL! <: .IMAP4!
+.IMAP4_SSL!.
+    __call__: (
+        host := Str,
+        port := Nat,
+        ssl_context := Obj or NoneType,
+        timeout := Float or NoneType,
+    ) -> .IMAP4_SSL!
+
+.IMAP4_stream!: ClassType
+.IMAP4_stream! <: .IMAP4!
+.IMAP4_stream!.
+    __call__: (command: Str) -> .IMAP4_stream!
+
+.Internaldate2tuple: (resp: Bytes) -> Obj
+.Int2AP: (num: Nat) -> Bytes
+.ParseFlags: (resp: Bytes) -> (Bytes,)
+.Time2Internaldate: (date_time: Float or Obj) -> Str

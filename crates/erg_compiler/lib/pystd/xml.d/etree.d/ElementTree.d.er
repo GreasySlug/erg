@@ -1,0 +1,158 @@
+.VERSION: Str
+
+.ParseError: ClassType
+.ParseError <: SyntaxError
+.ParseError.
+    code: Nat
+    position: (Nat, Nat)
+
+.QName: ClassType
+.QName.
+    text: Str
+    __call__: (text_or_uri: Str, tag := Str or NoneType) -> .QName
+
+.Element!: ClassType
+.Element! <: Iterable(.Element!)
+.Element!.
+    tag: Str
+    text: Str or NoneType
+    tail: Str or NoneType
+    attrib: {Str: Str}
+    __call__: (tag: Str, attrib := {Str: Str}, **extra: Str) -> .Element!
+    append!: (self: RefMut(.Element!), subelement: .Element!) => NoneType
+    extend!: (self: RefMut(.Element!), elements: Iterable(.Element!)) => NoneType
+    insert!: (self: RefMut(.Element!), index: Nat, subelement: .Element!) => NoneType
+    remove!: (self: RefMut(.Element!), subelement: .Element!) => NoneType
+    clear!: (self: RefMut(.Element!)) => NoneType
+    get: (self: Ref(.Element!), key: Str, default := Str or NoneType) -> Str or NoneType
+    set!: (self: RefMut(.Element!), key: Str, value: Str) => NoneType
+    keys: (self: Ref(.Element!)) -> Iterable(Str)
+    items: (self: Ref(.Element!)) -> [(Str, Str); _]
+    find: (self: Ref(.Element!), path: Str, namespaces := {Str: Str} or NoneType) -> .Element! or NoneType
+    findall: (self: Ref(.Element!), path: Str, namespaces := {Str: Str} or NoneType) -> [.Element!; _]
+    findtext: (
+        self: Ref(.Element!),
+        path: Str,
+        default := Str or NoneType,
+        namespaces := {Str: Str} or NoneType,
+    ) -> Str or NoneType
+    iterfind: (
+        self: Ref(.Element!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType,
+    ) -> Iterable(.Element!)
+    iter: (self: Ref(.Element!), tag := Str or NoneType) -> Iterable(.Element!)
+    itertext: (self: Ref(.Element!)) -> Iterable(Str)
+    makeelement: (self: Ref(.Element!), tag: Str, attrib: {Str: Str}) -> .Element!
+
+.ElementTree!: ClassType
+.ElementTree!.
+    __call__: (element := .Element! or NoneType, file := PathLike or NoneType) -> .ElementTree!
+    getroot: (self: Ref(.ElementTree!)) -> .Element!
+    parse!: (self: RefMut(.ElementTree!), source: PathLike or Readable!, parser := Obj or NoneType) => .Element!
+    find: (self: Ref(.ElementTree!), path: Str, namespaces := {Str: Str} or NoneType) -> .Element! or NoneType
+    findall: (self: Ref(.ElementTree!), path: Str, namespaces := {Str: Str} or NoneType) -> [.Element!; _]
+    findtext: (
+        self: Ref(.ElementTree!),
+        path: Str,
+        default := Str or NoneType,
+        namespaces := {Str: Str} or NoneType,
+    ) -> Str or NoneType
+    iterfind: (
+        self: Ref(.ElementTree!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType,
+    ) -> Iterable(.Element!)
+    iter: (self: Ref(.ElementTree!), tag := Str or NoneType) -> Iterable(.Element!)
+    write!: (
+        self: Ref(.ElementTree!),
+        file_or_filename: PathLike or Writable!,
+        encoding := Str or NoneType,
+        xml_declaration := Bool or NoneType,
+        default_namespace := Str or NoneType,
+        method := Str or NoneType,
+        short_empty_elements := Bool,
+    ) => NoneType
+
+.TreeBuilder!: ClassType
+.TreeBuilder!.
+    __call__: (element_factory := GenericCallable or NoneType) -> .TreeBuilder!
+    data!: (self: RefMut(.TreeBuilder!), data: Str) => NoneType
+    start!: (self: RefMut(.TreeBuilder!), tag: Str, attrs: {Str: Str}) => .Element!
+    end!: (self: RefMut(.TreeBuilder!), tag: Str) => .Element!
+    comment!: (self: RefMut(.TreeBuilder!), text: Str) => .Element!
+    pi!: (self: RefMut(.TreeBuilder!), target: Str, text := Str or NoneType) => .Element!
+    close!: (self: RefMut(.TreeBuilder!)) => .Element!
+
+.XMLParser!: ClassType
+.XMLParser!.
+    target: Obj
+    version: Str
+    __call__: (target := Obj or NoneType, encoding := Str or NoneType) -> .XMLParser!
+    feed!: (self: RefMut(.XMLParser!), data: Str or Bytes) => NoneType
+    flush!: (self: RefMut(.XMLParser!)) => NoneType
+    close!: (self: RefMut(.XMLParser!)) => Obj
+
+.XMLPullParser!: ClassType
+.XMLPullParser!.
+    __call__: (events := Iterable(Str) or NoneType) -> .XMLPullParser!
+    feed!: (self: RefMut(.XMLPullParser!), data: Str or Bytes) => NoneType
+    flush!: (self: RefMut(.XMLPullParser!)) => NoneType
+    close!: (self: RefMut(.XMLPullParser!)) => NoneType
+    read_events!: (self: RefMut(.XMLPullParser!)) => Iterable((Str, .Element!))
+
+.C14NWriterTarget!: ClassType
+.C14NWriterTarget!.
+    __call__: (
+        write: (Str) => NoneType,
+        with_comments := Bool,
+        strip_text := Bool,
+        rewrite_prefixes := Bool,
+        qname_aware_tags := Iterable(Str) or NoneType,
+        qname_aware_attrs := Iterable(Str) or NoneType,
+        exclude_attrs := Iterable(Str) or NoneType,
+        exclude_tags := Iterable(Str) or NoneType,
+    ) -> .C14NWriterTarget!
+
+.SubElement: (parent: .Element!, tag: Str, attrib := {Str: Str}, **extra: Str) -> .Element!
+.Comment: (text := Str or NoneType) -> .Element!
+.ProcessingInstruction: (target: Str, text := Str or NoneType) -> .Element!
+.PI: (target: Str, text := Str or NoneType) -> .Element!
+
+.iselement: (element: Obj) -> Bool
+.indent!: (tree: .Element! or .ElementTree!, space := Str, level := Nat) => NoneType
+.dump!: (elem: .Element! or .ElementTree!) => NoneType
+.register_namespace!: (prefix: Str, uri: Str) => NoneType
+
+.parse!: (source: PathLike or Readable!, parser := .XMLParser! or NoneType) => .ElementTree!
+.iterparse!: (
+    source: PathLike or Readable!,
+    events := Iterable(Str) or NoneType,
+    parser := .XMLParser! or NoneType,
+) => Iterable((Str, .Element!))
+.fromstring: (text: Str or Bytes, parser := .XMLParser! or NoneType) -> .Element!
+.fromstringlist: (sequence: Iterable(Str or Bytes), parser := .XMLParser! or NoneType) -> .Element!
+.XML: (text: Str or Bytes, parser := .XMLParser! or NoneType) -> .Element!
+.XMLID: (text: Str or Bytes, parser := .XMLParser! or NoneType) -> (.Element!, {Str: .Element!})
+.tostring: (
+    element: .Element!,
+    encoding := Str or NoneType,
+    method := Str or NoneType,
+    xml_declaration := Bool or NoneType,
+    default_namespace := Str or NoneType,
+    short_empty_elements := Bool,
+) -> Str or Bytes
+.tostringlist: (
+    element: .Element!,
+    encoding := Str or NoneType,
+    method := Str or NoneType,
+    xml_declaration := Bool or NoneType,
+    default_namespace := Str or NoneType,
+    short_empty_elements := Bool,
+) -> [Str; _] or [Bytes; _]
+.canonicalize!: (
+    xml_data := Str or Bytes or NoneType,
+    out := Writable! or NoneType,
+    from_file := PathLike or Readable! or NoneType,
+    **options: Obj,
+) => Str or NoneType

@@ -7,14 +7,15 @@ Erg 向けコードフォーマッタ (`cargo fmt` 相当) の設計。
 > 一致しなければ整形を破棄する「自己検証型フォーマッタ」にする。**
 
 - **方式**: トークンストリーム整形（AST/CST は使わない）
-- **設定**: なし（gofmt 方式、単一スタイルに固定）
+- **設定**: CLI フラグ3つのみ（§1.2）。設定ファイルは持たない
+- **抑止**: `# fmt: off` / `# fmt: on` / `# fmt: skip` と `--exclude`（§5.6）
 - **スコープ**: フォーマッタのみ。linter (`erg_linter`) の拡張は本書の対象外
 
 ---
 
 ## 1. 目的と非目標
 
-### 目的
+### 1.1 目的
 
 | 項目 | 内容 |
 | ---- | ---- |
@@ -23,10 +24,29 @@ Erg 向けコードフォーマッタ (`cargo fmt` 相当) の設計。
 | `erg fmt --stdout` | 整形結果を標準出力へ |
 | ELS `textDocument/formatting` | エディタの保存時整形 |
 
-### 非目標
+### 1.2 設定項目
+
+**CLI フラグ3つのみ。設定ファイル (`erg-fmt.toml` 等) は持たない。**
+
+| フラグ | 既定値 | 意味 |
+| ------ | ------ | ---- |
+| `--indent <n>` | `4` | ネスト1段あたりの空白数 |
+| `--max-blank-lines <n>` | `2` | 連続してよい空行の上限 |
+| `--max-width <n>` | `100` | 行長の上限。**警告のみ**で折り返しはしない（後述） |
+
+`--max-width` を「警告のみ」にしているのは、非目標に挙げた reflow を行わないため。
+超過行は `--check` 実行時に一覧表示するが、整形結果は変えないし終了コードにも影響させない。
+「Erg では何桁までにすべきか」というスタイル上の合意を、実装コストゼロで先に固定しておくための項目。
+
+> reflow を実装する気になったら、`--max-width` の意味を「超過したら括弧内のカンマで縦に割る」に
+> 昇格させる。その場合も**フラグの名前と既定値は変えなくてよい**ように設計しておく。
+
+設定ファイルを持たない理由は §12 を参照。
+
+### 1.3 非目標
 
 - **行の折り返し（reflow）を行わない。** 既存の改行位置は尊重する。長い式を自動で複数行に割る／逆に1行にまとめることはしない
-- **設定ファイルを持たない。** インデント幅も含め一切の設定項目を作らない
+- **設定ファイルを持たない。** 設定は §1.2 の3フラグのみで、リポジトリごとのスタイル分岐を作らない
 - **式の並べ替え・書き換えを行わない。** 括弧の付け外し、`if` の `elif` 化などは linter の `--fix` の領分
 - **型検査を要求しない。** パースすら通らないコードでも、lex できる範囲で整形する
 
@@ -147,14 +167,15 @@ source ──> Lexer (keep_comments = true) ──> Vec<Token> (raw 付き)
                      ┌──────────────── Phase 2 ───┼─────────────┐
                      │                            v             │
                      │   1. 論理行への分割    LogicalLine 列     │
-                     │   2. 物理行の復元 (lineno 差分)           │
-                     │   3. 空白正規化 (kind ペア規則)           │
-                     │   4. インデント/空行の正規化              │
+                     │   2. 抑止範囲の確定 (# fmt: off/on/skip)  │
+                     │   3. 物理行の復元 (lineno 差分)           │
+                     │   4. 空白正規化 (kind ペア規則)           │
+                     │   5. インデント/空行の正規化              │
                      │                            │             │
                      │                            v             │
                      │                        String            │
                      │                            │             │
-                     │   5. 検証: 再 lex してトークン列比較 ─── NG ──> 元のソースを返す
+                     │   6. 検証: 再 lex してトークン列比較 ─── NG ──> 元のソースを返す
                      └────────────────────────────┼─────────────┘
                                                   v OK
                      ┌──────── Phase 3 ───────────┴─── Phase 4 ────────┐
@@ -284,10 +305,11 @@ impl Token {
 ```text
 crates/erg_fmt/
 ├── Cargo.toml
-├── lib.rs        Formatter (Runnable 実装), format_str()
+├── lib.rs        Formatter (Runnable 実装), format_str(), FmtOptions
 ├── line.rs       LogicalLine への分割
+├── skip.rs       # fmt: off / on / skip の解釈
 ├── spacing.rs    トークン間空白の規則
-├── render.rs     文字列生成
+├── render.rs     文字列生成 (Emit::Format / Emit::Verbatim)
 ├── verify.rs     再 lex による検証
 └── tests/
     ├── fmt.rs
@@ -323,11 +345,14 @@ enum Item {
 
 1. **分割** (`line.rs`): トークン列を走査し `Indent`/`Dedent` で `depth` を更新、`Newline` で論理行を確定。
    `Newline` の連続数 − 1 を次の行の `blank_lines_before` に記録
-2. **物理行の復元**: 各 `LogicalLine` 内で `tokens[i].lineno != tokens[i-1].lineno` の位置に改行を入れる
+2. **抑止範囲の確定** (`skip.rs`): `# fmt: off` / `# fmt: on` / `# fmt: skip` を拾い、
+   各 `Item` に「整形するか原文をそのまま出すか」の印を付ける（§5.6）
+3. **物理行の復元**: 各 `LogicalLine` 内で `tokens[i].lineno != tokens[i-1].lineno` の位置に改行を入れる
    （§2.4）。継続行のインデントは `depth + 1` 相当に正規化する
-3. **空白正規化** (`spacing.rs`): 同一物理行内の隣接トークン対に `space_between` を適用
-4. **描画** (`render.rs`): `depth * 4` の空白 + トークン列 + 行末コメント。空行は上限2に丸める
-5. **検証** (`verify.rs`): §6.5
+4. **空白正規化** (`spacing.rs`): 同一物理行内の隣接トークン対に `space_between` を適用
+5. **描画** (`render.rs`): `depth * indent` の空白 + トークン列 + 行末コメント。
+   空行は `--max-blank-lines` に丸める。抑止された `Item` は原文の行をそのまま出す
+6. **検証** (`verify.rs`): §6
 
 ### 5.3 空白規則
 
@@ -362,19 +387,60 @@ enum Item {
 
 | 項目 | 規則 |
 | ---- | ---- |
-| インデント幅 | ネスト1段あたり空白4個（固定・設定不可） |
+| インデント幅 | ネスト1段あたり空白 `--indent` 個（既定 4） |
 | タブ | レキサが `Illegal` にする（[lex.rs:1492](../crates/erg_parser/lex.rs#L1492)）ので考慮不要 |
-| 連続する空行 | 最大2行に丸める |
+| 連続する空行 | `--max-blank-lines` 行に丸める（既定 2） |
 | ファイル先頭の空行 | 削除 |
 | ファイル末尾 | 改行1個で終端。末尾の空行は削除 |
 | 行末の空白 | 削除 |
 | 括弧内の継続行 | `depth + 1` 段でインデント |
+| `--max-width` 超過行 | 何もしない。`--check` 時に一覧表示するのみ（§1.2） |
 
 ### 5.5 冪等性
 
 `format(format(src)) == format(src)` を不変条件とする。
 `blank_lines_before` の丸めや継続行のインデントで違反しやすいので、
 全てのテストフィクスチャに対して自動的に二重適用チェックを回す（§7）。
+
+### 5.6 整形の抑止 (opt-out)
+
+Erg のコメントは `#` 始まりで Python と同形なので、**black と同じコメントディレクティブ方式**を採る。
+`rustfmt::skip` のような属性方式にしないのは、Erg の `@` デコレータが式に付けられる位置を
+調べる必要があり、しかもデコレータはパースを要求するため「パースが通らなくても整形する」
+という非目標 (§1.3) と衝突するため。**コメント方式なら Phase 1 で得た `Comment` トークンだけで完結する。**
+
+| 書き方 | 効果 |
+| ------ | ---- |
+| `# fmt: off` | 以降を整形しない |
+| `# fmt: on` | 整形を再開する |
+| `# fmt: skip`（行末コメント） | **その論理行だけ**整形しない |
+| `--exclude <glob>` | 該当ファイルを丸ごと対象外にする（複数指定可） |
+
+- `# fmt: off` に対応する `# fmt: on` がなければ、ファイル末尾まで抑止が続く。
+  ファイル先頭に `# fmt: off` を1行置けば「このファイルは整形しない」になる
+- `off`/`on` は同じネスト深さになくてよい。行番号の範囲としてのみ扱う
+- ディレクティブ自身の行は原文のまま出力する（インデントも変えない）
+- 認識は**完全一致**とする。`#fmt:off` や `# FMT: OFF` は普通のコメント扱い。
+  揺れを許すと「効いていないのに効いていると思い込む」事故が起きるため
+
+**実装**: 抑止された範囲は「原文の該当行をそのまま出力する」だけで済む。
+全トークンが `lineno` を持つので、`Item` から行範囲 `[start_lineno, end_lineno]` を求め、
+`src.lines()` から該当行を切り出して出力する。**桁 (`col`) は一切使わない**ので、
+§2.5 の `col_end` が信用できない問題を踏まない。
+
+```rust
+enum Emit {
+    /// 通常どおり整形する
+    Format,
+    /// 原文の該当行をそのまま出す
+    Verbatim { start_lineno: u32, end_lineno: u32 },
+}
+```
+
+> **設計上の要点**: この `Verbatim` の経路は、§6 の検証に失敗したときのフォールバックと
+> **同一のコード**になる。「整形をあきらめて原文を出す」という操作が1箇所に集約されるので、
+> `# fmt: off` を実装すると検証フォールバックのテストも同時に効くようになる。
+> 実装順序 (§11) でこの2つを隣接させているのはそのため。
 
 ---
 
@@ -383,11 +449,19 @@ enum Item {
 **本設計の中核。** Erg は空白が意味論的に有意（§2.6）なので、整形は必ず検証する。
 
 ```rust
-pub fn format_str(src: &str) -> String {
+/// §1.2 の3項目だけを持つ。設定ファイルからは読まない
+#[derive(Debug, Clone, Copy)]
+pub struct FmtOptions {
+    pub indent: usize,          // 既定 4
+    pub max_blank_lines: usize, // 既定 2
+    pub max_width: usize,       // 既定 100（警告のみ）
+}
+
+pub fn format_str(src: &str, opts: FmtOptions) -> String {
     let Ok(before) = Lexer::from_str(src.into()).keep_comments().lex() else {
         return src.to_string();   // lex できないなら何もしない
     };
-    let formatted = render(&before);
+    let formatted = render(src, &before, opts);
     let Ok(after) = Lexer::from_str(formatted.clone()).keep_comments().lex() else {
         return src.to_string();   // 整形結果が lex できない = バグ。原文を返す
     };
@@ -399,6 +473,8 @@ pub fn format_str(src: &str) -> String {
     formatted
 }
 ```
+
+`render` が原文 `src` も受け取るのは、§5.6 の `Emit::Verbatim` で行を切り出すため。
 
 `token_streams_equivalent` は `Newline` / `Indent` / `Dedent` を除外したうえで
 `(kind, content)` の列を比較する。`Token` の `PartialEq` が既に
@@ -444,10 +520,25 @@ Fmt => Formatter::run(cfg),
 | `initialize` / `clear` / `finish` | 状態を持たないので空実装 |
 | `completeness_checker` | `erg_parser::parse::check_code_completeness` を返す |
 
-CLI フラグは `ErgConfig` に `fmt_check: bool` / `fmt_stdout: bool` を追加。
+`ErgConfig` に追加するフィールド:
+
+| フィールド | 対応フラグ |
+| ---------- | ---------- |
+| `fmt_check: bool` | `--check` |
+| `fmt_stdout: bool` | `--stdout` |
+| `fmt_indent: usize` | `--indent`（既定 4） |
+| `fmt_max_blank_lines: usize` | `--max-blank-lines`（既定 2） |
+| `fmt_max_width: usize` | `--max-width`（既定 100） |
+| `fmt_exclude: Vec<String>` | `--exclude`（複数指定可） |
+
 `erg fmt` に加えて `erg --mode fmt <file>` でも動く（既存モードと同じ扱い）。
 
 ディレクトリを渡された場合は `**/*.er` を再帰的に整形する。
+`--exclude` の glob に一致するファイルは読み込まずにスキップする。
+
+`--check` の終了コードは **差分の有無のみ**で決める。
+`--max-width` 超過と検証失敗 (§6) は stderr に報告するが、終了コードには影響させない。
+「CI を通すために整形する」と「行が長いので直す」を混ぜないための切り分け。
 
 ---
 
@@ -481,6 +572,8 @@ ELS は「LSP 機能1つにつきワーカースレッド1本 + mpsc チャネ�
 | 実行同値性 | 整形後の `examples/*.er` が整形前と同じ出力を出すこと（数本のスモークテストで足りる） |
 | エスケープ | `"a\nb"` `"\x41"` `"a\tb"` が**一字一句変わらない**こと（§2.5 の回帰テスト） |
 | fixity | `x +1` が `x + 1` にならないこと、`x + 1` が `x +1` にならないこと（§2.6 の回帰テスト） |
+| opt-out | `# fmt: off`〜`# fmt: on` の範囲が1バイトも変わらないこと。`# fmt: skip` がその行だけに効くこと。`#fmt:off` は効かないこと（§5.6） |
+| 設定 | `--indent 2` / `--max-blank-lines 1` が効くこと。既定値でのゴールデンテストと別に、各フラグ1本ずつ |
 
 `erg_linter/tests/lint.rs` と同じく `exec_new_thread` で包む。
 
@@ -509,12 +602,35 @@ ELS は「LSP 機能1つにつきワーカースレッド1本 + mpsc チャネ�
 2. **文字列レキサの `raw` 対応** — `lex_single_str` 等で原文を並行構築。§4.4 の連結テストを追加
 3. **`TokenKind::Comment` + `keep_comments`** — R1 に注意。トークン化テストを追加
 4. **`erg_fmt` クレートの骨格** — `format_str` が「何もせず原文を返す」状態で、検証部 (§6) だけ先に実装
-5. **論理行分割と描画** — インデント・空行の正規化まで。ここでゴールデンテストを開始
-6. **空白規則** — §5.3 の表を1行ずつ実装。各行に対応するテストを書く
-7. **括弧内の継続行** — §2.4 の `lineno` 差分処理
-8. **CLI 配線** — `ErgMode::Fmt` と `Formatter`
-9. **ELS 連携** — `textDocument/formatting`
-10. **`examples/` 全体での非破壊性テスト** — 最終関門
+5. **`Emit::Verbatim` と `# fmt: off` / `on` / `skip`** — §5.6。検証フォールバックと同じ経路なので、
+   ステップ4の直後にここを作ると両方まとめてテストできる
+6. **論理行分割と描画** — インデント・空行の正規化まで。ここでゴールデンテストを開始
+7. **空白規則** — §5.3 の表を1行ずつ実装。各行に対応するテストを書く
+8. **括弧内の継続行** — §2.4 の `lineno` 差分処理
+9. **CLI 配線** — `ErgMode::Fmt`、`Formatter`、§1.2 の3フラグと `--exclude`
+10. **ELS 連携** — `textDocument/formatting`
+11. **`examples/` 全体での非破壊性テスト** — 最終関門
 
-ステップ4で検証部を先に作るのが要点。以降の全ステップが「壊れたら原文に戻る」という
-安全網の下で進むので、空白規則を大胆に書ける。
+ステップ4〜5で「整形をあきらめて原文を出す」経路を先に作るのが要点。
+以降の全ステップが「壊れたら原文に戻る」という安全網の下で進むので、空白規則を大胆に書ける。
+
+---
+
+## 12. 補記: なぜ設定ファイルを持たないか
+
+rustfmt の設定項目は**82個あり、そのうち stable で使えるのは28個**
+（rustfmt 1.9.0-stable で実測）。残る54個は永久に nightly 専用のまま置かれている。
+rustfmt チーム自身がオプションを増やしすぎたと繰り返し表明しており、
+**このリポジトリも `rustfmt.toml` を持たず、82個を1つも使っていない。**
+
+gofmt はオプションを持たない。black は実質2個（`line-length`, `skip-string-normalization`）。
+後発ほど少ない、というのが一貫した傾向である。
+
+Erg はまだ利用者が少なく、**いま単一スタイルに倒しておけばエコシステムの分裂を防げる**。
+一方で「行長をいくつにするか」「どこで整形を止めるか」は必ず議論になるので、
+その2つだけ §1.2 / §5.6 で先に決めてしまう。これが CLI フラグ3つに絞った理由。
+
+将来スタイルのデフォルト自体を変えたくなった場合は、rustfmt の `style_edition` に相当する
+仕組み（既存コードを一斉に書き換えずに移行する手段）が必要になる。
+**初版では作らない**が、`FmtOptions` を構造体にしておくのは将来そこに
+`style_edition` フィールドを足せるようにするため。

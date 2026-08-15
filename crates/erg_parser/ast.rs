@@ -7465,5 +7465,6 @@ mod tests {
         println!("Import: {}", size_of::<Accessor>());
         println!("Dummy: {}", size_of::<Dummy>());
         println!("Module: {}", size_of::<Module>());
+        println!("Token: {}", size_of::<Token>());
     }
 }

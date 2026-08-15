@@ -251,7 +251,7 @@ pub struct Token {
     pub kind: TokenKind,
     pub content: Str,
     /// 原文テキスト。`content` と一致する場合は `None`（＝ほぼ全てのトークン）
-    pub raw: Option<Str>,
+    pub raw: Option<Box<Str>>,
     pub lineno: u32,
     pub col_begin: u32,
     pub col_end: u32,
@@ -260,10 +260,33 @@ pub struct Token {
 impl Token {
     /// 整形出力に使うべきテキスト
     pub fn raw_text(&self) -> &str {
-        self.raw.as_deref().unwrap_or(&self.content)
+        match &self.raw {
+            Some(raw) => raw,
+            None => &self.content,
+        }
+    }
+
+    /// 原文が `content` と一致するなら `None` に正規化する
+    /// （エスケープを含まない文字列リテラルで無駄な確保をしないため）
+    pub fn with_raw<S: Into<Str>>(mut self, raw: S) -> Self {
+        let raw = raw.into();
+        self.raw = (raw != self.content).then(|| Box::new(raw));
+        self
     }
 }
 ```
+
+**`Box` する理由（実測）**: `raw` は文字列リテラル以外では常に `None` なので、
+`Option<Str>` をインラインで持つと**全トークンが 24 バイト太る**。実測値:
+
+| 型 | 変更前 | `Option<Str>` | `Option<Box<Str>>` |
+| -- | ------ | ------------- | ------------------ |
+| `Token` | 40 | 64 (+24) | **48 (+8)** |
+| `Literal` | 40 | 64 | **48** |
+| `Expr` | 368 | 416 (+48) | **384 (+16)** |
+
+`Box` 1個分の 8 バイトに抑え、実体はそれを必要とする稀なトークンだけが持つ。
+確保が走るのはエスケープを含む文字列リテラルのときのみ。
 
 **`raw` を設定するのは文字列系のみ**:
 `StrLit` / `StrInterpLeft` / `StrInterpMid` / `StrInterpRight` / `DocComment`
@@ -278,12 +301,17 @@ impl Token {
   （[token.rs:379-391](../crates/erg_parser/token.rs#L379-L391)）ので、`raw` を無視する挙動が自動的に得られる
 - `Token::DUMMY` と `Token::dummy` は `const fn`（[token.rs:409-424](../crates/erg_parser/token.rs#L409-L424)）だが
   `raw: None` は const 文脈で書ける
-- 構築箇所は**約18箇所・5ファイル**（`token.rs` 8、[desugar.rs](../crates/erg_parser/desugar.rs) 6、
-  [ast.rs](../crates/erg_parser/ast.rs) 2、[parse.rs](../crates/erg_parser/parse.rs) 1、
-  [codegen.rs](../crates/erg_compiler/codegen.rs) 1）。`Token::new` を経由せず構造体リテラルで
-  直接組み立てている箇所が `token.rs` の外に10箇所あるので、そこにも `raw: None` を足す必要がある。
-  ただし構造体リテラルは網羅性が要求されるため**コンパイラが漏れなく列挙してくれる**。純粋に機械的な作業
+- 構築箇所は**15箇所・2ファイル**（`token.rs` 9、[desugar.rs](../crates/erg_parser/desugar.rs) 6）。
+  構造体リテラルは網羅性が要求されるため**コンパイラが漏れなく列挙してくれる**
+- ただし `desugar.rs` の6箇所は `Token { content: "[".into(), kind: LSqBr, ..len.token }` という
+  **関数的レコード更新**で、`raw` を追加すると `..len.token` が非 `Copy` フィールドを move してしまい
+  「partially moved value」エラーになる。`raw: None` を明示すれば解決する。
+  合成された `[` `]` `{` `}` が無関係なリテラルの原文を継承しては困るので、**意味論的にもこれが正しい**
 
+> 【実装済み】上記は Step 1 として実施済み。`Debug` 出力は `raw` が `Some` のときだけ
+> 表示するようにしたので、既存のトークン列テストは無改変で通る。
+> `check_structs_size` に `Token` を追加して、以後サイズ変化を追えるようにした。
+>
 > **代替案**: `Token` を触らず、`lex_for_fmt()` が
 > `(TokenStream, Vec<Option<Str>>)` を返す並行配列方式。侵襲は小さいが
 > 添字ずれのバグを生みやすく、ELS からの再利用もしにくい。**採用しない。**

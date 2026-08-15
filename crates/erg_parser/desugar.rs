@@ -1121,11 +1121,13 @@ impl Desugarer {
         let l_sqbr = Token {
             content: "[".into(),
             kind: TokenKind::LSqBr,
+            raw: None,
             ..len.token
         };
         let r_sqbr = Token {
             content: "]".into(),
             kind: TokenKind::RSqBr,
+            raw: None,
             ..len.token
         };
         let elem = Expr::local("Obj", l_sqbr.lineno, l_sqbr.col_begin, l_sqbr.col_end);
@@ -1142,11 +1144,13 @@ impl Desugarer {
         let l_brace = Token {
             content: "{".into(),
             kind: TokenKind::LBrace,
+            raw: None,
             ..lit.token
         };
         let r_brace = Token {
             content: "}".into(),
             kind: TokenKind::RBrace,
+            raw: None,
             ..lit.token
         };
         let args = Args::single(PosArg::new(Expr::Literal(lit)));
@@ -1280,11 +1284,13 @@ impl Desugarer {
                 let l_brace = Token {
                     content: "{".into(),
                     kind: TokenKind::LBrace,
+                    raw: None,
                     ..lit.token
                 };
                 let r_brace = Token {
                     content: "}".into(),
                     kind: TokenKind::RBrace,
+                    raw: None,
                     ..lit.token
                 };
                 let t_spec = TypeSpec::enum_t_spec(vec![lit.clone()]);

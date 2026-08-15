@@ -341,6 +341,22 @@ impl From<TokenKind> for BinOpCode {
 pub struct Token {
     pub kind: TokenKind,
     pub content: Str,
+    /// The original source text of this token, set only when it differs from
+    /// `content`. `None` (the usual case) means `content` is already verbatim.
+    ///
+    /// String literals are the reason this exists: the lexer decodes escape
+    /// sequences into `content` (`"a\nb"` holds a real newline, `"a\tb"` holds
+    /// four spaces), so `content` cannot be used to reproduce the source.
+    /// Consumers that must round-trip the source (e.g. a formatter) should read
+    /// [`Token::raw_text`] instead of `content`.
+    ///
+    /// Ignored by `PartialEq`/`Hash`/[`Token::deep_eq`], like `lineno`/`col_*`.
+    ///
+    /// Boxed because it is `None` for all but string literals: an inline
+    /// `Option<Str>` costs 24 bytes on every token (`Token` 40 -> 64,
+    /// `Expr` 368 -> 416), while the pointer costs 8 and moves the payload
+    /// off to the rare token that actually needs it.
+    pub raw: Option<Box<Str>>,
     /// 1 origin
     // TODO: 複数行文字列リテラルもあるのでタプルにするのが妥当?
     pub lineno: u32,
@@ -358,10 +374,14 @@ pub const EQUAL: Token = Token::dummy(TokenKind::Assign, "=");
 
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Token")
-            .field("kind", &self.kind)
-            .field("content", &self.content.replace('\n', "\\n"))
-            .field("lineno", &self.lineno)
+        let mut s = f.debug_struct("Token");
+        s.field("kind", &self.kind)
+            .field("content", &self.content.replace('\n', "\\n"));
+        // only shown when set, so the output is unchanged for ordinary tokens
+        if let Some(raw) = &self.raw {
+            s.field("raw", &raw.replace('\n', "\\n"));
+        }
+        s.field("lineno", &self.lineno)
             .field("col_begin", &self.col_begin)
             .field("col_end", &self.col_end)
             .finish()
@@ -409,6 +429,7 @@ impl Token {
     pub const DUMMY: Token = Token {
         kind: TokenKind::Illegal,
         content: Str::ever("DUMMY"),
+        raw: None,
         lineno: 0,
         col_begin: 0,
         col_end: 0,
@@ -418,6 +439,7 @@ impl Token {
         Self {
             kind,
             content: Str::ever(content),
+            raw: None,
             lineno: 0,
             col_begin: 0,
             col_end: 0,
@@ -431,6 +453,7 @@ impl Token {
         Token {
             kind,
             content,
+            raw: None,
             lineno,
             col_begin,
             col_end,
@@ -448,6 +471,7 @@ impl Token {
         Token {
             kind,
             content: cont.into(),
+            raw: None,
             lineno,
             col_begin,
             col_end,
@@ -458,6 +482,7 @@ impl Token {
         Token {
             kind,
             content: cont.into(),
+            raw: None,
             lineno: loc.ln_begin().unwrap_or(0),
             col_begin: loc.col_begin().unwrap_or(0),
             col_end: loc.col_end().unwrap_or(1),
@@ -469,6 +494,7 @@ impl Token {
         Token {
             kind,
             content: Str::rc(cont),
+            raw: None,
             lineno: 0,
             col_begin: 0,
             col_end: 0,
@@ -485,6 +511,7 @@ impl Token {
         Token {
             kind: TokenKind::Symbol,
             content: Str::rc(cont),
+            raw: None,
             lineno,
             col_begin: 0,
             col_end: 1,
@@ -495,6 +522,7 @@ impl Token {
         Token {
             kind: TokenKind::Symbol,
             content: cont.into(),
+            raw: None,
             lineno: loc.ln_begin().unwrap_or(0),
             col_begin: loc.col_begin().unwrap_or(0),
             col_end: loc.col_end().unwrap_or(1),
@@ -505,6 +533,7 @@ impl Token {
         Token {
             kind: TokenKind::Symbol,
             content: Str::ever(s),
+            raw: None,
             lineno: 0,
             col_begin: 0,
             col_end: 1,
@@ -553,6 +582,29 @@ impl Token {
         &self.content
     }
 
+    /// The verbatim source text of this token.
+    ///
+    /// Equal to `content` except for tokens whose `content` is a decoded form
+    /// of the source (string literals; see [`Token::raw`]). Use this, not
+    /// `content`, whenever the output has to reproduce the input byte for byte.
+    pub fn raw_text(&self) -> &str {
+        match &self.raw {
+            Some(raw) => raw,
+            None => &self.content,
+        }
+    }
+
+    /// Records the verbatim source text, for tokens whose `content` is decoded.
+    ///
+    /// Storing a `raw` equal to `content` is pointless, so that case is
+    /// normalized back to `None`: it keeps `Debug` quiet and, more importantly,
+    /// avoids an allocation for every string literal that has no escapes.
+    pub fn with_raw<S: Into<Str>>(mut self, raw: S) -> Self {
+        let raw = raw.into();
+        self.raw = (raw != self.content).then(|| Box::new(raw));
+        self
+    }
+
     pub fn is_procedural(&self) -> bool {
         self.inspect().ends_with('!')
     }
@@ -567,3 +619,40 @@ impl Token {
 pub struct TokenStream(VecDeque<Token>);
 
 impl_displayable_deque_stream_for_wrapper!(TokenStream, Token);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_text_falls_back_to_content() {
+        let tok = Token::new(TokenKind::Symbol, "x", 1, 0);
+        assert_eq!(tok.raw, None);
+        assert_eq!(tok.raw_text(), "x");
+    }
+
+    #[test]
+    fn with_raw_keeps_the_source_text() {
+        // what the lexer will do for `"a\nb"`: content holds the decoded form,
+        // raw holds the two characters actually written in the source
+        let tok = Token::new(TokenKind::StrLit, "\"a\nb\"", 1, 0).with_raw("\"a\\nb\"");
+        assert_eq!(tok.content, "\"a\nb\"");
+        assert_eq!(tok.raw_text(), "\"a\\nb\"");
+    }
+
+    #[test]
+    fn with_raw_is_none_when_it_matches_content() {
+        let tok = Token::new(TokenKind::StrLit, "\"ab\"", 1, 0).with_raw("\"ab\"");
+        assert_eq!(tok.raw, None);
+        assert_eq!(tok.raw_text(), "\"ab\"");
+    }
+
+    /// `raw` must stay out of equality and hashing, like `lineno`/`col_*`.
+    #[test]
+    fn raw_does_not_affect_eq() {
+        let plain = Token::new(TokenKind::StrLit, "\"a\nb\"", 1, 0);
+        let with_raw = plain.clone().with_raw("\"a\\nb\"");
+        assert!(with_raw.raw.is_some());
+        assert_eq!(plain, with_raw);
+    }
+}

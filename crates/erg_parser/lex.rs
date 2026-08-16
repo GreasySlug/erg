@@ -187,6 +187,9 @@ pub struct Lexer /*<'a>*/ {
     /// Set in `next` just before the first character is consumed, so string
     /// lexers can recover their verbatim source (see `raw_since_token_start`).
     token_start_cursor: usize,
+    /// Whether comments are emitted as tokens rather than discarded.
+    /// See [`Lexer::keep_comments`].
+    keep_comments: bool,
 }
 
 impl Lexer /*<'a>*/ {
@@ -203,6 +206,7 @@ impl Lexer /*<'a>*/ {
             col_token_starts: 0,
             interpol_stack: vec![Interpolation::Not],
             token_start_cursor: 0,
+            keep_comments: false,
         }
     }
 
@@ -220,7 +224,23 @@ impl Lexer /*<'a>*/ {
             col_token_starts: 0,
             interpol_stack: vec![Interpolation::Not],
             token_start_cursor: 0,
+            keep_comments: false,
         }
+    }
+
+    /// Emit comments as [`TokenKind::Comment`] instead of discarding them.
+    ///
+    /// Off by default, and deliberately so: the parser, `SimpleParser` and
+    /// ELS's semantic tokens all lex on the assumption that a comment never
+    /// reaches them. Only tools that have to reproduce the source -- `erg fmt`
+    /// -- should turn this on.
+    ///
+    /// ```ignore
+    /// let ts = Lexer::from_str(src).keep_comments().lex()?;
+    /// ```
+    pub fn keep_comments(mut self) -> Self {
+        self.keep_comments = true;
+        self
     }
 
     pub fn lex(self) -> Result<TokenStream, (TokenStream, LexErrors)> {
@@ -298,9 +318,32 @@ impl Lexer /*<'a>*/ {
     /// Note this is the source *after* `normalize_newline`, so CRLF input comes
     /// back as LF — which is what a formatter wants to emit anyway.
     fn raw_since_token_start(&self) -> String {
-        self.chars[self.token_start_cursor..self.cursor]
-            .iter()
-            .collect()
+        self.source_slice(self.token_start_cursor)
+    }
+
+    /// The source text between `start` and the cursor.
+    fn source_slice(&self, start: usize) -> String {
+        self.chars[start..self.cursor].iter().collect()
+    }
+
+    /// Emits a comment token covering `start..cursor`, or `None` when comments
+    /// are being discarded.
+    ///
+    /// `prev_token` is deliberately restored afterwards. `op_fix_of` decides
+    /// whether `+`/`-`/`*`/`**` are prefix or infix from `prev_token`'s
+    /// category, so a comment has to stay as invisible to the lexer as it was
+    /// when it was thrown away -- otherwise adding one would silently change
+    /// how the code that follows it parses.
+    fn emit_comment(&mut self, start: usize, col_begin: u32) -> Option<Token> {
+        if !self.keep_comments {
+            return None;
+        }
+        let cont = self.source_slice(start);
+        let lines = cont.lines().count() as u32;
+        let prev = self.prev_token.clone();
+        let token = self.emit_multiline_token_spanning(Comment, col_begin, &cont, lines, None);
+        self.prev_token = prev;
+        Some(token)
     }
 
     fn emit_singleline_token(&mut self, kind: TokenKind, cont: &str) -> Token {
@@ -439,8 +482,10 @@ impl Lexer /*<'a>*/ {
         self.chars.get(self.cursor + 1).copied()
     }
 
-    fn lex_comment(&mut self) -> LexResult<()> {
+    fn lex_comment(&mut self) -> LexResult<Option<Token>> {
         // debug_power_assert!(self.consume(), ==, Some('#'));
+        let start = self.cursor;
+        let col_begin = self.col_token_starts;
         let mut s = "".to_string();
         while self.peek_cur_ch().map(|cur| cur != '\n').unwrap_or(false) {
             if Self::is_bidi(self.peek_cur_ch().unwrap()) {
@@ -459,10 +504,12 @@ impl Lexer /*<'a>*/ {
             }
             s.push(self.consume().unwrap());
         }
-        Ok(())
+        Ok(self.emit_comment(start, col_begin))
     }
 
-    fn lex_multi_line_comment(&mut self) -> LexResult<()> {
+    fn lex_multi_line_comment(&mut self) -> LexResult<Option<Token>> {
+        let start = self.cursor;
+        let col_begin = self.col_token_starts;
         let mut s = "".to_string();
         let mut nest_level = 0;
         while let Some(c) = self.peek_cur_ch() {
@@ -474,7 +521,7 @@ impl Lexer /*<'a>*/ {
                         if nest_level == 0 {
                             self.consume(); // ]
                             self.consume(); // #
-                            return Ok(());
+                            return Ok(self.emit_comment(start, col_begin));
                         }
                     }
                     _ => {}
@@ -1294,12 +1341,16 @@ impl Iterator for Lexer /*<'a>*/ {
             return indent_dedent;
         }
         if let Some('#') = self.peek_cur_ch() {
-            if let Some('[') = self.peek_next_ch() {
-                if let Err(e) = self.lex_multi_line_comment() {
-                    return Some(Err(e));
-                }
-            } else if let Err(e) = self.lex_comment() {
-                return Some(Err(e));
+            let comment = if let Some('[') = self.peek_next_ch() {
+                self.lex_multi_line_comment()
+            } else {
+                self.lex_comment()
+            };
+            match comment {
+                // the real token is read by the next call
+                Ok(Some(token)) => return Some(Ok(token)),
+                Ok(None) => {}
+                Err(e) => return Some(Err(e)),
             }
         }
         // the token starts here; string lexers read this back to recover the

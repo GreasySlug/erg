@@ -190,6 +190,9 @@ source ──> Lexer (keep_comments = true) ──> Vec<Token> (raw 付き)
 
 既存の挙動を一切変えないことを絶対条件とする。フォーマッタ用の情報は**すべてオプトイン**にする。
 
+> **【Phase 1 完了】** Step 1〜3 とも実装済み。§4.4 の完了条件を満たしている。
+> 実装中に既存バグを1件発見し修正した（§10.1）。
+
 ### 4.1 `TokenKind::Comment` の追加
 
 ```rust
@@ -211,6 +214,12 @@ pub enum TokenKind {
 > `emit_singleline_token` は `prev_token` を書き換える
 > ([lex.rs:255](../crates/erg_parser/lex.rs#L255)) ので、専用の emit 関数を用意するか、
 > 呼び出し後に `prev_token` を復元する。ここが Phase 1 で最も壊しやすい箇所。
+
+**【実装済み】** `emit_comment` が `prev_token` を保存・復元する方式を採った。
+`category()` の最後に `_ => TokenCategory::BinOp` というフォールバックがある
+（[token.rs](../crates/erg_parser/token.rs)）ため、`Comment` の arm を**明示的に**
+書かないとコメントが二項演算子として分類される。ここも踏みやすい罠だった。
+回帰テストは `tests/comment_token_test.rs::a_comment_does_not_change_operator_fixity`。
 
 ### 4.2 `Lexer` に `keep_comments` フラグ
 
@@ -323,6 +332,17 @@ impl Token {
   `raw_text()` を連結すると**元のソースに完全一致する**こと（トークン間の空白を除く）
 
 この「連結すると原文に戻る」性質が Phase 2 全体の土台になる。ここを Phase 1 のテストで固定する。
+
+**【達成】** 対応するテスト:
+
+| 完了条件 | テスト |
+| -------- | ------ |
+| 既存挙動が不変 | `comment_token_test.rs::keeping_comments_does_not_disturb_the_other_tokens`（コメントトークンを除くと既定のレキサの出力と完全一致することを8種のソースで確認）+ 既存スイート |
+| 原文への復元（コメントなし） | `raw_text_test.rs::raw_text_round_trips_the_source` |
+| 原文への復元（コメントあり） | `comment_token_test.rs::raw_text_round_trips_a_source_with_comments` |
+
+`erg_parser` のテストは 60 件すべて green。ルートパッケージは 172 passed / 11 failed で、
+この11件は本ブランチに元からある `exec_*` の失敗（変更前と同一）。
 
 ---
 
@@ -789,9 +809,13 @@ Step 2 で入れた `raw_since_token_start()` がそのデータそのものだ�
 各ステップ末尾で `cargo test --features large_thread` と
 `cargo clippy --all --all-targets -- -D warnings` を通し、機能単位でコミットする。
 
-1. **`Token::raw` の追加** — フィールド追加と全構築箇所の更新のみ。挙動は変わらない
-2. **文字列レキサの `raw` 対応** — `lex_single_str` 等で原文を並行構築。§4.4 の連結テストを追加
-3. **`TokenKind::Comment` + `keep_comments`** — R1 に注意。トークン化テストを追加
+1. ~~**`Token::raw` の追加**~~ ✅ — 実測の結果 `Option<Box<Str>>` を採用（§4.3）
+2. ~~**文字列レキサの `raw` 対応**~~ ✅ — 分岐ごとの並行構築ではなく、
+   `token_start_cursor` からのソーススライスで実装
+3. ~~**`TokenKind::Comment` + `keep_comments`**~~ ✅ — R1 は `emit_comment` の
+   `prev_token` 復元で回避。`category()` の `_ => BinOp` フォールバックにも注意が必要だった
+
+   （ここまでで Phase 1 完了。併せて既存バグ §10.1 を修正）
 4. **`erg_fmt` クレートの骨格** — `format_str` が「何もせず原文を返す」状態で、検証部 (§6) だけ先に実装
 5. **`Emit::Verbatim` と `# fmt: off` / `on` / `skip`** — §5.6。検証フォールバックと同じ経路なので、
    ステップ4の直後にここを作ると両方まとめてテストできる

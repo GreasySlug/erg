@@ -182,6 +182,10 @@ pub enum TokenKind {
     Newline,
     /// ;
     Semi,
+    /// `# ...` or `#[ ... ]#`.
+    /// Only produced when the lexer was built with `Lexer::keep_comments`;
+    /// otherwise comments are consumed and dropped.
+    Comment,
     Illegal,
     /// Beginning Of File
     BOF,
@@ -214,6 +218,9 @@ pub enum TokenCategory {
     LambdaOp,
     /// \n ;
     Separator,
+    /// `#`-comments. Carries no syntax; present only for tools that must
+    /// reproduce the source (see `TokenKind::Comment`).
+    Ignorable,
     /// ^ &
     Reserved,
     /// @
@@ -257,6 +264,7 @@ impl TokenKind {
             Assign => TokenCategory::DefOp,
             FuncArrow | ProcArrow => TokenCategory::LambdaOp,
             Semi | Newline => TokenCategory::Separator,
+            Comment => TokenCategory::Ignorable,
             LParen | LBrace | LSqBr | Indent => TokenCategory::LEnclosure,
             RParen | RBrace | RSqBr | Dedent => TokenCategory::REnclosure,
             Caret | Amper => TokenCategory::Reserved,

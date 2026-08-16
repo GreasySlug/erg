@@ -51,7 +51,8 @@ AST (脱糖済み)  →  erg_compiler へ
 
 - `TokenKind`（`#[repr(u8)]`、~110 種）: `Symbol` / 各種リテラル（`NatLit`/`IntLit`/`RatioLit`/`StrLit`…）/ 演算子 / 囲み記号 / `Indent`・`Dedent` など。
 - `TokenCategory`: `TokenKind` を粗くグループ化（`BinOp`/`UnaryOp`/`SpecialBinOp`/`DefOp`/`LambdaOp` 等）。パーサーの分岐に使う。
-- `Token { kind, content: Str, lineno, col_begin, col_end }`。`content` は `Str`（参照カウント文字列）で、`CacheSet` により重複排除されている。
+- `Token { kind, content: Str, raw: Option<Box<Str>>, lineno, col_begin, col_end }`。`content` は `Str`（参照カウント文字列）で、`CacheSet` により重複排除されている。
+- `raw` は**原文テキスト**。`content` と一致する場合は `None`（＝ほぼ全てのトークン）で、文字列リテラルのようにエスケープを復号したトークンだけが値を持つ。ボックス化して全トークンへの負担を 8 バイトに抑えている。取り出しは `Token::raw_text()`（後述の「ソースを復元する API」）。`PartialEq`/`Hash`/`deep_eq` は `raw` を見ない。
 - **演算子優先順位は `TokenKind::precedence() -> Option<usize>`（token.rs:273）に一元化**。precedence-climbing エンジンが唯一の参照元とする。
 
 優先順位表（抜粋、高いほど強い）:
@@ -83,9 +84,11 @@ AST (脱糖済み)  →  erg_compiler へ
 - `indent_stack: Vec<usize>` … インデント幅スタック（INDENT/DEDENT 生成）
 - `enclosure_level: usize` … `() [] {}` の深さ（囲み内では改行を抑制）
 - `interpol_stack: Vec<Interpolation>` … 文字列補間のネスト状態
-- `prev_token: Token` … 直前トークン（`+`/`-`/`*` の前置/中置判定 `op_fix()` に使用）
+- `prev_token: Token` … 直前トークン（`+`/`-`/`*` の前置/中置判定 `op_fix()` に使用）。**`Comment` トークンはこれを更新しない**（後述の「ソースを復元する API」の注意を参照）
+- `token_start_cursor: usize` … いま読んでいるトークンの開始位置。文字列レキサが原文を切り出すのに使う
+- `keep_comments: bool` … コメントをトークン化するか（既定 `false`）
 
-`next()` の処理順: EOF 判定 → `lex_space_indent_dedent()`（インデント/改行）→ コメントスキップ → 1文字 `consume()` して種別ごとに分岐（囲み記号 / 演算子 / 文字列 / 数値 `lex_num()` / 記号 `lex_symbol()`）。
+`next()` の処理順: EOF 判定 → `lex_space_indent_dedent()`（インデント/改行）→ コメント処理（既定は読み捨て、`keep_comments` 時は `Comment` トークンを返して即 return）→ `token_start_cursor` を記録 → 1文字 `consume()` して種別ごとに分岐（囲み記号 / 演算子 / 文字列 / 数値 `lex_num()` / 記号 `lex_symbol()`）。
 
 - **数値**: `lex_num()` が整数/`0b`/`0o`/`0x`/小数(`lex_ratio`)/指数(`lex_exponent`) を判定。`1..`（範囲）や `1.foo`（メソッド）と小数の曖昧性は `lex_num_dot()` で解決。`f64`/`f32` サフィックスは字句段階では別記号として残し、**パーサー側で隣接判定して脱糖**する（[float-suffix] 参照）。
 - **文字列補間** `"...\{ expr }..."`: `\{` で `StrInterpLeft` を出し `interpol_stack` に push。以後は通常の Erg コードを字句解析し、`}` を `lex_interpolation_mid()` で受けて `StrInterpMid` / `StrInterpRight` を出す。ネスト可。
@@ -93,6 +96,91 @@ AST (脱糖済み)  →  erg_compiler へ
 - インデント上限は 100 スペース（CPython 準拠）。
 
 `LexerRunner` は `Runnable` 実装の使い捨てラッパで CLI/REPL から使う。
+
+### ソースを復元する API（使い方）
+
+フォーマッタやリライタのように**元のソースを書き戻す**ツール向けの API。
+コンパイル本体には不要で、すべてオプトイン。既定の挙動は一切変わらない。
+
+| やりたいこと | API |
+| ------------ | --- |
+| トークンの原文テキストを得る | `Token::raw_text() -> &str` |
+| コメントもトークンとして受け取る | `Lexer::keep_comments()` |
+| 原文と `content` が異なるか判定する | `Token::raw.is_some()` |
+
+#### 基本形
+
+```rust
+use erg_common::traits::DequeStream; // TokenStream::iter に必要
+use erg_parser::lex::Lexer;
+use erg_parser::token::{Token, TokenKind};
+
+let src = "x = 1  # a comment\n";
+let ts = Lexer::from_str(src.to_string())
+    .keep_comments()          // これを付けないとコメントは捨てられる
+    .lex()
+    .map_err(|(_, errs)| errs)?;
+
+for tok in ts.iter() {
+    println!("{:?}\t{:?}", tok.kind, tok.raw_text());
+}
+```
+
+```text
+Symbol      "x"
+Assign      "="
+NatLit      "1"
+Comment     "# a comment"
+Newline     "\n"
+EOF         "\0"
+```
+
+#### なぜ `content` ではなく `raw_text()` なのか
+
+レキサは文字列リテラルの**エスケープを復号して** `content` に格納する。
+`content` をそのまま書き出すとソースが壊れる。
+
+```rust
+let ts = Lexer::from_str(r#"_ = "a\tb""#.to_string()).lex().unwrap();
+let tok = ts.iter().find(|t| t.kind == TokenKind::StrLit).unwrap();
+
+tok.content.to_string(); // "\"a    b\""  ← \t が空白4個に化けている（不可逆）
+tok.raw_text();          // "\"a\\tb\""   ← 書かれたとおり
+```
+
+`raw_text()` は `raw` が無ければ `content` にフォールバックするので、
+**ソースを再生成する場面では常に `raw_text()` を使えばよい**。
+`content` は「意味としての値」、`raw_text()` は「書かれたテキスト」と考える。
+
+#### 保証されること
+
+コメントを保持すれば、**`raw_text()` の連結は空白を除いて原文に一致する**。
+
+```rust
+let joined = ts.iter()
+    .filter(|t| t.kind != TokenKind::EOF)  // EOF は合成トークンで "\0" を持つ
+    .map(Token::raw_text)
+    .collect::<Vec<_>>()
+    .concat();
+// joined と原文は、空白を除去すると完全一致する
+```
+
+回帰テストは `tests/raw_text_test.rs` と `tests/comment_token_test.rs`。
+
+#### 注意点
+
+- **`keep_comments` は既定でオフ**。パーサー・`SimpleParser`・ELS のセマンティックトークンは
+  いずれも「コメントは来ない」前提で lex している。オンにしてよいのは
+  ソースを再生成するツールだけ
+- **`Comment` トークンは `prev_token` を更新しない**。`op_fix_of` が直前トークンの
+  カテゴリで前置/中置を決めるため、コメントを記録すると
+  **コメントを1行足しただけで後続コードの意味が変わる**（`f +1` が `f + 1` になる）。
+  `emit_comment` が `prev_token` を保存・復元している
+- **`col_end` は信用しない**。エスケープを含む文字列では復号後の長さで桁が進むため原文とずれる。
+  位置は `lineno` と `col_begin` を使う
+- 複数行のコメント・文字列の `lineno` は**開始行**を指す
+- `TokenKind` に新しい種別を足すときは `category()` に arm を**明示的に**書くこと。
+  末尾に `_ => TokenCategory::BinOp` のフォールバックがあり、書き忘れると二項演算子に分類される
 
 ---
 

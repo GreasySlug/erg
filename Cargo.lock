@@ -452,6 +452,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "erg_fmt"
+version = "0.6.53"
+dependencies = [
+ "erg_common",
+ "erg_parser",
+]
+
+[[package]]
 name = "erg_linter"
 version = "0.6.53"
 dependencies = [

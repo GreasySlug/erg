@@ -16,6 +16,7 @@ homepage.workspace = true
 members = [
     "crates/erg_common",
     "crates/erg_compiler",
+    "crates/erg_fmt",
     "crates/erg_linter/",
     "crates/erg_parser",
     "crates/els",
@@ -80,6 +81,7 @@ parallel = ["erg_common/parallel", "erg_parser/parallel", "erg_compiler/parallel
 erg_common = { version = "0.6.53", path = "./crates/erg_common" }
 erg_parser = { version = "0.6.53", path = "./crates/erg_parser" }
 erg_compiler = { version = "0.6.53", path = "./crates/erg_compiler" }
+erg_fmt = { version = "0.6.53", path = "./crates/erg_fmt" }
 erg_linter = { version = "0.6.53", path = "./crates/erg_linter" }
 els = { version = "0.1.65", path = "./crates/els" }
 erg_proc_macros = { version = "0.6.53", path = "./crates/erg_proc_macros" }

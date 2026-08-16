@@ -1,0 +1,33 @@
+[package]
+name = "erg_fmt"
+description = "the Erg code formatter"
+documentation = "http://docs.rs/erg_fmt"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = []
+debug = ["erg_common/debug", "erg_parser/debug"]
+backtrace = ["erg_common/backtrace"]
+japanese = ["erg_common/japanese", "erg_parser/japanese"]
+simplified_chinese = ["erg_common/simplified_chinese", "erg_parser/simplified_chinese"]
+traditional_chinese = ["erg_common/traditional_chinese", "erg_parser/traditional_chinese"]
+unicode = ["erg_common/unicode", "erg_parser/unicode"]
+pretty = ["erg_common/pretty", "erg_parser/pretty"]
+large_thread = ["erg_common/large_thread", "erg_parser/large_thread"]
+full = ["unicode", "pretty"]
+log-level-error = ["erg_common/log-level-error", "erg_parser/log-level-error"]
+
+# NOTE: deliberately no erg_compiler dependency. The formatter must work on
+# sources that do not type-check, and keeping the dependency out enforces that
+# structurally rather than by convention.
+[dependencies]
+erg_common = { workspace = true }
+erg_parser = { workspace = true }
+
+[lib]
+path = "lib.rs"

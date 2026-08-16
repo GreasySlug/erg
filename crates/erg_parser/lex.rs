@@ -183,6 +183,10 @@ pub struct Lexer /*<'a>*/ {
     /// 0-origin, indicates the column number in which the token appears
     col_token_starts: u32,
     interpol_stack: Vec<Interpolation>,
+    /// Index into `chars` where the token currently being lexed starts.
+    /// Set in `next` just before the first character is consumed, so string
+    /// lexers can recover their verbatim source (see `raw_since_token_start`).
+    token_start_cursor: usize,
 }
 
 impl Lexer /*<'a>*/ {
@@ -198,6 +202,7 @@ impl Lexer /*<'a>*/ {
             lineno_token_starts: 0,
             col_token_starts: 0,
             interpol_stack: vec![Interpolation::Not],
+            token_start_cursor: 0,
         }
     }
 
@@ -214,6 +219,7 @@ impl Lexer /*<'a>*/ {
             lineno_token_starts: 0,
             col_token_starts: 0,
             interpol_stack: vec![Interpolation::Not],
+            token_start_cursor: 0,
         }
     }
 
@@ -244,6 +250,22 @@ impl Lexer /*<'a>*/ {
         self.prev_token = token.clone();
         self.col_token_starts += cont_len as u32;
         token
+    }
+
+    /// The verbatim source of the token being lexed, from `token_start_cursor`
+    /// up to the cursor.
+    ///
+    /// String lexers decode escapes into the token's `content` (`\n` becomes a
+    /// real newline, `\t` becomes four spaces), so `content` cannot reproduce
+    /// the source. Slicing `chars` avoids having to rebuild the original text
+    /// branch by branch, and is correct by construction.
+    ///
+    /// Note this is the source *after* `normalize_newline`, so CRLF input comes
+    /// back as LF — which is what a formatter wants to emit anyway.
+    fn raw_since_token_start(&self) -> String {
+        self.chars[self.token_start_cursor..self.cursor]
+            .iter()
+            .collect()
     }
 
     fn emit_singleline_token(&mut self, kind: TokenKind, cont: &str) -> Token {
@@ -909,7 +931,8 @@ impl Lexer /*<'a>*/ {
                 },
                 '"' => {
                     s.push(self.consume().unwrap());
-                    let token = self.emit_singleline_token(StrLit, &s);
+                    let raw = self.raw_since_token_start();
+                    let token = self.emit_singleline_token(StrLit, &s).with_raw(raw);
                     return Ok(token);
                 }
                 _ => {
@@ -920,7 +943,9 @@ impl Lexer /*<'a>*/ {
                             '{' => {
                                 s.push_str("\\{");
                                 self.interpol_stack.push(Interpolation::SingleLine);
-                                let token = self.emit_singleline_token(StrInterpLeft, &s);
+                                let raw = self.raw_since_token_start();
+                                let token =
+                                    self.emit_singleline_token(StrInterpLeft, &s).with_raw(raw);
                                 return Ok(token);
                             }
                             '0' => s.push('\0'),
@@ -993,7 +1018,10 @@ impl Lexer /*<'a>*/ {
                     self.consume().unwrap();
                     self.consume().unwrap();
                     s.push_str(quote.quotes());
-                    let token = self.emit_multiline_token(quote.token_kind(), col_begin, &s);
+                    let raw = self.raw_since_token_start();
+                    let token = self
+                        .emit_multiline_token(quote.token_kind(), col_begin, &s)
+                        .with_raw(raw);
                     return Ok(token);
                 }
                 // else unclosed_string_error
@@ -1007,7 +1035,10 @@ impl Lexer /*<'a>*/ {
                             '{' => {
                                 s.push_str("\\{");
                                 self.interpol_stack.push(Interpolation::MultiLine(quote));
-                                let token = self.emit_multiline_token(StrInterpLeft, col_begin, &s);
+                                let raw = self.raw_since_token_start();
+                                let token = self
+                                    .emit_multiline_token(StrInterpLeft, col_begin, &s)
+                                    .with_raw(raw);
                                 return Ok(token);
                             }
                             '0' => s.push('\0'),
@@ -1118,7 +1149,9 @@ impl Lexer /*<'a>*/ {
                                 self.consume().unwrap();
                                 self.consume().unwrap();
                                 s.push_str(quote.quotes());
-                                let token = self.emit_singleline_token(StrInterpRight, &s);
+                                let raw = self.raw_since_token_start();
+                                let token =
+                                    self.emit_singleline_token(StrInterpRight, &s).with_raw(raw);
                                 return Ok(token);
                             }
                             // else unclosed_string_error
@@ -1126,7 +1159,9 @@ impl Lexer /*<'a>*/ {
                         Interpolation::SingleLine => {
                             self.interpol_stack.pop();
                             s.push(c);
-                            let token = self.emit_singleline_token(StrInterpRight, &s);
+                            let raw = self.raw_since_token_start();
+                            let token =
+                                self.emit_singleline_token(StrInterpRight, &s).with_raw(raw);
                             return Ok(token);
                         }
                         Interpolation::Not => {}
@@ -1139,7 +1174,9 @@ impl Lexer /*<'a>*/ {
                         match next_c {
                             '{' => {
                                 s.push_str("\\{");
-                                let token = self.emit_singleline_token(StrInterpMid, &s);
+                                let raw = self.raw_since_token_start();
+                                let token =
+                                    self.emit_singleline_token(StrInterpMid, &s).with_raw(raw);
                                 return Ok(token);
                             }
                             '0' => s.push('\0'),
@@ -1228,6 +1265,9 @@ impl Iterator for Lexer /*<'a>*/ {
                 return Some(Err(e));
             }
         }
+        // the token starts here; string lexers read this back to recover the
+        // source text their `content` has already decoded away
+        self.token_start_cursor = self.cursor;
         match self.consume() {
             Some('(') => {
                 self.enclosure_level += 1;

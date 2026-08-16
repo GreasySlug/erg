@@ -242,11 +242,46 @@ impl Lexer /*<'a>*/ {
     }
 
     fn emit_multiline_token(&mut self, kind: TokenKind, col_begin: u32, cont: &str) -> Token {
+        let lines = cont.lines().count() as u32;
+        self.emit_multiline_token_spanning(kind, col_begin, cont, lines, None)
+    }
+
+    /// Emits a multi-line token, taking its height from the verbatim source
+    /// rather than from the decoded content, and recording that source on the
+    /// token.
+    ///
+    /// The line number is back-computed as `current_line - height`, so a
+    /// content that gained lines the source never had reports the token too
+    /// early: `"""a\nb"""` decodes to two lines but occupies one. On the first
+    /// line of a file that lands on 0, which `Locational` reads as
+    /// `Location::Unknown` -- the literal loses its position entirely.
+    fn emit_raw_multiline_token(
+        &mut self,
+        kind: TokenKind,
+        col_begin: u32,
+        cont: &str,
+        raw: String,
+    ) -> Token {
+        let lines = raw.lines().count() as u32;
+        self.emit_multiline_token_spanning(kind, col_begin, cont, lines, Some(raw))
+    }
+
+    fn emit_multiline_token_spanning(
+        &mut self,
+        kind: TokenKind,
+        col_begin: u32,
+        cont: &str,
+        lines: u32,
+        raw: Option<String>,
+    ) -> Token {
         let cont = self.str_cache.get(cont);
-        let lineno = (self.lineno_token_starts + 2).saturating_sub(cont.lines().count() as u32);
+        let lineno = (self.lineno_token_starts + 2).saturating_sub(lines);
         // cannot use String::len() for multi-byte characters
         let cont_len = cont.chars().count();
-        let token = Token::new(kind, cont, lineno, col_begin);
+        let mut token = Token::new(kind, cont, lineno, col_begin);
+        if let Some(raw) = raw {
+            token = token.with_raw(raw);
+        }
         self.prev_token = token.clone();
         self.col_token_starts += cont_len as u32;
         token
@@ -1019,9 +1054,8 @@ impl Lexer /*<'a>*/ {
                     self.consume().unwrap();
                     s.push_str(quote.quotes());
                     let raw = self.raw_since_token_start();
-                    let token = self
-                        .emit_multiline_token(quote.token_kind(), col_begin, &s)
-                        .with_raw(raw);
+                    let token =
+                        self.emit_raw_multiline_token(quote.token_kind(), col_begin, &s, raw);
                     return Ok(token);
                 }
                 // else unclosed_string_error
@@ -1036,9 +1070,12 @@ impl Lexer /*<'a>*/ {
                                 s.push_str("\\{");
                                 self.interpol_stack.push(Interpolation::MultiLine(quote));
                                 let raw = self.raw_since_token_start();
-                                let token = self
-                                    .emit_multiline_token(StrInterpLeft, col_begin, &s)
-                                    .with_raw(raw);
+                                let token = self.emit_raw_multiline_token(
+                                    StrInterpLeft,
+                                    col_begin,
+                                    &s,
+                                    raw,
+                                );
                                 return Ok(token);
                             }
                             '0' => s.push('\0'),

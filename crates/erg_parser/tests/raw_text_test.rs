@@ -114,6 +114,43 @@ _ = "a\nb\{x}c\td"
     );
 }
 
+/// A multi-line literal's line number is back-computed from its height, which
+/// has to be measured on the source. Decoding `\n` into a real newline makes
+/// the content taller than the text, which used to report the token a line too
+/// early -- and on line 1 that produced 0, the value `Locational` treats as
+/// `Location::Unknown`.
+#[test]
+fn multi_line_string_lineno_counts_source_lines() {
+    let lineno_of = |src: &str, kind: TokenKind| {
+        lex(src)
+            .into_iter()
+            .find(|tok| tok.kind == kind)
+            .unwrap_or_else(|| panic!("no {kind:?} in {src:?}"))
+            .lineno
+    };
+
+    // no escapes: content and source are the same height
+    assert_eq!(
+        lineno_of("_ = \"\"\"ab\"\"\"\n_ = 1\n", TokenKind::StrLit),
+        1
+    );
+    // `\n` escape: one source line, two content lines
+    assert_eq!(
+        lineno_of("_ = \"\"\"a\\nb\"\"\"\n_ = 1\n", TokenKind::StrLit),
+        1
+    );
+    // a real line break: two of each
+    assert_eq!(
+        lineno_of("_ = \"\"\"a\nb\"\"\"\n_ = 1\n", TokenKind::StrLit),
+        1
+    );
+    // and one that genuinely starts further down
+    assert_eq!(
+        lineno_of("_ = 1\n_ = \"\"\"a\\nb\"\"\"\n", TokenKind::StrLit),
+        2
+    );
+}
+
 /// The property Phase 2 of `erg fmt` rests on: for a source with no comments,
 /// concatenating `raw_text` over the tokens reproduces the source exactly once
 /// whitespace is disregarded. `content` cannot do this.

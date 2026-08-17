@@ -7,6 +7,7 @@ use erg_common::spawn::exec_new_thread;
 use erg_common::traits::{ExitStatus, Runnable};
 
 use erg_compiler::build_package::{PackageBuilder, PackageTypeChecker};
+use erg_fmt::Formatter;
 use erg_linter::Linter;
 use erg_parser::lex::LexerRunner;
 use erg_parser::ParserRunner;
@@ -31,6 +32,7 @@ fn run() {
         Read => Deserializer::run(cfg),
         Pack => PackageManagerRunner::run(cfg),
         Lint => Linter::run(cfg),
+        Fmt => Formatter::run(cfg),
         PyDecl => {
             #[cfg(feature = "pydecl")]
             {

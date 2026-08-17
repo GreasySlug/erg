@@ -35,7 +35,8 @@ COMMAND
     server                               言語サーバーを起動
     lint                                 Lintを実行
     pack                                 パッケージング管理
-    pydecl                               Pythonソース/スタブから型宣言(.d.er)を生成",
+    pydecl                               Pythonソース/スタブから型宣言(.d.er)を生成
+    fmt                                  ソースコードを整形",
 
     "simplified_chinese" =>
     "\
@@ -69,7 +70,8 @@ COMMAND
     server                               执行语言服务器
     lint                                 执行 Lint
     pack                                 执行打包管理
-    pydecl                               从 Python 源码/存根生成类型声明(.d.er)",
+    pydecl                               从 Python 源码/存根生成类型声明(.d.er)
+    fmt                                  格式化源代码",
 
     "traditional_chinese" =>
         "\
@@ -103,7 +105,8 @@ COMMAND
     server                               執行語言伺服器
     lint                                 執行 Lint
     pack                                 執行打包管理
-    pydecl                               從 Python 源碼/存根生成型別聲明(.d.er)",
+    pydecl                               從 Python 源碼/存根生成型別聲明(.d.er)
+    fmt                                  格式化原始碼",
 
     "english" =>
         "\
@@ -137,7 +140,8 @@ COMMAND
     server                               start Erg language server
     lint                                 lint
     pack                                 run package manager
-    pydecl                               generate type declarations (.d.er) from Python sources/stubs",
+    pydecl                               generate type declarations (.d.er) from Python sources/stubs
+    fmt                                  reformat source code",
     )
 }
 
@@ -182,7 +186,11 @@ lint
     プログラムをLintする
 
 pack
-    パッケージ管理",
+    パッケージ管理
+
+fmt
+    ソースコードを整形して書き戻す
+    --checkで差分の有無のみ報告、--stdoutで標準出力へ",
 
     "simplified_chinese" =>
     "\
@@ -224,7 +232,11 @@ lint
     Lint 程序
 
 pack
-    包管理",
+    包管理
+
+fmt
+    格式化源代码并写回
+    --check 仅报告差异, --stdout 输出到标准输出",
 
     "traditional_chinese" =>
     "\
@@ -266,7 +278,11 @@ lint
     Lint 程式
 
 pack
-    封裝管理",
+    封裝管理
+
+fmt
+    格式化原始碼並寫回
+    --check 僅報告差異, --stdout 輸出到標準輸出",
 
     "english" =>
     "\
@@ -307,7 +323,11 @@ lint
     Lint the program
 
 pack
-    Package management",
+    Package management
+
+fmt
+    reformat sources in place
+    --check only reports which files would change, --stdout writes to stdout",
     )
 }
 
@@ -352,4 +372,10 @@ pub const OPTIONS: &[&str] = &[
     "-V",
     "--verbose",
     "--decls-from-py",
+    // `erg fmt`
+    "--stdout",
+    "--indent",
+    "--max-blank-lines",
+    "--max-width",
+    "--exclude",
 ];

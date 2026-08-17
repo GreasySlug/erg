@@ -187,6 +187,14 @@ impl Input {
         Self::new(InputKind::DummyREPL(Box::new(stdin)), random())
     }
 
+    /// What kind of input this is -- a file, a pipe, the REPL.
+    ///
+    /// `erg fmt` needs the distinction: a path can be written back to and a
+    /// directory can be walked, while a pipe has nowhere to go but stdout.
+    pub const fn kind(&self) -> &InputKind {
+        &self.kind
+    }
+
     pub const fn is_repl(&self) -> bool {
         self.kind.is_repl()
     }

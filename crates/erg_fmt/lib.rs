@@ -28,6 +28,7 @@
 pub mod line;
 pub mod reflow;
 pub mod render;
+pub mod runner;
 pub mod skip;
 pub mod source;
 pub mod spacing;
@@ -38,6 +39,7 @@ use erg_parser::lex::Lexer;
 use erg_parser::token::TokenStream;
 
 pub use line::Item;
+pub use runner::Formatter;
 pub use skip::Directives;
 pub use source::SourceLines;
 pub use verify::{compare, token_streams_equivalent, Mismatch};

@@ -422,6 +422,7 @@ dependencies = [
  "els",
  "erg_common",
  "erg_compiler",
+ "erg_fmt",
  "erg_linter",
  "erg_parser",
  "erg_pydecl",

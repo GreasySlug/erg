@@ -37,6 +37,8 @@ pub enum ErgMode {
     Pack,
     /// generate Erg declarations (.d.er) from Python sources/stubs
     PyDecl,
+    /// reformat sources in place
+    Fmt,
 }
 
 impl TryFrom<&str> for ErgMode {
@@ -56,6 +58,7 @@ impl TryFrom<&str> for ErgMode {
             "byteread" | "read" | "reader" | "dis" => Ok(Self::Read),
             "pack" | "package" => Ok(Self::Pack),
             "pydecl" | "py-decl" => Ok(Self::PyDecl),
+            "fmt" | "format" | "formatter" => Ok(Self::Fmt),
             _ => Err(()),
         }
     }
@@ -77,6 +80,7 @@ impl From<ErgMode> for &str {
             ErgMode::Read => "read",
             ErgMode::Pack => "pack",
             ErgMode::PyDecl => "pydecl",
+            ErgMode::Fmt => "fmt",
         }
     }
 }
@@ -192,6 +196,43 @@ pub struct ErgConfig {
     /// generate Erg declarations from annotated `.py` sources when no
     /// `.d.er`/`.pyi` stub is found (requires the `pydecl` feature)
     pub decls_from_py: bool,
+    /// options for `erg fmt`
+    pub fmt: FmtConfig,
+}
+
+/// Everything `erg fmt` lets you configure.
+///
+/// Three knobs plus two output modes, and no config file: see
+/// `docs/erg-fmt-design.md` §12 for why. Lives here rather than in `erg_fmt`
+/// because `erg_common` cannot depend on it, and `ErgConfig` is what the CLI
+/// fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmtConfig {
+    /// `--check`: report which files would change, write none of them.
+    pub check: bool,
+    /// `--stdout`: write the result to stdout instead of back to the file.
+    pub stdout: bool,
+    /// `--indent`: spaces per nesting level.
+    pub indent: usize,
+    /// `--max-blank-lines`: how many consecutive blank lines to allow.
+    pub max_blank_lines: usize,
+    /// `--max-width`: column beyond which a line is wrapped, where it can be.
+    pub max_width: usize,
+    /// `--exclude`: path substrings to skip when walking a directory.
+    pub exclude: ArcArray<&'static str>,
+}
+
+impl Default for FmtConfig {
+    fn default() -> Self {
+        Self {
+            check: false,
+            stdout: false,
+            indent: 4,
+            max_blank_lines: 2,
+            max_width: 100,
+            exclude: ArcArray::from([]),
+        }
+    }
 }
 
 impl Default for ErgConfig {
@@ -225,6 +266,7 @@ impl Default for ErgConfig {
             do_not_show_ext_errors: false,
             respect_pyi: true,
             decls_from_py: false,
+            fmt: FmtConfig::default(),
         }
     }
 }
@@ -298,6 +340,7 @@ impl ErgConfig {
         let mut cfg = Self::default();
         let mut runtime_args: Vec<&'static str> = vec![];
         let mut packages = vec![];
+        let mut excludes: Vec<&'static str> = vec![];
         // not `for` because we need to consume the next argument
         while let Some(arg) = args.next() {
             match &arg[..] {
@@ -364,6 +407,29 @@ impl ErgConfig {
                 }
                 "--decls-from-py" => {
                     cfg.decls_from_py = true;
+                }
+                /* `erg fmt` */
+                "--check" => {
+                    cfg.fmt.check = true;
+                }
+                "--stdout" => {
+                    cfg.fmt.stdout = true;
+                }
+                "--indent" => {
+                    cfg.fmt.indent = parse_usize(args.next(), "--indent");
+                }
+                "--max-blank-lines" => {
+                    cfg.fmt.max_blank_lines = parse_usize(args.next(), "--max-blank-lines");
+                }
+                "--max-width" => {
+                    cfg.fmt.max_width = parse_usize(args.next(), "--max-width");
+                }
+                "--exclude" => {
+                    let pattern = args
+                        .next()
+                        .expect("the value of `--exclude` is not passed")
+                        .into_boxed_str();
+                    excludes.push(Box::leak(pattern) as &'static str);
                 }
                 "--use-local-package" => {
                     let name = args
@@ -585,6 +651,13 @@ USAGE:
         }
         cfg.runtime_args = ArcArray::from(runtime_args);
         cfg.packages = ArcArray::from(packages);
+        cfg.fmt.exclude = ArcArray::from(excludes);
         cfg
     }
+}
+
+fn parse_usize(arg: Option<String>, name: &str) -> usize {
+    arg.unwrap_or_else(|| panic!("the value of `{name}` is not passed"))
+        .parse()
+        .unwrap_or_else(|_| panic!("the value of `{name}` is not a number"))
 }

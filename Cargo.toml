@@ -35,12 +35,13 @@ homepage = "https://erg-lang.org/"
 [features]
 default = ["parallel"]
 # when "debug" feature is turned on, that of the following crates will also be turned on.
-debug = ["erg_common/debug", "erg_parser/debug", "erg_compiler/debug", "erg_linter/debug"] # "els/debug"
+debug = ["erg_common/debug", "erg_parser/debug", "erg_compiler/debug", "erg_fmt/debug", "erg_linter/debug"] # "els/debug"
 backtrace = ["erg_common/backtrace", "els/backtrace"]
 japanese = [
     "erg_common/japanese",
     "erg_parser/japanese",
     "erg_compiler/japanese",
+    "erg_fmt/japanese",
     "els/japanese",
     "erg_linter/japanese",
 ]
@@ -48,6 +49,7 @@ simplified_chinese = [
     "erg_common/simplified_chinese",
     "erg_parser/simplified_chinese",
     "erg_compiler/simplified_chinese",
+    "erg_fmt/simplified_chinese",
     "els/simplified_chinese",
     "erg_linter/simplified_chinese",
 ]
@@ -55,15 +57,17 @@ traditional_chinese = [
     "erg_common/traditional_chinese",
     "erg_parser/traditional_chinese",
     "erg_compiler/traditional_chinese",
+    "erg_fmt/traditional_chinese",
     "els/traditional_chinese",
     "erg_linter/traditional_chinese",
 ]
-unicode = ["erg_common/unicode", "erg_parser/unicode", "erg_compiler/unicode", "els/unicode", "erg_linter/unicode"]
-pretty = ["erg_common/pretty", "erg_parser/pretty", "erg_compiler/pretty", "els/pretty", "erg_linter/pretty"]
+unicode = ["erg_common/unicode", "erg_parser/unicode", "erg_compiler/unicode", "erg_fmt/unicode", "els/unicode", "erg_linter/unicode"]
+pretty = ["erg_common/pretty", "erg_parser/pretty", "erg_compiler/pretty", "erg_fmt/pretty", "els/pretty", "erg_linter/pretty"]
 large_thread = [
     "erg_common/large_thread",
     "erg_parser/large_thread",
     "erg_compiler/large_thread",
+    "erg_fmt/large_thread",
     "els/large_thread",
     "erg_linter/large_thread",
 ]
@@ -74,7 +78,7 @@ els = ["erg_common/els", "erg_compiler/els", "dep:els"]
 full-repl = ["erg_common/full-repl"]
 full = ["els", "full-repl", "unicode", "pretty"]
 experimental = ["erg_common/experimental", "erg_parser/experimental", "erg_compiler/experimental", "erg_linter/experimental"]
-log-level-error = ["erg_common/log-level-error", "erg_parser/log-level-error", "erg_compiler/log-level-error", "erg_linter/log-level-error"]
+log-level-error = ["erg_common/log-level-error", "erg_parser/log-level-error", "erg_compiler/log-level-error", "erg_fmt/log-level-error", "erg_linter/log-level-error"]
 parallel = ["erg_common/parallel", "erg_parser/parallel", "erg_compiler/parallel", "erg_linter/parallel"]
 
 [workspace.dependencies]
@@ -92,6 +96,7 @@ pyo3 = { version = "0.25", features = ["extension-module"] }
 erg_common = { workspace = true }
 erg_parser = { workspace = true }
 erg_compiler = { workspace = true }
+erg_fmt = { workspace = true }
 erg_linter = { workspace = true }
 erg_pydecl = { workspace = true, optional = true }
 els = { workspace = true, optional = true, features = ["lint"] }

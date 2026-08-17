@@ -1,9 +1,8 @@
 //! The safety net, tested on its own.
 //!
-//! `render` is still the identity function, so these do not exercise any
-//! formatting. What they pin down is the property every later stage will lean
-//! on: `compare` must accept exactly the changes a formatter is allowed to
-//! make, and reject everything else.
+//! These do not go through the renderer. What they pin down is the property
+//! every rendering stage leans on: `compare` must accept exactly the changes a
+//! formatter is allowed to make, and reject everything else.
 
 use erg_fmt::{
     compare, format_str, token_streams_equivalent, try_format_str, FmtOptions, Unformatted,
@@ -44,6 +43,16 @@ fn indent_width_may_change() {
 fn blank_line_count_may_change() {
     assert_equivalent("x = 1\n\n\n\ny = 2\n", "x = 1\n\ny = 2\n");
     assert_equivalent("x = 1\ny = 2\n", "x = 1\n\ny = 2\n");
+}
+
+/// The file's own final newline is the formatter's to add: a source that ends
+/// without one is given one, and that must not read as a changed program.
+#[test]
+fn the_final_newline_may_be_added_or_removed() {
+    assert_equivalent("x = 1", "x = 1\n");
+    assert_equivalent("x = 1\n", "x = 1");
+    // ...but a newline that still separates two statements is not "final"
+    assert_differs("x = 1\ny = 2", "x = 1 y = 2\n");
 }
 
 #[test]
@@ -155,8 +164,10 @@ fn spacing_before_a_bracket_is_a_known_blind_spot() {
 
 // --- format_str ------------------------------------------------------------
 
+/// Already-formatted input must come back untouched -- the fixed point the
+/// idempotence property is anchored on.
 #[test]
-fn formatting_is_a_no_op_for_now() {
+fn well_formatted_input_is_left_alone() {
     let src = "# a comment\nx = 1\n\nf = (y) ->\n    y + 1\n";
     assert_eq!(format_str(src, FmtOptions::default()), src);
 }

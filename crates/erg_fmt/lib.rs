@@ -21,10 +21,12 @@
 //!
 //! # Status
 //!
-//! Skeleton. [`format_str`] currently returns its input unchanged; the
-//! verification path around it is complete, so the rendering stages can be
-//! filled in one at a time under a working safety net.
+//! Normalizes the layout around a line -- indentation, blank lines, trailing
+//! whitespace, the final newline -- and copies the line's own text from the
+//! source. Spacing within a line, and wrapping, are still to come.
 
+pub mod line;
+pub mod render;
 pub mod skip;
 pub mod source;
 pub mod verify;
@@ -32,6 +34,7 @@ pub mod verify;
 use erg_parser::lex::Lexer;
 use erg_parser::token::TokenStream;
 
+pub use line::Item;
 pub use skip::Directives;
 pub use source::SourceLines;
 pub use verify::{compare, token_streams_equivalent, Mismatch};
@@ -112,18 +115,10 @@ pub fn format_str(src: &str, opts: FmtOptions) -> String {
 /// could not format. On failure the caller keeps its own `src`.
 pub fn try_format_str(src: &str, opts: FmtOptions) -> Result<String, Unformatted> {
     let before = lex(src).ok_or(Unformatted::InputDoesNotLex)?;
-    let formatted = render(src, &before, opts);
+    let formatted = render::render(src, &before, opts);
     let after = lex(&formatted).ok_or(Unformatted::OutputDoesNotLex)?;
     match compare(&before, &after) {
         Ok(()) => Ok(formatted),
         Err(mismatch) => Err(Unformatted::TokensChanged(mismatch.to_string())),
     }
-}
-
-/// Builds the formatted text from the token stream.
-///
-/// Not implemented yet -- returns the source unchanged, which is trivially a
-/// valid formatting. The stages named in the design doc (§5.2) get added here.
-fn render(src: &str, _tokens: &TokenStream, _opts: FmtOptions) -> String {
-    src.to_string()
 }

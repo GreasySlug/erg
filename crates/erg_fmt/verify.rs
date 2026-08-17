@@ -68,6 +68,13 @@ fn comparable(ts: &TokenStream) -> Vec<&Token> {
             out.push(tok);
         }
     }
+    // The file's own final newline is the formatter's to add or remove -- a
+    // source not ending in one is given one. Only the last newline before the
+    // end qualifies; any other still separates two statements.
+    let tail = out.len() - usize::from(out.last().is_some_and(|t| t.kind == TokenKind::EOF));
+    if tail > 0 && out[tail - 1].kind == TokenKind::Newline {
+        out.remove(tail - 1);
+    }
     out
 }
 

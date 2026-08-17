@@ -365,28 +365,47 @@ crates/erg_fmt/
 
 ### 5.1 データモデル
 
-```rust
-/// 1つの論理行（Newline で終わる、または括弧内で複数物理行にまたがる単位）
-struct LogicalLine {
-    /// ネスト深さ（Indent/Dedent から算出）
-    depth: usize,
-    /// この論理行を構成するトークン。Newline/Indent/Dedent は含まない
-    tokens: Vec<Token>,
-    /// 行末コメント
-    trailing_comment: Option<Token>,
-    /// 直前に何行の空行があったか（正規化前）
-    blank_lines_before: usize,
-}
+**【実装済み: Step 6】** 当初案より単純になった。実装は `crates/erg_fmt/line.rs`。
 
-enum Item {
-    Line(LogicalLine),
-    /// 行を占有するコメント
-    OwnLineComment { depth: usize, token: Token, blank_lines_before: usize },
+```rust
+/// 出力の1単位
+pub struct Item {
+    /// ネスト深さ（Indent/Dedent から算出）
+    pub depth: usize,
+    /// この item が占める原文の行範囲（1-origin）
+    pub lines: RangeInclusive<u32>,
+    /// 直前に何行の空行があったか（正規化前）
+    pub blank_lines_before: usize,
 }
 ```
 
-コメントの帰属は「そのコメントトークンの `lineno` が、直前の非コメントトークンの `lineno` と同じか」で決める。
-同じなら `trailing_comment`、違えば `OwnLineComment`。
+**コメントは特別扱いが要らなかった。** 「Newline が来たら現在の item を閉じる」という
+規則だけで、行末コメントは直前のコードと同じ item に入り（item がまだ開いている）、
+単独行のコメントは自分で item を開く（何も開いていない）。
+当初案の `enum Item { Line, OwnLineComment }` と `trailing_comment` フィールドは不要だった。
+
+`tokens: Vec<Token>` も持たせていない。Step 6 の描画は「行範囲・深さ・空行数」だけで足り、
+トークンが要るのは空白規則（Step 7）から。消費者が現れた時点で足す。
+
+#### 5.1.1 トークンは開始行しか持たない 【実装時に判明】
+
+`Item::lines` を `tok.lineno` だけで組むと、**複数行にまたがるトークンの範囲を取り違える**。
+`Token` が持つのは開始行だけだが、`#[ ]#` コメントや三重引用符リテラルは
+1トークンで数行を占める。
+
+これを誤ると、複数行文字列の item が単一行と判定され、
+**描画が1行目だけを出力してリテラルの残りを消す**。
+
+終了行は `raw_text()` に含まれる改行数から算出する:
+
+```rust
+fn end_lineno(tok: &Token) -> u32 {
+    tok.lineno + tok.raw_text().matches('\n').count() as u32
+}
+```
+
+`content` では駄目で、`\n` エスケープが実改行に復号されている分だけ過大になる
+（`"a\nb"` は原文では1行なのに2行と数えてしまう）。ここでも §2.5 の `raw` が効いている。
 
 ### 5.2 パイプライン
 
@@ -690,7 +709,7 @@ pub fn format_str(src: &str, opts: FmtOptions) -> String {
 
 | トークン | 扱い | 理由 |
 | -------- | ---- | ---- |
-| `Newline` | **比較しない** | 空行の丸めで個数が変わるのは整形の目的そのもの |
+| `Newline` | **連続を1個に畳み、先頭の連続と末尾の1個を落とす** | 空行の丸め・先頭の空行削除・末尾改行の付与は整形の目的そのもの。ただし**除外しきってはならない**（下記） |
 | `Indent` / `Dedent` | **種別のみ比較** | 幅（`content`）は `--indent` で変わってよいが、**出現と順序は変わってはならない**。当初案のように丸ごと除外すると「ブロックが消えた」バグを検出できない |
 | その他 | `(kind, raw_text())` | 下記 |
 
@@ -866,7 +885,9 @@ Step 2 で入れた `raw_since_token_start()` がそのデータそのものだ�
    比較対象は実装時に §6.1 のとおり修正した
 5. ~~**`Emit::Verbatim` と `# fmt: off` / `on` / `skip`**~~ ✅ — `SourceLines` と `Directives` を実装（§5.6）。
    `Emit` 自体は消費者が現れる Step 6 に持ち越し
-6. **論理行分割と描画** — インデント・空行の正規化まで。ここでゴールデンテストを開始
+6. ~~**論理行分割と描画**~~ ✅ — `line.rs`（分割）と `render.rs`（描画）。
+   インデント・空行・末尾空白・末尾改行・CRLF 復元（§5.4.1）まで。
+   複数物理行にまたがる item は Step 8 まで逐語出力
 7. **空白規則** — §5.3 の表を1行ずつ実装。各行に対応するテストを書く
 8. **括弧内の継続行** — §2.4 の `lineno` 差分処理
 9. **折り返し** — §5.7。ステップ8で括弧内の複数行描画ができてからでないと作れない

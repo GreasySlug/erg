@@ -1,26 +1,190 @@
 //! Turning items back into text.
 //!
-//! At this stage only the layout *around* a line is normalized -- its
-//! indentation, the blank lines before it, trailing whitespace, the file's
-//! final newline. What is written on the line is still copied from the source,
-//! so nothing here can disturb the spacing that decides operator fixity. That
-//! comes next, and arrives under the verification already in place.
+//! An [`Item`] is one logical line, which is not always one output line: a
+//! bracketed expression the author broke over four lines arrives here as a
+//! single item, because the lexer swallows newlines inside brackets. Those
+//! breaks are recovered from the tokens' line numbers ([`Layout::chunks`]),
+//! since that is the only trace of them left, and the formatter then adds
+//! breaks of its own where a line is too wide ([`crate::reflow`]).
+//!
+//! Breaks are never *removed*. Flattening an expression back onto one line
+//! would re-lex an operator that had been at end of line -- and so was read as
+//! prefix -- as infix, changing the program. [`crate::verify`] would catch it,
+//! but the file would come out unformatted; only ever splitting means the
+//! situation cannot arise.
 
-use erg_parser::token::TokenStream;
+use erg_common::normalize_newline;
+use erg_common::traits::DequeStream;
+use erg_parser::token::{Token, TokenKind, TokenStream};
 
 use crate::line::{split, Item};
+use crate::reflow::wrap;
 use crate::skip::Directives;
 use crate::source::SourceLines;
+use crate::spacing::space_between;
+use crate::spans::{end_lineno, Spans};
 use crate::FmtOptions;
+
+/// A run of tokens that becomes one output line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chunk {
+    /// Indentation, in units of [`FmtOptions::indent`].
+    pub level: usize,
+    /// Token indices, in source order.
+    pub tokens: Vec<usize>,
+}
+
+/// Everything the line-level stages need to look at.
+pub struct Layout<'a> {
+    /// The source, newline-normalized -- which is the form the lexer read, and
+    /// so the form `raw_text` and [`Spans`] agree with.
+    pub src: &'a str,
+    pub tokens: &'a TokenStream,
+    pub spans: Spans,
+    pub opts: FmtOptions,
+}
+
+impl<'a> Layout<'a> {
+    pub fn new(src: &'a str, tokens: &'a TokenStream, opts: FmtOptions) -> Self {
+        let spans = Spans::new(src, tokens);
+        debug_assert!(
+            spans.is_complete(tokens),
+            "erg fmt could not locate every token in the source; \
+             spacing would be guessed from here on"
+        );
+        Self {
+            src,
+            tokens,
+            spans,
+            opts,
+        }
+    }
+
+    pub fn tok(&self, index: usize) -> &Token {
+        self.tokens
+            .get(index)
+            .expect("token index came from this stream")
+    }
+
+    /// Splits an item at the line breaks the author wrote.
+    ///
+    /// Inside brackets no `Newline` is emitted, so the breaks survive only as
+    /// jumps in the tokens' line numbers. A continuation line is indented by
+    /// how many brackets are open at its start, which puts a closing bracket
+    /// back level with the line that opened it.
+    pub fn chunks(&self, item: &Item) -> Vec<Chunk> {
+        let mut chunks: Vec<Chunk> = Vec::new();
+        let mut open_brackets = 0usize;
+        let mut prev_ends: Option<u32> = None;
+
+        for index in item.tokens.clone() {
+            let tok = self.tok(index);
+            if is_layout(tok.kind) {
+                continue;
+            }
+            let (first, last) = self
+                .spans
+                .line_span(index)
+                .unwrap_or((tok.lineno, end_lineno(tok)));
+            let broken_here = prev_ends.is_some_and(|ends| first > ends);
+            if broken_here || prev_ends.is_none() {
+                let level = match prev_ends {
+                    None => item.depth,
+                    Some(_) => item.depth + open_brackets - usize::from(is_closing(tok.kind)),
+                };
+                chunks.push(Chunk {
+                    level,
+                    tokens: Vec::new(),
+                });
+            }
+            if let Some(chunk) = chunks.last_mut() {
+                chunk.tokens.push(index);
+            }
+            if is_opening(tok.kind) {
+                open_brackets += 1;
+            } else if is_closing(tok.kind) {
+                open_brackets = open_brackets.saturating_sub(1);
+            }
+            prev_ends = Some(last);
+        }
+        chunks
+    }
+
+    /// One output line, indentation included.
+    ///
+    /// May still contain newlines: a `"""` literal or a `#[ ]#` comment is a
+    /// single token whose text is several lines tall, and that text is the
+    /// source's, verbatim -- re-indenting it would rewrite the string.
+    pub fn render_chunk(&self, chunk: &Chunk) -> String {
+        let mut out = " ".repeat(chunk.level * self.opts.indent);
+        for (nth, &index) in chunk.tokens.iter().enumerate() {
+            if nth > 0 {
+                let prev = chunk.tokens[nth - 1];
+                if nth == 1 && self.tok(prev).kind == TokenKind::Comment {
+                    // `#[]#print! 0` lexes; `#[]# print! 0` does not. A line
+                    // that opens with a block comment is still in the lexer's
+                    // indentation scan when the comment ends, and a space there
+                    // is rejected outright -- so leave none.
+                } else {
+                    let gap = self.spans.gap(self.src, prev, index);
+                    out.push_str(space_between(self.tok(prev), self.tok(index)).resolve(gap));
+                }
+            }
+            out.push_str(self.tok(index).raw_text());
+        }
+        out
+    }
+
+    /// The width the chunk would occupy, in characters.
+    ///
+    /// Counted on the widest line, so a chunk holding a multi-line literal is
+    /// judged by the literal rather than by the code around it. That is the
+    /// conservative reading: [`crate::reflow`] declines to touch such a chunk
+    /// anyway, and a wrong answer here would only make it try.
+    pub fn width(&self, chunk: &Chunk) -> usize {
+        self.render_chunk(chunk)
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// Tokens that carry layout rather than text; the formatter emits its own.
+pub(crate) fn is_layout(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Newline
+            | TokenKind::Indent
+            | TokenKind::Dedent
+            | TokenKind::BOF
+            | TokenKind::EOF
+    )
+}
+
+pub(crate) fn is_opening(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::LParen | TokenKind::LSqBr | TokenKind::LBrace
+    )
+}
+
+pub(crate) fn is_closing(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::RParen | TokenKind::RSqBr | TokenKind::RBrace
+    )
+}
 
 /// Lays out a whole source.
 pub fn render(src: &str, tokens: &TokenStream, opts: FmtOptions) -> String {
-    let lines = SourceLines::new(src);
+    let normalized = normalize_newline(src);
+    let lines = SourceLines::new(&normalized);
     let directives = Directives::scan(tokens);
-    let items = split(tokens);
+    let layout = Layout::new(&normalized, tokens, opts);
 
     let mut out = String::new();
-    for (nth, item) in items.iter().enumerate() {
+    for (nth, item) in split(tokens, &layout.spans).iter().enumerate() {
         // blank lines are the formatter's to normalize, except at the top of
         // the file where they simply go
         let blanks = if nth == 0 {
@@ -30,25 +194,21 @@ pub fn render(src: &str, tokens: &TokenStream, opts: FmtOptions) -> String {
         };
         out.extend(std::iter::repeat_n('\n', blanks));
 
-        if keep_verbatim(item, &directives) {
+        if directives.suppresses(item.lines.clone()) {
             out.push_str(trim_terminator(&lines.range(item.lines.clone())));
-        } else {
-            let line = lines.get(*item.lines.start()).unwrap_or_default();
-            out.push_str(&" ".repeat(item.depth * opts.indent));
-            out.push_str(line.trim());
+            out.push('\n');
+            continue;
         }
-        out.push('\n');
+        for chunk in layout
+            .chunks(item)
+            .into_iter()
+            .flat_map(|chunk| wrap(&layout, chunk))
+        {
+            out.push_str(layout.render_chunk(&chunk).trim_end());
+            out.push('\n');
+        }
     }
     restore_line_endings(out, src)
-}
-
-/// Whether an item is copied out rather than laid out.
-fn keep_verbatim(item: &Item, directives: &Directives) -> bool {
-    // Spanning several source lines means either a bracket run or the inside
-    // of a `"""` literal. The literal's interior is part of the string and must
-    // not be touched at all; the bracket run needs continuation-line handling
-    // that does not exist yet. Copying covers both correctly.
-    item.is_multiline() || directives.suppresses(item.lines.clone())
 }
 
 /// Drops the line terminator, which the caller re-adds. Also removes trailing
@@ -65,8 +225,7 @@ fn trim_terminator(text: &str) -> &str {
 /// on Windows.
 fn restore_line_endings(out: String, src: &str) -> String {
     if src.contains("\r\n") {
-        // normalize first: verbatim runs may already carry CRLF
-        out.replace("\r\n", "\n").replace('\n', "\r\n")
+        out.replace('\n', "\r\n")
     } else {
         out
     }
@@ -159,27 +318,56 @@ mod tests {
     #[test]
     fn a_trailing_comment_stays_on_its_line() {
         assert_eq!(fmt("x = 1 # c\n"), "x = 1 # c\n");
+        // a run of spaces may be aligning a column of them, so it survives
+        assert_eq!(fmt("x = 1     # c\n"), "x = 1     # c\n");
     }
 
-    /// The interior of a `"""` literal is part of the string, so the whole item
-    /// is copied out rather than re-indented.
+    /// The interior of a `"""` literal is part of the string, so only the line
+    /// it starts on may be re-indented.
     #[test]
-    fn a_multi_line_string_is_left_alone() {
-        let src = "f = (x) ->\n        s = \"\"\"\n    a\n    \"\"\"\n";
-        assert_eq!(fmt(src), src, "not even the first line, for now");
+    fn a_multi_line_string_keeps_its_interior() {
+        assert_eq!(
+            fmt("f = (x) ->\n        s = \"\"\"\n    a\n    \"\"\"\n"),
+            "f = (x) ->\n    s = \"\"\"\n    a\n    \"\"\"\n"
+        );
     }
 
     #[test]
-    fn a_multi_line_comment_is_left_alone() {
+    fn a_multi_line_comment_keeps_its_interior() {
         let src = "#[ a\n     b ]#\nx = 1\n";
         assert_eq!(fmt(src), src);
     }
 
-    /// Continuation lines inside brackets are the next stage's business.
+    /// The breaks the author wrote inside brackets survive; the indentation
+    /// around them is normalized to the nesting.
     #[test]
-    fn a_bracketed_run_is_left_alone() {
-        let src = "_ = f(\n      1,\n        2\n)\n";
-        assert_eq!(fmt(src), src);
+    fn continuation_lines_are_indented_by_bracket_nesting() {
+        assert_eq!(
+            fmt("_ = f(\n      1,\n        2\n)\n"),
+            "_ = f(\n    1,\n    2\n)\n"
+        );
+        assert_eq!(
+            fmt("f = (x) ->\n  _ = [\n   1,\n  ]\n"),
+            "f = (x) ->\n    _ = [\n        1,\n    ]\n"
+        );
+    }
+
+    #[test]
+    fn a_nested_bracket_indents_one_further() {
+        assert_eq!(
+            fmt("_ = f(a, [\n  1,\n], b)\n"),
+            "_ = f(a, [\n        1,\n    ], b)\n"
+        );
+    }
+
+    /// Only ever split, never join: a break the author put inside brackets
+    /// stays, even when the line would fit without it.
+    #[test]
+    fn an_existing_break_is_never_undone() {
+        assert_eq!(
+            fmt("_ = f(\n    1,\n    2,\n)\n"),
+            "_ = f(\n    1,\n    2,\n)\n"
+        );
     }
 
     #[test]
@@ -222,7 +410,9 @@ mod tests {
             "\n\n\nx = 1\n\n\n\n\ny = 2\n\n",
             "# c\nf = (x) ->\n      # d\n      x\n",
             "_ = f(\n    1,\n    2\n)\n",
+            "_ = f(a, [\n  1,\n], b)\n",
             "# fmt: off\n  x = 1\n# fmt: on\n  y = 2\n",
+            "s = \"\"\"\n  a\n  \"\"\"\n",
         ] {
             let once = fmt(src);
             assert_eq!(fmt(&once), once, "not idempotent for {src:?}");

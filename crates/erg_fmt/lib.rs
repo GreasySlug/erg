@@ -26,9 +26,12 @@
 //! source. Spacing within a line, and wrapping, are still to come.
 
 pub mod line;
+pub mod reflow;
 pub mod render;
 pub mod skip;
 pub mod source;
+pub mod spacing;
+pub mod spans;
 pub mod verify;
 
 use erg_parser::lex::Lexer;

@@ -8,22 +8,23 @@
 //! as that code, because the item is still open when it is reached; one on a
 //! line of its own starts an item, because nothing is.
 
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use erg_common::traits::DequeStream;
 use erg_parser::token::{Token, TokenKind, TokenStream};
 
-/// The last source line a token occupies.
+use crate::spans::{end_lineno, Spans};
+
+/// The first and last source line a token occupies.
 ///
-/// `Token` records only where it starts, but a `#[ ]#` comment or a `"""`
-/// literal can be several lines tall, and an item that under-reports its span
-/// would have its tail dropped when the renderer copies it out.
-///
-/// Counted on `raw_text`, not `content`: a `\n` escape decodes to a real
-/// newline in `content` while occupying no line at all in the source, so
-/// `content` would stretch `"a\nb"` across two lines that do not exist.
-fn end_lineno(tok: &Token) -> u32 {
-    tok.lineno + tok.raw_text().matches('\n').count() as u32
+/// From [`Spans`], which measures the source directly. `Token::lineno` is only
+/// the fallback, and only an approximation: it is the token's start line for
+/// most kinds but its end line for the multi-line halves of an interpolated
+/// string, and there is no way to tell which from the token alone.
+fn lines_of(spans: &Spans, index: usize, tok: &Token) -> (u32, u32) {
+    spans
+        .line_span(index)
+        .unwrap_or((tok.lineno, end_lineno(tok)))
 }
 
 /// One unit of output.
@@ -35,14 +36,20 @@ pub struct Item {
     pub lines: RangeInclusive<u32>,
     /// How many blank lines preceded it in the source.
     pub blank_lines_before: usize,
+    /// The item's tokens, as a half-open range of indices into the stream it
+    /// was split from.
+    ///
+    /// Indices rather than clones so the renderer can ask [`crate::spans`] what
+    /// separated two of them, which is keyed by position in the stream.
+    pub tokens: Range<usize>,
 }
 
 impl Item {
     /// Whether the item covers more than one source line.
     ///
-    /// Those are emitted verbatim for now: the interior of a bracket run and
-    /// the interior of a `"""` literal both live here, and re-indenting either
-    /// needs care that belongs with the continuation-line stage.
+    /// Either because the author broke it inside brackets, where the lexer
+    /// swallows the newline, or because one of its tokens is itself several
+    /// lines tall -- a `"""` literal, a `#[ ]#` comment.
     pub fn is_multiline(&self) -> bool {
         self.lines.end() > self.lines.start()
     }
@@ -52,27 +59,22 @@ impl Item {
 ///
 /// Expects a stream lexed with `keep_comments`; without it the comments are
 /// simply absent and the result is still well-formed.
-pub fn split(tokens: &TokenStream) -> Vec<Item> {
+pub fn split(tokens: &TokenStream, spans: &Spans) -> Vec<Item> {
     let mut items = Vec::new();
     let mut depth = 0usize;
     let mut blanks = 0usize;
-    // the item being built: (depth, first line, last line, blank lines before)
-    let mut open: Option<(usize, u32, u32, usize)> = None;
+    // the item being built
+    let mut open: Option<Item> = None;
 
-    let close = |open: &mut Option<(usize, u32, u32, usize)>, items: &mut Vec<Item>| {
-        if let Some((depth, first, last, blanks)) = open.take() {
-            items.push(Item {
-                depth,
-                lines: first..=last,
-                blank_lines_before: blanks,
-            });
+    let close = |open: &mut Option<Item>, items: &mut Vec<Item>| match open.take() {
+        Some(item) => {
+            items.push(item);
             true
-        } else {
-            false
         }
+        None => false,
     };
 
-    for tok in tokens.iter() {
+    for (index, tok) in tokens.iter().enumerate() {
         match tok.kind {
             TokenKind::Indent => depth += 1,
             TokenKind::Dedent => depth = depth.saturating_sub(1),
@@ -82,17 +84,28 @@ pub fn split(tokens: &TokenStream) -> Vec<Item> {
                     blanks += 1;
                 }
             }
-            TokenKind::EOF => {}
-            _ => match &mut open {
-                // a token can end on a later line than the item began on, both
-                // because newlines inside brackets never reach us and because
-                // a single token can itself be several lines tall
-                Some((_, _, last, _)) => *last = (*last).max(end_lineno(tok)),
-                None => {
-                    open = Some((depth, tok.lineno, end_lineno(tok), blanks));
-                    blanks = 0;
+            TokenKind::EOF | TokenKind::BOF => {}
+            _ => {
+                let (first, last) = lines_of(spans, index, tok);
+                match &mut open {
+                    // a token can end on a later line than the item began on,
+                    // both because newlines inside brackets never reach us and
+                    // because a single token can itself be several lines tall
+                    Some(item) => {
+                        item.lines = *item.lines.start()..=(*item.lines.end()).max(last);
+                        item.tokens.end = index + 1;
+                    }
+                    None => {
+                        open = Some(Item {
+                            depth,
+                            lines: first..=last,
+                            blank_lines_before: blanks,
+                            tokens: index..index + 1,
+                        });
+                        blanks = 0;
+                    }
                 }
-            },
+            }
         }
     }
     // a file whose last line has no newline still ends with an item
@@ -110,7 +123,7 @@ mod tests {
             .keep_comments()
             .lex()
             .unwrap_or_else(|(_, errs)| panic!("lexing failed:\n{errs}"));
-        split(&tokens)
+        split(&tokens, &Spans::new(src, &tokens))
     }
 
     /// `(depth, first line, last line, blank lines before)`
@@ -209,6 +222,32 @@ mod tests {
     #[test]
     fn a_file_without_a_final_newline_still_ends_with_an_item() {
         assert_eq!(shape("x = 1"), vec![(0, 1, 1, 0)]);
+    }
+
+    /// The token range is what the renderer lays out, so it must cover the
+    /// item's own tokens and nothing else -- in particular not the `Newline`
+    /// that ended it, nor a `Dedent` that follows it at end of file.
+    #[test]
+    fn an_item_owns_exactly_its_own_tokens() {
+        let src = "f = (x) ->\n    x + 1\n";
+        let tokens = Lexer::from_str(src.to_string())
+            .keep_comments()
+            .lex()
+            .unwrap();
+        let items = split(&tokens, &Spans::new(src, &tokens));
+        let texts: Vec<Vec<&str>> = items
+            .iter()
+            .map(|i| {
+                i.tokens
+                    .clone()
+                    .map(|n| tokens.get(n).unwrap().raw_text())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec![vec!["f", "=", "(", "x", ")", "->"], vec!["x", "+", "1"]]
+        );
     }
 
     #[test]

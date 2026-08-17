@@ -35,6 +35,7 @@ ELS is a language server for the [Erg](https://github.com/erg-lang/erg) programm
 - [x] Folding range
   - [x] Folding imports
 - [x] Selection range
+- [x] Formatting (`erg_fmt`; no type checking, so it works on a file mid-edit)
 
 ## Installation
 

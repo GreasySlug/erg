@@ -10,21 +10,22 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-debug = ["erg_common/debug", "erg_compiler/debug", "molc/debug"]
-japanese = ["erg_common/japanese", "erg_compiler/japanese"]
-simplified_chinese = ["erg_common/simplified_chinese", "erg_compiler/simplified_chinese"]
-traditional_chinese = ["erg_common/traditional_chinese", "erg_compiler/traditional_chinese"]
-unicode = ["erg_common/unicode", "erg_compiler/unicode"]
-pretty = ["erg_common/pretty", "erg_compiler/pretty"]
-large_thread = ["erg_common/large_thread", "erg_compiler/large_thread"]
+debug = ["erg_common/debug", "erg_compiler/debug", "molc/debug", "erg_fmt/debug"]
+japanese = ["erg_common/japanese", "erg_compiler/japanese", "erg_fmt/japanese"]
+simplified_chinese = ["erg_common/simplified_chinese", "erg_compiler/simplified_chinese", "erg_fmt/simplified_chinese"]
+traditional_chinese = ["erg_common/traditional_chinese", "erg_compiler/traditional_chinese", "erg_fmt/traditional_chinese"]
+unicode = ["erg_common/unicode", "erg_compiler/unicode", "erg_fmt/unicode"]
+pretty = ["erg_common/pretty", "erg_compiler/pretty", "erg_fmt/pretty"]
+large_thread = ["erg_common/large_thread", "erg_compiler/large_thread", "erg_fmt/large_thread"]
 py_compat = ["erg_compiler/py_compat"]
 experimental = ["erg_common/experimental", "erg_compiler/experimental"]
-backtrace = ["erg_common/backtrace", "molc/debug"]
+backtrace = ["erg_common/backtrace", "molc/debug", "erg_fmt/backtrace"]
 lint = ["dep:erg_linter"]
 
 [dependencies]
 erg_common = { workspace = true, features = ["els"] }
 erg_compiler = { workspace = true, features = ["els"] }
+erg_fmt = { workspace = true }
 erg_linter = { workspace = true, optional = true }
 molc = { version = "0.3" }
 serde = { version = "1.0", features = ["derive"] }

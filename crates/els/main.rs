@@ -11,6 +11,7 @@ mod doc_highlight;
 mod doc_link;
 mod file_cache;
 mod folding_range;
+mod formatting;
 mod hir_visitor;
 mod hover;
 mod implementation;

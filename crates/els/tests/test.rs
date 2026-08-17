@@ -2,14 +2,15 @@ use std::path::Path;
 
 use erg_common::spawn::safe_yield;
 use lsp_types::request::{
-    CallHierarchyOutgoingCalls, CallHierarchyPrepare, GotoImplementation, GotoImplementationParams,
-    PrepareRenameRequest,
+    CallHierarchyOutgoingCalls, CallHierarchyPrepare, Formatting, GotoImplementation,
+    GotoImplementationParams, PrepareRenameRequest,
 };
 use lsp_types::{
     CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams, CompletionResponse,
-    DiagnosticSeverity, DocumentSymbolResponse, FoldingRange, FoldingRangeKind,
-    GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
-    PrepareRenameResponse, TextDocumentIdentifier, TextDocumentPositionParams,
+    DiagnosticSeverity, DocumentFormattingParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeKind, FormattingOptions, GotoDefinitionResponse, HoverContents, InlayHintLabel,
+    MarkedString, Position, PrepareRenameResponse, TextDocumentIdentifier,
+    TextDocumentPositionParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -618,5 +619,50 @@ fn test_fix_error() -> Result<(), Box<dyn std::error::Error>> {
     client.notify_save(uri.clone().raw())?;
     let diags = client.wait_diagnostics()?;
     assert_eq!(diags.diagnostics.len(), 0);
+    Ok(())
+}
+
+fn formatting_params(uri: lsp_types::Url) -> DocumentFormattingParams {
+    DocumentFormattingParams {
+        text_document: TextDocumentIdentifier::new(uri),
+        options: FormattingOptions {
+            tab_size: 4,
+            insert_spaces: true,
+            ..FormattingOptions::default()
+        },
+        work_done_progress_params: Default::default(),
+    }
+}
+
+/// `textDocument/formatting` answers from the buffer, without type checking,
+/// so it must work on a file that was only just changed and never saved.
+#[test]
+fn test_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+
+    let edits = client.request::<Formatting>(formatting_params(uri.clone().raw()))?;
+    assert_eq!(
+        edits,
+        Some(vec![]),
+        "an already-formatted file needs no edits"
+    );
+
+    // `x = 1` -> `x =   1`, in the buffer only
+    client.notify_change(uri.clone().raw(), add_char(0, 3, "  "))?;
+    let edits = client
+        .request::<Formatting>(formatting_params(uri.raw()))?
+        .unwrap();
+    assert_eq!(edits.len(), 1, "the whole document is replaced at once");
+    assert_eq!(edits[0].new_text, "x = 1\n_ = x + 1\n");
+    assert_eq!(edits[0].range.start, Position::new(0, 0));
+    assert_eq!(
+        edits[0].range.end,
+        Position::new(2, 0),
+        "past the last line"
+    );
     Ok(())
 }

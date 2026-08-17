@@ -405,6 +405,7 @@ version = "0.1.65"
 dependencies = [
  "erg_common",
  "erg_compiler",
+ "erg_fmt",
  "erg_linter",
  "erg_proc_macros",
  "libc",

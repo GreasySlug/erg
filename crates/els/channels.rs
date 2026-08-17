@@ -7,7 +7,7 @@ use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
-    FoldingRangeRequest, GotoDefinition, GotoImplementation, GotoImplementationParams,
+    FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation, GotoImplementationParams,
     GotoTypeDefinition, GotoTypeDefinitionParams, HoverRequest, InlayHintRequest,
     InlayHintResolveRequest, References, ResolveCompletionItem, SelectionRangeRequest,
     SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
@@ -15,10 +15,10 @@ use lsp_types::request::{
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     CodeAction, CodeActionParams, CodeLensParams, CompletionItem, CompletionParams,
-    DocumentHighlightParams, DocumentLinkParams, DocumentSymbolParams, ExecuteCommandParams,
-    FoldingRangeParams, GotoDefinitionParams, HoverParams, InlayHint, InlayHintParams,
-    ReferenceParams, RenameFilesParams, SelectionRangeParams, SemanticTokensParams,
-    SignatureHelpParams, WorkspaceSymbolParams,
+    DocumentFormattingParams, DocumentHighlightParams, DocumentLinkParams, DocumentSymbolParams,
+    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, HoverParams, InlayHint,
+    InlayHintParams, ReferenceParams, RenameFilesParams, SelectionRangeParams,
+    SemanticTokensParams, SignatureHelpParams, WorkspaceSymbolParams,
 };
 
 use crate::server::Server;
@@ -62,6 +62,7 @@ pub struct SendChannels {
     selection_range: mpsc::Sender<WorkerMessage<SelectionRangeParams>>,
     document_highlight: mpsc::Sender<WorkerMessage<DocumentHighlightParams>>,
     document_link: mpsc::Sender<WorkerMessage<DocumentLinkParams>>,
+    formatting: mpsc::Sender<WorkerMessage<DocumentFormattingParams>>,
     pub(crate) health_check: mpsc::Sender<WorkerMessage<()>>,
 }
 
@@ -92,6 +93,7 @@ impl SendChannels {
         let (tx_selection_range, rx_selection_range) = mpsc::channel();
         let (tx_document_highlight, rx_document_highlight) = mpsc::channel();
         let (tx_document_link, rx_document_link) = mpsc::channel();
+        let (tx_formatting, rx_formatting) = mpsc::channel();
         let (tx_health_check, rx_health_check) = mpsc::channel();
         (
             Self {
@@ -120,6 +122,7 @@ impl SendChannels {
                 selection_range: tx_selection_range,
                 document_highlight: tx_document_highlight,
                 document_link: tx_document_link,
+                formatting: tx_formatting,
                 health_check: tx_health_check,
             },
             ReceiveChannels {
@@ -148,6 +151,7 @@ impl SendChannels {
                 selection_range: rx_selection_range,
                 document_highlight: rx_document_highlight,
                 document_link: rx_document_link,
+                formatting: rx_formatting,
                 health_check: rx_health_check,
             },
         )
@@ -178,6 +182,8 @@ impl SendChannels {
         let _ = self.folding_range.send(WorkerMessage::Kill);
         let _ = self.selection_range.send(WorkerMessage::Kill);
         let _ = self.document_highlight.send(WorkerMessage::Kill);
+        let _ = self.document_link.send(WorkerMessage::Kill);
+        let _ = self.formatting.send(WorkerMessage::Kill);
         let _ = self.health_check.send(WorkerMessage::Kill);
     }
 }
@@ -211,6 +217,7 @@ pub struct ReceiveChannels {
     pub(crate) selection_range: mpsc::Receiver<WorkerMessage<SelectionRangeParams>>,
     pub(crate) document_highlight: mpsc::Receiver<WorkerMessage<DocumentHighlightParams>>,
     pub(crate) document_link: mpsc::Receiver<WorkerMessage<DocumentLinkParams>>,
+    pub(crate) formatting: mpsc::Receiver<WorkerMessage<DocumentFormattingParams>>,
     pub(crate) health_check: mpsc::Receiver<WorkerMessage<()>>,
 }
 
@@ -298,3 +305,4 @@ impl_sendable!(
     document_highlight
 );
 impl_sendable!(DocumentLinkRequest, DocumentLinkParams, document_link);
+impl_sendable!(Formatting, DocumentFormattingParams, formatting);

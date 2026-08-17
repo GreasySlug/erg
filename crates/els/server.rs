@@ -39,10 +39,10 @@ use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
-    FoldingRangeRequest, GotoDefinition, GotoImplementation, GotoTypeDefinition, HoverRequest,
-    InlayHintRequest, InlayHintResolveRequest, PrepareRenameRequest, References, Rename, Request,
-    ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
-    WillRenameFiles, WorkspaceSymbol,
+    FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation, GotoTypeDefinition,
+    HoverRequest, InlayHintRequest, InlayHintResolveRequest, PrepareRenameRequest, References,
+    Rename, Request, ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest,
+    SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyServerCapability, CodeActionKind, CodeActionOptions, CodeActionProviderCapability,
@@ -98,6 +98,7 @@ pub enum DefaultFeatures {
     DocumentLink,
     FoldingRange,
     SelectionRange,
+    Formatting,
     /* ELS specific features */
     SmartCompletion,
     DeepCompletion,
@@ -136,6 +137,7 @@ impl From<&str> for DefaultFeatures {
             "selectionrange" | "selectionRange" | "selection-range" => {
                 DefaultFeatures::SelectionRange
             }
+            "formatting" | "format" | "fmt" => DefaultFeatures::Formatting,
             "smartcompletion" | "smartCompletion" | "smart-completion" => {
                 DefaultFeatures::SmartCompletion
             }
@@ -644,6 +646,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 .contains(&DefaultFeatures::DocumentHighlight)
                 .not(),
         ));
+        capabilities.document_formatting_provider = Some(OneOf::Left(
+            self.disabled_features
+                .contains(&DefaultFeatures::Formatting)
+                .not(),
+        ));
         capabilities
     }
 
@@ -747,6 +754,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             receivers.document_link,
             Self::handle_document_link,
         );
+        self.start_service::<Formatting>(receivers.formatting, Self::handle_formatting);
         self.start_client_health_checker(receivers.health_check);
     }
 
@@ -1024,6 +1032,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 self.parse_send::<DocumentHighlightRequest>(id, msg)
             }
             DocumentLinkRequest::METHOD => self.parse_send::<DocumentLinkRequest>(id, msg),
+            Formatting::METHOD => self.parse_send::<Formatting>(id, msg),
             other => self.send_error(Some(id), -32600, format!("{other} is not supported")),
         }
     }

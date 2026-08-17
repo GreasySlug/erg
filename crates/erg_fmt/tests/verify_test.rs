@@ -5,7 +5,9 @@
 //! on: `compare` must accept exactly the changes a formatter is allowed to
 //! make, and reject everything else.
 
-use erg_fmt::{compare, format_str, try_format_str, FmtOptions, Unformatted};
+use erg_fmt::{
+    compare, format_str, token_streams_equivalent, try_format_str, FmtOptions, Unformatted,
+};
 use erg_parser::lex::Lexer;
 use erg_parser::token::TokenStream;
 
@@ -42,6 +44,12 @@ fn indent_width_may_change() {
 fn blank_line_count_may_change() {
     assert_equivalent("x = 1\n\n\n\ny = 2\n", "x = 1\n\ny = 2\n");
     assert_equivalent("x = 1\ny = 2\n", "x = 1\n\ny = 2\n");
+}
+
+#[test]
+fn leading_and_trailing_blank_lines_may_be_removed() {
+    assert_equivalent("\n\n\nx = 1\n", "x = 1\n");
+    assert_equivalent("x = 1\n\n\n", "x = 1\n");
 }
 
 #[test]
@@ -82,6 +90,17 @@ fn a_trailing_comma_must_be_rejected() {
     assert_differs("_ = f(1, 2)\n", "_ = f(1, 2,)\n");
 }
 
+/// Blank lines are the formatter's to normalize, but a line break either
+/// exists or it does not. Excluding `Newline` from the comparison outright --
+/// which is what this did at first -- let this through: the remaining tokens
+/// are identical, so joining two statements looked like a no-op.
+#[test]
+fn joining_or_splitting_statements_must_be_rejected() {
+    assert_differs("x = 1\ny = 2\n", "x = 1 y = 2\n");
+    assert_differs("x = 1\ny = 2\n", "x = 1; y = 2\n");
+    assert_differs("_ = 1 + 2\n", "_ = 1\n+ 2\n");
+}
+
 #[test]
 fn a_dropped_comment_must_be_rejected() {
     assert_differs("x = 1 # c\n", "x = 1\n");
@@ -107,6 +126,33 @@ fn a_changed_string_literal_must_be_rejected() {
     assert_differs(r#"_ = "a\tb""#, r#"_ = "a    b""#);
 }
 
+/// Re-indenting a block must not reach inside a multi-line literal: the spaces
+/// in there are part of the string. Worth pinning, because the reflow and
+/// indent stages will both be tempted to touch those lines.
+#[test]
+fn reindenting_inside_a_multi_line_string_must_be_rejected() {
+    assert_differs(
+        "f = (x) ->\n    s = \"\"\"\n    a\n    \"\"\"\n",
+        "f = (x) ->\n  s = \"\"\"\n  a\n  \"\"\"\n",
+    );
+}
+
+/// A comment's own indentation is not part of its token, so moving it with the
+/// block around it is fine.
+#[test]
+fn a_comment_may_be_reindented() {
+    assert_equivalent("f = (x) ->\n    # c\n    x\n", "f = (x) ->\n  # c\n  x\n");
+}
+
+/// Documents the one gap: whitespace that changes meaning without changing any
+/// token. `f(1)` and `f (1)` tokenize identically, so this check cannot tell
+/// them apart -- the spacing rules have to preserve it instead (design §5.3).
+/// If this ever starts failing, the gap has closed and §5.3 can be relaxed.
+#[test]
+fn spacing_before_a_bracket_is_a_known_blind_spot() {
+    assert_equivalent("_ = f(1)\n", "_ = f (1)\n");
+}
+
 // --- format_str ------------------------------------------------------------
 
 #[test]
@@ -121,8 +167,37 @@ fn a_source_that_does_not_lex_is_returned_unchanged() {
     assert_eq!(format_str(src, FmtOptions::default()), src);
     assert_eq!(
         try_format_str(src, FmtOptions::default()),
-        Err((src.to_string(), Unformatted::InputDoesNotLex))
+        Err(Unformatted::InputDoesNotLex)
     );
+}
+
+/// Degenerate inputs must degrade, not panic. Cheap to assert now, and the
+/// rendering stages are exactly where an off-by-one on an empty or one-token
+/// file would otherwise first show up.
+#[test]
+fn degenerate_sources_do_not_panic() {
+    for src in [
+        "",
+        "\n",
+        "\n\n\n",
+        "   ",   // leading indent at BOF: does not lex
+        "# c",   // a comment and nothing else
+        "x = 1", // no trailing newline
+        "x = 1 # c",
+        "x = 1\r\ny = 2\r\n",
+    ] {
+        let out = format_str(src, FmtOptions::default());
+        // whatever happens, the result must still be the same program
+        if let (Ok(before), Ok(after)) = (
+            Lexer::from_str(src.to_string()).keep_comments().lex(),
+            Lexer::from_str(out.clone()).keep_comments().lex(),
+        ) {
+            assert!(
+                compare(&before, &after).is_ok(),
+                "formatting {src:?} changed the program"
+            );
+        }
+    }
 }
 
 #[test]
@@ -133,12 +208,22 @@ fn default_options_are_the_documented_ones() {
     assert_eq!(opts.max_width, 100);
 }
 
-/// The mismatch has to say what moved, or a formatter bug is a needle in a
-/// haystack.
+/// The mismatch has to say what moved *and where*, or a formatter bug is a
+/// needle in a haystack.
 #[test]
-fn a_mismatch_names_the_tokens() {
-    let err = compare(&lex("_ = 1 + 2\n"), &lex("_ = 1 +2\n")).unwrap_err();
+fn a_mismatch_names_the_tokens_and_the_line() {
+    let err = compare(&lex("x = 1\n_ = 1 + 2\n"), &lex("x = 1\n_ = 1 +2\n")).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("Plus"), "{msg}");
     assert!(msg.contains("PrePlus"), "{msg}");
+    assert!(msg.contains("line 2"), "should locate the token: {msg}");
+}
+
+#[test]
+fn token_streams_equivalent_agrees_with_compare() {
+    assert!(token_streams_equivalent(&lex("x = 1\n"), &lex("x = 1\n\n")));
+    assert!(!token_streams_equivalent(
+        &lex("_ = 1 + 2\n"),
+        &lex("_ = 1 +2\n")
+    ));
 }

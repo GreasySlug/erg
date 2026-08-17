@@ -89,37 +89,30 @@ fn lex(src: &str) -> Option<TokenStream> {
 pub fn format_str(src: &str, opts: FmtOptions) -> String {
     match try_format_str(src, opts) {
         Ok(formatted) => formatted,
-        Err((src, why)) => {
-            // A formatter that changes the program is a bug, and one that would
-            // otherwise pass unnoticed because the fallback hides it. Surface it
-            // wherever assertions are on.
+        Err(why) => {
+            // A source that does not lex is expected and handled. The other two
+            // mean the formatter is broken, and the fallback would otherwise
+            // hide that -- so make it loud wherever assertions are on.
             debug_assert!(
                 matches!(why, Unformatted::InputDoesNotLex),
                 "erg fmt refused to format: {why}"
             );
-            src
+            src.to_string()
         }
     }
 }
 
 /// [`format_str`], reporting why the source was left alone.
 ///
-/// On failure returns the original source alongside the reason, so a caller
-/// that wants to warn does not have to re-read the file.
-pub fn try_format_str(src: &str, opts: FmtOptions) -> Result<String, (String, Unformatted)> {
-    let Some(before) = lex(src) else {
-        return Err((src.to_string(), Unformatted::InputDoesNotLex));
-    };
+/// Use this when the reason matters, e.g. for `--check` to warn about a file it
+/// could not format. On failure the caller keeps its own `src`.
+pub fn try_format_str(src: &str, opts: FmtOptions) -> Result<String, Unformatted> {
+    let before = lex(src).ok_or(Unformatted::InputDoesNotLex)?;
     let formatted = render(src, &before, opts);
-    let Some(after) = lex(&formatted) else {
-        return Err((src.to_string(), Unformatted::OutputDoesNotLex));
-    };
+    let after = lex(&formatted).ok_or(Unformatted::OutputDoesNotLex)?;
     match compare(&before, &after) {
         Ok(()) => Ok(formatted),
-        Err(mismatch) => Err((
-            src.to_string(),
-            Unformatted::TokensChanged(mismatch.to_string()),
-        )),
+        Err(mismatch) => Err(Unformatted::TokensChanged(mismatch.to_string())),
     }
 }
 

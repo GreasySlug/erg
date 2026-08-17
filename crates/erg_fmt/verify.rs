@@ -6,6 +6,15 @@
 //! rules to be exhaustive, every result is lexed again and compared against the
 //! input. A mismatch means the formatter has a bug, and the caller throws the
 //! formatted text away and returns the original.
+//!
+//! # What this cannot catch
+//!
+//! Only differences that reach the token stream. Whitespace that changes how a
+//! call is read without changing any token is invisible here: `f(1)` and
+//! `f (1)` tokenize identically, yet in Erg they need not mean the same thing.
+//! Cases like that are the spacing rules' responsibility -- the formatter
+//! preserves the original spacing before an opening bracket rather than relying
+//! on this check to catch it (design §5.3).
 
 use erg_common::traits::DequeStream;
 use erg_parser::token::{Token, TokenKind, TokenStream};
@@ -21,8 +30,10 @@ pub struct Mismatch {
 
 impl std::fmt::Display for Mismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // the line is what makes this actionable; `index` counts filtered
+        // tokens and corresponds to nothing the reader can see
         let show = |tok: &Option<Token>| match tok {
-            Some(tok) => format!("{:?} {:?}", tok.kind, tok.content.to_string()),
+            Some(tok) => format!("{:?} {:?} (line {})", tok.kind, tok.raw_text(), tok.lineno),
             None => "<end of stream>".to_string(),
         };
         write!(
@@ -35,12 +46,29 @@ impl std::fmt::Display for Mismatch {
     }
 }
 
-/// Whether a token takes part in the comparison.
+/// The sequence the comparison actually runs over.
 ///
-/// `Newline` is excluded because collapsing runs of blank lines is one of the
-/// things the formatter is *for*: the number of these legitimately changes.
-fn is_compared(tok: &Token) -> bool {
-    tok.kind != TokenKind::Newline
+/// Runs of `Newline` collapse to one, and a leading run drops entirely. That
+/// is what the formatter is allowed to do to blank lines (design §5.4): change
+/// how many there are, and remove them from the top of the file.
+///
+/// What it must *not* do is change whether there is a line break at all.
+/// Excluding `Newline` outright -- the first thing this did -- let
+/// `x = 1` / `y = 2` be joined into `x = 1 y = 2` without the comparison
+/// noticing, because the remaining tokens are identical.
+fn comparable(ts: &TokenStream) -> Vec<&Token> {
+    let mut out: Vec<&Token> = Vec::new();
+    for tok in ts.iter() {
+        let redundant_newline = tok.kind == TokenKind::Newline
+            && (out.is_empty()
+                || out
+                    .last()
+                    .is_some_and(|prev| prev.kind == TokenKind::Newline));
+        if !redundant_newline {
+            out.push(tok);
+        }
+    }
+    out
 }
 
 /// The part of a token that formatting must not alter.
@@ -65,22 +93,20 @@ fn key(tok: &Token) -> (TokenKind, &str) {
 ///
 /// `Ok(())` means formatting preserved the program.
 pub fn compare(before: &TokenStream, after: &TokenStream) -> Result<(), Mismatch> {
-    let mut befores = before.iter().filter(|tok| is_compared(tok));
-    let mut afters = after.iter().filter(|tok| is_compared(tok));
-    let mut index = 0;
-    loop {
-        match (befores.next(), afters.next()) {
-            (None, None) => return Ok(()),
-            (b, a) if b.map(key) != a.map(key) => {
-                return Err(Mismatch {
-                    index,
-                    before: b.cloned(),
-                    after: a.cloned(),
-                })
-            }
-            _ => index += 1,
+    let before = comparable(before);
+    let after = comparable(after);
+    for index in 0..before.len().max(after.len()) {
+        let b = before.get(index).copied();
+        let a = after.get(index).copied();
+        if b.map(key) != a.map(key) {
+            return Err(Mismatch {
+                index,
+                before: b.cloned(),
+                after: a.cloned(),
+            });
         }
     }
+    Ok(())
 }
 
 /// [`compare`], as a predicate.

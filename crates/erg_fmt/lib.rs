@@ -25,11 +25,15 @@
 //! verification path around it is complete, so the rendering stages can be
 //! filled in one at a time under a working safety net.
 
+pub mod skip;
+pub mod source;
 pub mod verify;
 
 use erg_parser::lex::Lexer;
 use erg_parser::token::TokenStream;
 
+pub use skip::Directives;
+pub use source::SourceLines;
 pub use verify::{compare, token_streams_equivalent, Mismatch};
 
 /// Everything `erg fmt` lets you configure.

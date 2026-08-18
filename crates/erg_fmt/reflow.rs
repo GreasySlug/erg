@@ -19,20 +19,54 @@
 use crate::render::{is_closing, is_layout, is_opening, Chunk, Layout};
 use erg_parser::token::TokenKind;
 
+/// How much narrower the longest line has to get before a split pays for
+/// itself: it must lose at least a quarter of its width.
+///
+/// A split costs two lines at minimum, so buying a few columns with them is a
+/// bad trade. Measured over every split the formatter makes across this
+/// repository: the 68 worth keeping all came in at 69% or below, and the two
+/// that read worse than the line they replaced were at 79% and 82%. Three
+/// quarters sits in the gap.
+///
+/// The 79% is
+///
+/// ```erg
+/// [major, minor, patch, pre] -> major.isnumeric() and ... and pre.isalnum()
+/// ```
+///
+/// where 121 columns become five lines whose longest is still 96. The length
+/// is in the `and` chain, which no comma can break, so exploding the pattern
+/// beside it moves the problem rather than solving it -- and the line above it
+/// in that file has three elements, fits, and stays whole.
+const WORTH_SPLITTING: (usize, usize) = (3, 4);
+
 /// Splits a chunk until every part fits, or until nothing more can be split.
 ///
 /// A line with no bracket to break inside is emitted over-wide. There is no
 /// safe rewrite for it, and inventing one is out of scope -- `erg fmt` does not
 /// change expressions, only where they sit.
+///
+/// A split that barely helps is declined for the same reason: an over-wide line
+/// the author wrote is easier to read than five lines that are still over-wide.
 pub fn wrap(layout: &Layout, chunk: Chunk) -> Vec<Chunk> {
-    if layout.width(&chunk) <= layout.opts.max_width {
+    let width = layout.width(&chunk);
+    if width <= layout.opts.max_width {
         return vec![chunk];
     }
-    match split_at_commas(layout, &chunk) {
-        // every part is strictly shorter than the chunk it came from, so this
-        // bottoms out
-        Some(parts) => parts.into_iter().flat_map(|p| wrap(layout, p)).collect(),
-        None => vec![chunk],
+    let Some(parts) = split_at_commas(layout, &chunk) else {
+        return vec![chunk];
+    };
+    // every part is strictly shorter than the chunk it came from, so this
+    // bottoms out
+    let split: Vec<Chunk> = parts.into_iter().flat_map(|p| wrap(layout, p)).collect();
+    // measured after the recursion: an element that is still too wide may have
+    // been broken up in turn, and it is the final shape that has to be worth it
+    let widest = split.iter().map(|p| layout.width(p)).max().unwrap_or(0);
+    let (num, den) = WORTH_SPLITTING;
+    if widest * den <= width * num {
+        split
+    } else {
+        vec![chunk]
     }
 }
 
@@ -235,6 +269,25 @@ mod tests {
         );
     }
 
+    /// The length here is *after* the bracket, so breaking the bracket only
+    /// moves it: four lines, and the longest still 81% of what it replaced.
+    /// An over-wide line the author wrote reads better than that.
+    #[test]
+    fn a_split_that_barely_helps_is_declined() {
+        let src = "_ = f(a, b) + cccccccccccccccccccccccccccccccccccccccc\n";
+        assert_eq!(fmt_at(20, src), src);
+    }
+
+    /// ...but the same shape is split when the bracket really is where the
+    /// width is.
+    #[test]
+    fn a_split_that_pays_for_itself_is_kept() {
+        assert_eq!(
+            fmt_at(20, "_ = f(aaaaaaaa, bbbbbbbb) + c\n"),
+            "_ = f(\n    aaaaaaaa,\n    bbbbbbbb\n) + c\n"
+        );
+    }
+
     #[test]
     fn breaking_is_idempotent() {
         for src in [
@@ -242,6 +295,7 @@ mod tests {
             "_ = f(a, g(bbbb, cccc), d)\n",
             "f = (x) ->\n    result = compute(alpha, beta, gamma)\n",
             "_ = f(alpha, beta) and \\\n    gamma\n",
+            "_ = f(a, b) + cccccccccccccccccccccccccccccccccccccccc\n",
         ] {
             let once = fmt_at(20, src);
             assert_eq!(fmt_at(20, &once), once, "not idempotent for {src:?}");

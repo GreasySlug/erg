@@ -89,8 +89,20 @@ impl std::fmt::Display for Unformatted {
     }
 }
 
+/// How the formatter reads a source: comments and all.
 fn lex(src: &str) -> Option<TokenStream> {
     Lexer::from_str(src.to_string()).keep_comments().lex().ok()
+}
+
+/// How the *compiler* reads it: comments dropped before anything else sees
+/// them.
+///
+/// The two readings do not accept the same sources. A space after a `#[ ]#` is
+/// unremarkable when the comment is a token and rejected outright when it is
+/// not (design §2.8), so a result that satisfies [`lex`] can still be a file
+/// `erg` refuses to compile.
+fn lex_as_compiler(src: &str) -> Option<TokenStream> {
+    Lexer::from_str(src.to_string()).lex().ok()
 }
 
 /// Formats `src`, or returns it unchanged if that cannot be done safely.
@@ -122,8 +134,16 @@ pub fn try_format_str(src: &str, opts: FmtOptions) -> Result<String, Unformatted
     let before = lex(src).ok_or(Unformatted::InputDoesNotLex)?;
     let formatted = render::render(src, &before, opts);
     let after = lex(&formatted).ok_or(Unformatted::OutputDoesNotLex)?;
-    match compare(&before, &after) {
-        Ok(()) => Ok(formatted),
-        Err(mismatch) => Err(Unformatted::TokensChanged(mismatch.to_string())),
+    let mismatch = |m: Mismatch| Unformatted::TokensChanged(m.to_string());
+    compare(&before, &after).map_err(mismatch)?;
+    // The comparison above was run on the formatter's reading of both sources.
+    // Checking it alone would leave the formatter free to emit anything the
+    // compiler's reading rejects, which is the whole point of the check: what
+    // has to keep working is `erg`, not `erg fmt`. A source the compiler
+    // cannot read either way is nothing this can say more about.
+    if let Some(before) = lex_as_compiler(src) {
+        let after = lex_as_compiler(&formatted).ok_or(Unformatted::OutputDoesNotLex)?;
+        compare(&before, &after).map_err(mismatch)?;
     }
+    Ok(formatted)
 }

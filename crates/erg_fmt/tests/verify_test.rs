@@ -238,3 +238,42 @@ fn token_streams_equivalent_agrees_with_compare() {
         &lex("_ = 1 +2\n")
     ));
 }
+
+/// The formatter lexes with `keep_comments`; the compiler does not, and the
+/// two do not accept the same sources -- a space after a `#[ ]#` is a token
+/// gap to one and an illegal character to the other. Verifying only the
+/// formatter's reading would let it emit files `erg` cannot compile, so the
+/// output has to satisfy both.
+#[test]
+fn the_output_lexes_the_way_the_compiler_reads_it() {
+    for src in [
+        "print! #[]#0, 1#[]#, 2,#[]#3\n",
+        "#[a]#x #[b]#=#[c]#1#[d]#\n",
+        "#[]#print! 0\n",
+        "x = 1#[]#+ 2\n",
+        "f = (x) ->\n    #[c]#x\n",
+    ] {
+        let formatted = format_str(src, FmtOptions::default());
+        assert!(
+            Lexer::from_str(formatted.clone()).lex().is_ok(),
+            "the compiler cannot lex what formatting {src:?} produced:\n{formatted}"
+        );
+    }
+}
+
+/// A source the compiler cannot read *either* way is still formatted. The
+/// second check has nothing to compare against, and refusing here would take
+/// format-on-save away from exactly the files that need it -- this one comes
+/// back repaired, since the spacing rules no longer produce what broke it.
+#[test]
+fn a_source_only_the_formatter_can_lex_is_still_formatted() {
+    let src = "print! #[]# 0\n";
+    assert!(
+        Lexer::from_str(src.to_string()).lex().is_err(),
+        "the premise: the compiler rejects this source"
+    );
+    assert_eq!(
+        try_format_str(src, FmtOptions::default()),
+        Ok("print! #[]#0\n".to_string())
+    );
+}

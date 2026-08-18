@@ -140,15 +140,8 @@ impl<'a> Layout<'a> {
         for (nth, &index) in chunk.tokens.iter().enumerate() {
             if nth > 0 {
                 let prev = chunk.tokens[nth - 1];
-                if nth == 1 && self.tok(prev).kind == TokenKind::Comment {
-                    // `#[]#print! 0` lexes; `#[]# print! 0` does not. A line
-                    // that opens with a block comment is still in the lexer's
-                    // indentation scan when the comment ends, and a space there
-                    // is rejected outright -- so leave none.
-                } else {
-                    let gap = self.spans.gap(self.src, prev, index);
-                    out.push_str(space_between(self.tok(prev), self.tok(index)).resolve(gap));
-                }
+                let gap = self.spans.gap(self.src, prev, index);
+                out.push_str(space_between(self.tok(prev), self.tok(index)).resolve(gap));
             }
             out.push_str(self.tok(index).raw_text());
         }

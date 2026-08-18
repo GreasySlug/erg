@@ -164,6 +164,11 @@ pub fn space_between(prev: &Token, next: &Token) -> Space {
     use TokenKind::*;
     let (p, n) = (prev.kind, next.kind);
     match () {
+        // The compiler's lexer drops a `#[ ]#` and then rejects the space
+        // where it stood (design §2.8), so nothing may leave one there. This
+        // outranks every rule below, the fixity one included: a space here is
+        // not a different program, it is not a program at all.
+        _ if p == Comment => Space::None,
         // a trailing comment keeps the gap that may be aligning it
         _ if n == Comment => Space::Padding,
         // Nothing may take the space on an infix `+ - * **`'s right while
@@ -401,5 +406,16 @@ mod tests {
         assert_eq!(respace("_ = ref x\n"), "_ = ref x");
         assert_eq!(respace("_ = a as Int\n"), "_ = a as Int");
         assert_eq!(respace("_ = x in [1]\n"), "_ = x in [1]");
+    }
+    /// A `#[ ]#` may not be followed by a space. The compiler's lexer drops
+    /// the comment and rejects the space where it stood, so this is not a
+    /// question of style: the alternative does not compile.
+    #[test]
+    fn a_block_comment_is_never_followed_by_a_space() {
+        assert_eq!(respace("print! #[]#0"), "print! #[]#0");
+        assert_eq!(respace("print! #[]# 0"), "print! #[]#0");
+        assert_eq!(respace("x = #[c]#1"), "x = #[c]#1");
+        // and the space before one is still free to align it
+        assert_eq!(respace("x = 1#[c]#"), "x = 1 #[c]#");
     }
 }

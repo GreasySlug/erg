@@ -36,6 +36,11 @@ impl Sandbox {
     fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.root.join(rel)).unwrap()
     }
+
+    /// A file `read_to_string` will refuse.
+    fn write_invalid_utf8(&self, rel: &str) {
+        std::fs::write(self.root.join(rel), [0xff, 0xfe, 0x00]).unwrap();
+    }
 }
 
 impl Drop for Sandbox {
@@ -184,4 +189,43 @@ fn max_width_drives_wrapping() {
 fn eval_formats_a_string() {
     let mut formatter = Formatter::new(ErgConfig::default());
     assert_eq!(formatter.eval(UNFORMATTED.to_string()).unwrap(), FORMATTED);
+}
+
+/// A file the walk cannot read is reported and skipped. Ending the walk there
+/// would leave everything after it unformatted, which is a worse outcome than
+/// the one file that failed -- and no rerun of `erg fmt` fixes an I/O error.
+#[test]
+fn an_unreadable_file_does_not_strand_the_rest_of_the_tree() {
+    let sandbox = Sandbox::new("unreadable");
+    sandbox.write("a.er", UNFORMATTED);
+    sandbox.write_invalid_utf8("b.er");
+    sandbox.write("c.er", UNFORMATTED);
+    assert_eq!(run(&sandbox.root, FmtConfig::default()), 0);
+    assert_eq!(sandbox.read("a.er"), FORMATTED);
+    assert_eq!(sandbox.read("c.er"), FORMATTED, "sorted after the bad one");
+}
+
+/// Naming the file directly is the other case: there the failure is the whole
+/// answer, so it is an error rather than a line on stderr.
+#[test]
+fn an_unreadable_file_named_directly_is_an_error() {
+    let sandbox = Sandbox::new("unreadable_named");
+    sandbox.write_invalid_utf8("a.er");
+    assert_ne!(run(&sandbox.root.join("a.er"), FmtConfig::default()), 0);
+}
+
+/// A symlink to an ancestor is a cycle: following it walks forever, formatting
+/// the same files under ever longer paths.
+#[cfg(unix)]
+#[test]
+fn a_symlink_cycle_does_not_hang_the_walk() {
+    let sandbox = Sandbox::new("symlink_cycle");
+    sandbox.write("d/a.er", UNFORMATTED);
+    std::os::unix::fs::symlink("../", sandbox.root.join("d/up")).unwrap();
+    assert_eq!(run(&sandbox.root, FmtConfig::default()), 0);
+    assert_eq!(
+        sandbox.read("d/a.er"),
+        FORMATTED,
+        "reached by its real path"
+    );
 }

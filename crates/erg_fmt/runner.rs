@@ -71,11 +71,13 @@ impl Runnable for Formatter {
         match self.cfg.input.kind() {
             InputKind::File { path, .. } if path.is_dir() => {
                 let path = path.clone();
-                self.format_tree(&path, opts)
+                Ok(self.format_tree(&path, opts))
             }
             InputKind::File { path, .. } => {
                 let path = path.clone();
-                let changed = self.format_file(&path, opts)?;
+                let changed = self
+                    .format_file(&path, opts)
+                    .map_err(|e| self.io_error(&path, &e))?;
                 Ok(self.status(usize::from(changed)))
             }
             // a pipe or `-c` has nowhere to be written back to
@@ -134,8 +136,8 @@ impl Formatter {
     }
 
     /// Formats one file. Returns whether its contents would change.
-    fn format_file(&mut self, path: &Path, opts: FmtOptions) -> Result<bool, ParserRunnerErrors> {
-        let src = std::fs::read_to_string(path).map_err(|e| self.io_error(path, &e))?;
+    fn format_file(&mut self, path: &Path, opts: FmtOptions) -> std::io::Result<bool> {
+        let src = std::fs::read_to_string(path)?;
         let formatted = self.format_source(&src, &Input::file(path.to_path_buf()), opts);
         let changed = formatted != src;
         if self.cfg.fmt.stdout {
@@ -146,22 +148,27 @@ impl Formatter {
                 let _ = writeln!(stdout, "{}", path.display());
             }
         } else if changed {
-            std::fs::write(path, &formatted).map_err(|e| self.io_error(path, &e))?;
+            std::fs::write(path, &formatted)?;
         }
         Ok(changed)
     }
 
     /// Formats every `.er` under a directory, in a stable order.
-    fn format_tree(
-        &mut self,
-        root: &Path,
-        opts: FmtOptions,
-    ) -> Result<ExitStatus, ParserRunnerErrors> {
+    ///
+    /// A file that cannot be read or written is reported and skipped rather
+    /// than ending the walk. Stopping would leave the tree half-formatted,
+    /// which is worse than the one file that failed -- and an I/O error is not
+    /// something running `erg fmt` again will fix. A file named on the command
+    /// line is different: there the failure *is* the answer, so it is an error.
+    fn format_tree(&mut self, root: &Path, opts: FmtOptions) -> ExitStatus {
         let mut changed = 0;
         for path in self.collect(root) {
-            changed += usize::from(self.format_file(&path, opts)?);
+            match self.format_file(&path, opts) {
+                Ok(did) => changed += usize::from(did),
+                Err(err) => eprintln!("{}: skipped: {err}", path.display()),
+            }
         }
-        Ok(self.status(changed))
+        self.status(changed)
     }
 
     /// Every `.er` file under `root`, sorted, minus the excluded ones.
@@ -169,6 +176,12 @@ impl Formatter {
     /// Sorted because the output of `--check` is read by people and compared by
     /// CI, and directory order is neither stable across platforms nor
     /// meaningful to either.
+    ///
+    /// Symlinks are not followed. One pointing at an ancestor is a cycle, and
+    /// following it walks forever, reformatting the same files under longer and
+    /// longer paths. Nothing is missed by declining: a symlinked file inside the
+    /// tree is reached through its real path, and one pointing outside is not
+    /// this tree's to rewrite.
     fn collect(&self, root: &Path) -> Vec<PathBuf> {
         let mut found = Vec::new();
         let mut stack = vec![root.to_path_buf()];
@@ -178,7 +191,7 @@ impl Formatter {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if self.is_excluded(&path) {
+                if self.is_excluded(&path) || entry.file_type().is_ok_and(|ty| ty.is_symlink()) {
                     continue;
                 }
                 if path.is_dir() {

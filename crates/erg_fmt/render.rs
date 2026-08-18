@@ -196,15 +196,20 @@ pub(crate) fn is_closing(kind: TokenKind) -> bool {
 pub fn render(src: &str, tokens: &TokenStream, opts: FmtOptions) -> String {
     let normalized = normalize_newline(src);
     let lines = SourceLines::new(&normalized);
-    let directives = Directives::scan(tokens);
     let layout = Layout::new(&normalized, tokens, opts);
+    let directives = Directives::scan(tokens, &layout.spans);
 
     let mut out = String::new();
     for (nth, item) in split(tokens, &layout.spans).iter().enumerate() {
-        // blank lines are the formatter's to normalize, except at the top of
-        // the file where they simply go
+        // Blank lines are the formatter's to normalize, except at the top of
+        // the file where they simply go -- and except inside an `off` region,
+        // where they are the author's like everything else. Asked on the line
+        // before this item, which is where the run of blanks ends: the
+        // `# fmt: off` line itself is not preceded by its own region.
         let blanks = if nth == 0 {
             0
+        } else if directives.is_off(item.lines.start().saturating_sub(1)) {
+            item.blank_lines_before
         } else {
             item.blank_lines_before.min(opts.max_blank_lines)
         };
@@ -432,6 +437,19 @@ mod tests {
         );
     }
 
+    /// Blank lines inside an `off` region are the author's like everything
+    /// else there. Capping them was the one thing the region did not protect.
+    #[test]
+    fn blank_lines_inside_fmt_off_are_kept() {
+        let src = "# fmt: off\nx  =  1\n\n\n\n\ny  =  2\n# fmt: on\n";
+        assert_eq!(fmt(src), src);
+        // and outside it they are still capped
+        assert_eq!(
+            fmt("# fmt: off\nx  =  1\n# fmt: on\n\n\n\n\ny = 2\n"),
+            "# fmt: off\nx  =  1\n# fmt: on\n\n\ny = 2\n"
+        );
+    }
+
     #[test]
     fn a_leading_fmt_off_suppresses_the_file() {
         let src = "# fmt: off\nf = (x) ->\n      x\n";
@@ -457,6 +475,7 @@ mod tests {
             "_ = f(\n    1,\n    2\n)\n",
             "_ = f(a, [\n  1,\n], b)\n",
             "# fmt: off\n  x = 1\n# fmt: on\n  y = 2\n",
+            "# fmt: off\nx  =  1\n\n\n\n\ny  =  2\n# fmt: on\n",
             "s = \"\"\"\n  a\n  \"\"\"\n",
             "c = a and \\\n        b \\\n    and c\n",
         ] {

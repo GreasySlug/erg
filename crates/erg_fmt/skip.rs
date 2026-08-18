@@ -14,7 +14,9 @@
 use std::ops::RangeInclusive;
 
 use erg_common::traits::DequeStream;
-use erg_parser::token::{TokenKind, TokenStream};
+use erg_parser::token::{Token, TokenKind, TokenStream};
+
+use crate::spans::{end_lineno, Spans};
 
 /// Recognised spellings. Matched exactly, after trailing whitespace is dropped.
 const OFF: &str = "# fmt: off";
@@ -53,7 +55,11 @@ fn directive_of(comment: &str) -> Option<Directive> {
 fn is_layout(kind: TokenKind) -> bool {
     matches!(
         kind,
-        TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::EOF
+        TokenKind::Newline
+            | TokenKind::Indent
+            | TokenKind::Dedent
+            | TokenKind::BOF
+            | TokenKind::EOF
     )
 }
 
@@ -71,40 +77,53 @@ impl Directives {
     ///
     /// Without that flag there are no comment tokens and this finds nothing --
     /// which is correct, just useless.
-    pub fn scan(tokens: &TokenStream) -> Self {
+    ///
+    /// Lines come from [`Spans`] rather than `Token::lineno`. A token can be
+    /// several lines tall, and `lineno` is where it starts: a `# fmt: skip`
+    /// after a `"""` literal trails code that *began* three lines earlier, and
+    /// matching on the start line silently failed to see it. A directive that
+    /// looks like it is working and is not is the one outcome this module
+    /// exists to avoid.
+    pub fn scan(tokens: &TokenStream, spans: &Spans) -> Self {
         let mut found = Self::default();
         let mut off_since: Option<u32> = None;
-        // the last line on which a non-layout token appeared, to tell a
-        // trailing comment from one that has a line to itself
+        // the last line on which a non-layout token *ended*, to tell a trailing
+        // comment from one that has a line to itself
         let mut code_on_line: Option<u32> = None;
+        let line_of = |index: usize, tok: &Token| -> (u32, u32) {
+            spans
+                .line_span(index)
+                .unwrap_or((tok.lineno, end_lineno(tok)))
+        };
 
-        for tok in tokens.iter() {
+        for (index, tok) in tokens.iter().enumerate() {
             if tok.kind != TokenKind::Comment {
                 if !is_layout(tok.kind) {
-                    code_on_line = Some(tok.lineno);
+                    code_on_line = Some(line_of(index, tok).1);
                 }
                 continue;
             }
+            let (starts, ends) = line_of(index, tok);
             match directive_of(&tok.content) {
                 // `off` while already off changes nothing: the first one wins,
                 // so the region still ends at the next `on`
-                Some(Directive::Off) => off_since = off_since.or(Some(tok.lineno)),
+                Some(Directive::Off) => off_since = off_since.or(Some(starts)),
                 Some(Directive::On) => {
                     // the directive lines themselves are part of the region
                     if let Some(start) = off_since.take() {
-                        found.off.push(start..=tok.lineno);
+                        found.off.push(start..=ends);
                     }
                     // an `on` with no `off` is a no-op rather than an error;
                     // the formatter is not a linter
                 }
                 // only meaningful after code -- on a line of its own there is
                 // nothing for it to suppress
-                Some(Directive::Skip) if code_on_line == Some(tok.lineno) => {
-                    found.skip.push(tok.lineno)
-                }
+                Some(Directive::Skip) if code_on_line == Some(starts) => found.skip.push(starts),
                 Some(Directive::Skip) => {}
                 None => {}
             }
+            // a comment is code as far as the next one is concerned
+            code_on_line = Some(ends);
         }
         // an unterminated `off` runs to the end of the file, so a single one at
         // the top means "never format this file"
@@ -152,7 +171,8 @@ mod tests {
             .keep_comments()
             .lex()
             .unwrap_or_else(|(_, errs)| panic!("lexing failed:\n{errs}"));
-        Directives::scan(&tokens)
+        let spans = Spans::new(src, &tokens);
+        Directives::scan(&tokens, &spans)
     }
 
     #[test]
@@ -272,5 +292,16 @@ mod tests {
     #[test]
     fn a_directive_inside_a_string_is_not_a_directive() {
         assert!(scan("_ = \"# fmt: off\"\nx = 1\n").is_empty());
+    }
+    /// The code a trailing `# fmt: skip` follows may have *started* several
+    /// lines earlier. Matching on where it started rather than where it ended
+    /// left the directive silently doing nothing.
+    #[test]
+    fn a_skip_after_a_multi_line_literal_is_seen() {
+        let d = scan("s = \"\"\"\na\n\"\"\" # fmt: skip\n");
+        assert!(d.has_skip(1..=3));
+        // ...and one on a line of its own still suppresses nothing
+        let d = scan("s = 1\n# fmt: skip\n");
+        assert!(!d.has_skip(1..=2));
     }
 }

@@ -25,7 +25,10 @@ use crate::util::NormalizedUrl;
 /// away, leaving the user with a format command that silently does nothing.
 fn options_for(cfg: &FmtConfig, editor: &FormattingOptions) -> FmtOptions {
     FmtOptions {
-        indent: editor.tab_size as usize,
+        // `.max(1)` because a client may send 0 and an indent of 0 flattens
+        // every block, which the verification refuses -- turning a misreported
+        // editor setting into a format command that silently does nothing.
+        indent: (editor.tab_size as usize).max(1),
         ..FmtOptions::from(cfg)
     }
 }
@@ -95,6 +98,15 @@ mod tests {
         };
         let opts = options_for(&FmtConfig::default(), &editor);
         assert_eq!(opts.indent, 2);
+        let zero = FormattingOptions {
+            tab_size: 0,
+            ..FormattingOptions::default()
+        };
+        assert_eq!(
+            options_for(&FmtConfig::default(), &zero).indent,
+            1,
+            "an indent of 0 would flatten every block"
+        );
         assert_eq!(
             opts.max_width,
             FmtConfig::default().max_width,

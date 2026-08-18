@@ -416,13 +416,13 @@ impl ErgConfig {
                     cfg.fmt.stdout = true;
                 }
                 "--indent" => {
-                    cfg.fmt.indent = parse_usize(args.next(), "--indent");
+                    cfg.fmt.indent = parse_usize(args.next(), "--indent", 1);
                 }
                 "--max-blank-lines" => {
-                    cfg.fmt.max_blank_lines = parse_usize(args.next(), "--max-blank-lines");
+                    cfg.fmt.max_blank_lines = parse_usize(args.next(), "--max-blank-lines", 0);
                 }
                 "--max-width" => {
-                    cfg.fmt.max_width = parse_usize(args.next(), "--max-width");
+                    cfg.fmt.max_width = parse_usize(args.next(), "--max-width", 1);
                 }
                 "--exclude" => {
                     let pattern = args
@@ -656,8 +656,29 @@ USAGE:
     }
 }
 
-fn parse_usize(arg: Option<String>, name: &str) -> usize {
-    arg.unwrap_or_else(|| panic!("the value of `{name}` is not passed"))
-        .parse()
-        .unwrap_or_else(|_| panic!("the value of `{name}` is not a number"))
+/// Parses the `usize` value of an option, rejecting anything below `min`.
+///
+/// Exits the way an unknown option does. A mistyped flag is a user error, and
+/// a Rust panic with a backtrace note is not how to report one.
+///
+/// The minimum is there for `--indent 0`, which flattens every block. The
+/// formatter's verification then refuses the result, so the user was told
+/// "formatting would change the program" -- the message that means the
+/// formatter has a bug -- rather than that the flag makes no sense.
+fn parse_usize(arg: Option<String>, name: &str, min: usize) -> usize {
+    let Some(value) = arg else {
+        eprintln!("the value of `{name}` is not passed");
+        process::exit(2);
+    };
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed >= min => parsed,
+        Ok(_) => {
+            eprintln!("the value of `{name}` must be at least {min}");
+            process::exit(2);
+        }
+        Err(_) => {
+            eprintln!("the value of `{name}` must be a number, got `{value}`");
+            process::exit(2);
+        }
+    }
 }

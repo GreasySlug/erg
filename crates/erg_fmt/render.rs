@@ -32,6 +32,12 @@ pub struct Chunk {
     pub level: usize,
     /// Token indices, in source order.
     pub tokens: Vec<usize>,
+    /// Whether the line ends in a `\` continuation.
+    ///
+    /// Inside brackets a break is free -- the lexer swallows the newline.
+    /// Outside them the newline is a `Newline` token, and the only way to
+    /// break a line without adding one is the way the author did it.
+    pub continued: bool,
 }
 
 /// Everything the line-level stages need to look at.
@@ -72,6 +78,12 @@ impl<'a> Layout<'a> {
     /// jumps in the tokens' line numbers. A continuation line is indented by
     /// how many brackets are open at its start, which puts a closing bracket
     /// back level with the line that opened it.
+    ///
+    /// A break with no bracket open is a `\` continuation -- the lexer offers
+    /// no other way to reach the next line inside one item -- and has to go
+    /// back out as one. It indents by a level all the same: there is no nesting
+    /// to take it there, but a continuation that starts in column zero reads as
+    /// a new statement.
     pub fn chunks(&self, item: &Item) -> Vec<Chunk> {
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut open_brackets = 0usize;
@@ -90,11 +102,19 @@ impl<'a> Layout<'a> {
             if broken_here || prev_ends.is_none() {
                 let level = match prev_ends {
                     None => item.depth,
-                    Some(_) => item.depth + open_brackets - usize::from(is_closing(tok.kind)),
+                    Some(_) => {
+                        item.depth + open_brackets.max(1) - usize::from(is_closing(tok.kind))
+                    }
                 };
+                if broken_here && open_brackets == 0 {
+                    if let Some(previous) = chunks.last_mut() {
+                        previous.continued = true;
+                    }
+                }
                 chunks.push(Chunk {
                     level,
                     tokens: Vec::new(),
+                    continued: false,
                 });
             }
             if let Some(chunk) = chunks.last_mut() {
@@ -131,6 +151,9 @@ impl<'a> Layout<'a> {
                 }
             }
             out.push_str(self.tok(index).raw_text());
+        }
+        if chunk.continued {
+            out.push_str(" \\");
         }
         out
     }
@@ -360,6 +383,35 @@ mod tests {
         );
     }
 
+    /// A `\` is how a line continues where no bracket is open, and the lexer
+    /// swallows the newline only because it is there. Dropping it would leave
+    /// a `Newline` token behind -- a different program, and a file that comes
+    /// back unformatted.
+    #[test]
+    fn a_backslash_continuation_is_kept() {
+        assert_eq!(fmt("c = a and \\\n    b\n"), "c = a and \\\n    b\n");
+    }
+
+    /// One level in, wherever the author had it. There is no bracket nesting
+    /// to take it there, but a continuation left in column zero reads as a new
+    /// statement.
+    #[test]
+    fn a_continuation_is_indented_one_level() {
+        assert_eq!(fmt("c = a and \\\nb\n"), "c = a and \\\n    b\n");
+        assert_eq!(fmt("c = a and \\\n        b\n"), "c = a and \\\n    b\n");
+        // one level, not one per continuation
+        assert_eq!(
+            fmt("c = a \\\n    and b \\\n        and c\n"),
+            "c = a \\\n    and b \\\n    and c\n"
+        );
+    }
+
+    #[test]
+    fn a_continuation_indents_from_its_own_block() {
+        let src = "f = (x) ->\n    y = x and \\\n        x\n    y\n";
+        assert_eq!(fmt(src), src);
+    }
+
     /// Only ever split, never join: a break the author put inside brackets
     /// stays, even when the line would fit without it.
     #[test]
@@ -413,6 +465,7 @@ mod tests {
             "_ = f(a, [\n  1,\n], b)\n",
             "# fmt: off\n  x = 1\n# fmt: on\n  y = 2\n",
             "s = \"\"\"\n  a\n  \"\"\"\n",
+            "c = a and \\\n        b \\\n    and c\n",
         ] {
             let once = fmt(src);
             assert_eq!(fmt(&once), once, "not idempotent for {src:?}");

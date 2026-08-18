@@ -60,6 +60,7 @@ fn split_at_commas(layout: &Layout, chunk: &Chunk) -> Option<Vec<Chunk>> {
     let mut parts = vec![Chunk {
         level: chunk.level,
         tokens: chunk.tokens[..=open].to_vec(),
+        continued: false,
     }];
     let mut from = 0;
     for cut in cuts.into_iter().chain([inner.len()]) {
@@ -67,13 +68,17 @@ fn split_at_commas(layout: &Layout, chunk: &Chunk) -> Option<Vec<Chunk>> {
             parts.push(Chunk {
                 level: chunk.level + 1,
                 tokens: inner[from..cut].to_vec(),
+                continued: false,
             });
         }
         from = cut;
     }
+    // every cut here is inside a bracket, where a break needs no `\`; only the
+    // tail still ends where the chunk did, so only it keeps the continuation
     parts.push(Chunk {
         level: chunk.level,
         tokens: chunk.tokens[close..].to_vec(),
+        continued: chunk.continued,
     });
     Some(parts)
 }
@@ -218,12 +223,25 @@ mod tests {
         assert_eq!(fmt_at(20, src), src);
     }
 
+    /// A chunk that ends in a `\` continuation may still be too wide. The
+    /// backslash belongs to the last part, which is the one that still ends
+    /// where the chunk did; the cuts before it are inside a bracket and need
+    /// none.
+    #[test]
+    fn a_split_continuation_keeps_its_backslash() {
+        assert_eq!(
+            fmt_at(20, "_ = f(alpha, beta) and \\\n    gamma\n"),
+            "_ = f(\n    alpha,\n    beta\n) and \\\n    gamma\n"
+        );
+    }
+
     #[test]
     fn breaking_is_idempotent() {
         for src in [
             "result = compute(alpha, beta, gamma)\n",
             "_ = f(a, g(bbbb, cccc), d)\n",
             "f = (x) ->\n    result = compute(alpha, beta, gamma)\n",
+            "_ = f(alpha, beta) and \\\n    gamma\n",
         ] {
             let once = fmt_at(20, src);
             assert_eq!(fmt_at(20, &once), once, "not idempotent for {src:?}");

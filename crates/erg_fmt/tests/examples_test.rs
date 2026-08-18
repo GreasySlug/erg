@@ -77,6 +77,14 @@ fn every_passing_test_case_survives_formatting() {
     assert_never_breaks("tests/should_ok");
 }
 
+/// The shipped standard library, which is the largest body of Erg in the tree
+/// and the least like the examples: declaration files, dense signatures, and
+/// the only place `\` continuations appear in quantity.
+#[test]
+fn every_standard_library_file_survives_formatting() {
+    assert_never_breaks("crates/erg_compiler/lib");
+}
+
 /// Sources that are *meant* to be broken. The formatter still must not blow up
 /// on them -- editors format files that are mid-edit and full of errors.
 #[test]

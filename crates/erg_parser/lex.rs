@@ -1025,6 +1025,13 @@ impl Lexer /*<'a>*/ {
                             '{' => {
                                 s.push_str("\\{");
                                 self.interpol_stack.push(Interpolation::SingleLine);
+                                // `\{` opens an enclosure that `}` closes, and
+                                // `}` is counted below whichever it turns out
+                                // to be; without this the interpolation would
+                                // leave the count one short and newlines would
+                                // stop being swallowed by the brackets around
+                                // the string
+                                self.enclosure_level += 1;
                                 let raw = self.raw_since_token_start();
                                 let token =
                                     self.emit_singleline_token(StrInterpLeft, &s).with_raw(raw);
@@ -1116,6 +1123,7 @@ impl Lexer /*<'a>*/ {
                             '{' => {
                                 s.push_str("\\{");
                                 self.interpol_stack.push(Interpolation::MultiLine(quote));
+                                self.enclosure_level += 1;
                                 let raw = self.raw_since_token_start();
                                 let token = self.emit_raw_multiline_token(
                                     StrInterpLeft,
@@ -1258,6 +1266,10 @@ impl Lexer /*<'a>*/ {
                         match next_c {
                             '{' => {
                                 s.push_str("\\{");
+                                // this fragment closed one interpolation and
+                                // opened the next, so it takes back the count
+                                // the `}` gave up
+                                self.enclosure_level += 1;
                                 let raw = self.raw_since_token_start();
                                 let token =
                                     self.emit_singleline_token(StrInterpMid, &s).with_raw(raw);

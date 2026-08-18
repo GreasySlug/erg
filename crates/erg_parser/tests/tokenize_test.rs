@@ -1,6 +1,7 @@
 use std::iter::Iterator;
 
 use erg_common::io::Input;
+use erg_common::traits::DequeStream;
 
 // use erg_compiler::parser;
 
@@ -459,4 +460,53 @@ fn tesop_te_prec() {
     assert_eq!(Mod.precedence(), Some(170));
     assert_eq!(LParen.precedence(), Some(0));
     assert_eq!(Illegal.precedence(), None);
+}
+
+/// `\{` opens an enclosure and its `}` closes one, but only the `}` was ever
+/// counted. Each interpolation therefore discounted a bracket, and a newline
+/// inside the brackets around an interpolated string stopped being swallowed:
+/// `f(g("\{x}"),` + newline + `y)` came out with a `Newline` in the middle of
+/// the argument list and no longer parsed.
+#[test]
+fn an_interpolation_does_not_discount_the_brackets_around_it() {
+    fn kinds(src: &str) -> Vec<TokenKind> {
+        Lexer::from_str(src.to_string())
+            .lex()
+            .unwrap()
+            .iter()
+            .map(|tok| tok.kind)
+            .collect()
+    }
+    assert_eq!(
+        kinds("g = f(p(\"a\\{x}b\"),\n    y)\n"),
+        vec![
+            Symbol,
+            Assign,
+            Symbol,
+            LParen,
+            Symbol,
+            LParen,
+            StrInterpLeft,
+            Symbol,
+            StrInterpRight,
+            RParen,
+            Comma,
+            Symbol,
+            RParen,
+            Newline,
+            EOF,
+        ],
+        "the break is inside `f(`, so it is swallowed like any other"
+    );
+    // the same count is what puts a newline *inside* `\{ }` out of reach of
+    // the indentation machinery
+    assert_eq!(
+        kinds("s = \"\"\"a\\{\n    x\n}b\"\"\"\n"),
+        kinds("s = \"\"\"a\\{x}b\"\"\"\n"),
+    );
+    // and it still balances when the interpolation has several fragments
+    assert_eq!(
+        kinds("g = f(p(\"a\\{x}b\\{y}c\"),\n    z)\n"),
+        kinds("g = f(p(\"a\\{x}b\\{y}c\"), z)\n"),
+    );
 }

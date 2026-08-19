@@ -17,9 +17,7 @@ OPTIONS
     --version/-V                         バージョンを表示
     --verbose 0|1|2                      冗長性レベルを指定
     --opt-level/-o 0|1|2|3               最適化レベルを指定
-    --python-version/-p (uint 32 number) Pythonバージョンを指定
     --py-server-timeout (uint 64 number) PythonのREPLサーバーのタイムアウト時間を指定
-    --dump-as-pyc                        .pycファイルにダンプ
     --mode (mode)                        指定モードで実行(詳細は--mode --helpを参照)
     --code/-c (string)                   文字列として渡したプログラムを実行
     --module/-m (string)                 モジュールを実行
@@ -52,9 +50,7 @@ OPTIONS
     --version/-V                         显示版本
     --verbose 0|1|2                      指定细致程度
     --opt-level/-o 0|1|2|3               指定优化级别
-    --python-version/-p (uint 32 number) Python 版本
     --py-server-timeout (uint 64 number) 指定等待 REPL 输出的秒数
-    --dump-as-pyc                        转储为 .pyc 文件
     --mode (mode)                        执行模式 (更多信息见`--mode --help`)
     --code/-c (string)                   作为字符串传入程序
     --module/-m (string)                 要执行的模块
@@ -87,9 +83,7 @@ OPTIONS
     --version/-V                         顯示版本
     --verbose 0|1|2                      指定細緻程度
     --opt-level/-o 0|1|2|3               指定優化級別
-    --python-version/-p (uint 32 number) Python 版本
     --py-server-timeout (uint 64 number) 指定等待 REPL 輸出的秒數
-    --dump-as-pyc                        轉儲為 .pyc 文件
     --mode (mode)                        執行模式 (更多信息見`--mode --help`)
     --code/-c (string)                   作為字串傳入程式
     --module/-m (string)                 要執行的模塊
@@ -122,9 +116,7 @@ OPTIONS
     --version/-V                         show version
     --verbose 0|1|2                      verbosity level
     --opt-level/-o 0|1|2|3               optimization level
-    --python-version/-p (uint 32 number) Python version
     --py-server-timeout (uint 64 number) timeout for the Python REPL server
-    --dump-as-pyc                        dump as .pyc file
     --mode (mode)                        execution mode (See `--mode --help` for details)
     --code/-c (string)                   program passed in as string
     --module/-m (string)                 module to be executed
@@ -336,10 +328,7 @@ pub const OPTIONS: &[&str] = &[
     "-c",
     "--code",
     "--check",
-    "--compile",
     "--dest",
-    "--dump-as-pyc",
-    "--language-server",
     "--no-std",
     "--help",
     "-?",
@@ -356,8 +345,6 @@ pub const OPTIONS: &[&str] = &[
     "--ping",
     "--ps1",
     "--ps2",
-    "--python-version",
-    "-p",
     "--py-server-timeout",
     "--py-command",
     "--python-command",

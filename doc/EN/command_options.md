@@ -66,21 +66,52 @@ Generate Erg declarations (`.d.er`) from Python sources and type stubs.
 
 ## options
 
+Options go *before* the file path. Anything after it is treated as an argument
+to the script.
+
 ### --build-features
 
 Display features enabled at compiler build time.
+
+### --check
+
+`erg fmt` only. Report which files would change and write none; exit 1 if any
+would. See [tools/fmt.md](./tools/fmt.md).
 
 ### -c, --code
 
 Specify code to execute.
 
-### --dump-as-pyc
+### --decls-from-py
 
-Output compile results as a `.pyc` file.
+Generate Erg declarations from annotated `.py` sources when no `.d.er` or
+`.pyi` stub is found. Requires the `pydecl` build feature.
+
+### --exclude
+
+`erg fmt` only. Skip paths containing this substring. May be given more than
+once.
 
 ### -? , -h, --help
 
 Display help.
+
+### --hex-py-magic-num, --hex-python-magic-number
+
+Specify the target Python bytecode magic number as its first two bytes, in
+hexadecimal.
+
+### --indent
+
+`erg fmt` only. Spaces per level of nesting, 1 or more. Default is 4.
+
+### --max-blank-lines
+
+`erg fmt` only. Longest run of blank lines kept. Default is 2.
+
+### --max-width
+
+`erg fmt` only. Column the formatter tries to stay within. Default is 100.
 
 ### --mode
 
@@ -94,27 +125,39 @@ Specify a module to run.
 
 Compile without Erg standard library.
 
-### -o, --opt-level
+### -o, --opt-level, --optimization-level
 
 Specify the optimization level, from 0 to 3.
 
-### --output-dir, --dest
+### --output-dir, --dest, --dist, --dest-dir, --dist-dir
 
 Specify the output directory for the compiled output.
 
-### -p, --python-version
+### --ping
 
-Specify the Python version. The version number is a 32-bit unsigned integer and should be selected from [this list](https://github.com/google/pytype/blob/main/pytype/pyc/magic.py).
+Print `pong` and exit, to check that the executable runs.
+
+### --ps1
+
+The REPL's prompt. Default is `>>> `.
+
+### --ps2
+
+The REPL's prompt for a continued line. Default is `... `.
 
 ### --py-command, --python-command
 
 Specifies the Python interpreter to use. Default is `python3` on Unix and `python` on Windows.
 
+### --py-magic-num, --python-magic-number
+
+Specify the target Python bytecode magic number, as a 32-bit unsigned integer.
+
 ### --py-server-timeout
 
 Specifies timeout for REPL execution. Default is 10 seconds.
 
-### --quiet-startup, --quiet-repl
+### -q, --quiet-startup, --quiet-repl
 
 Stop displaying processor information at REPL startup.
 
@@ -122,18 +165,41 @@ Stop displaying processor information at REPL startup.
 
 Show type information with REPL execution results.
 
+### --stdout
+
+`erg fmt` only. Write the result to standard output instead of back to the
+file.
+
 ### --target-version
 
 Specify the version of the pyc file to output. The version follows semantic versioning.
 
-### -V, --version
+### --transpile-target, --target
 
-Display the version.
+What `erg transpile` emits: `python` (`py`), `json` or `toml`.
 
-### --verbose
+### --use-local-package
+
+Add a package from a local path. Takes its name, the name to import it as, a
+version, and the path.
+
+### --use-package
+
+Add a package. Takes its name, the name to import it as, and a version.
+
+### --use-pylyzer
+
+Use the external pylyzer to generate declarations for Python modules that have
+no type information.
+
+### -v, --verbose
 
 Controls the verbosity of the compiler output, which can be from 0 to 2.
 Note that warnings cannot be turned off, even if this is set to 0.
+
+### -V, --version
+
+Display the version.
 
 ### --
 

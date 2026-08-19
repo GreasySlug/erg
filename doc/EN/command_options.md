@@ -2,33 +2,67 @@
 
 ## subcommands
 
-### lex
+Each name below is also accepted by `--mode`, and the aliases in parentheses
+are interchangeable with it.
+
+### lex (lexer)
 
 prints the result of lexical analysis.
 
-### parse
+### parse (parser)
 
 Print parsing results.
 
-### typecheck
+### desugar (desugarer)
+
+Print the AST after desugaring, with nested variables expanded and patterns
+rewritten.
+
+### typecheck (lower, tc)
 
 Print type checking results.
 
-### compile
+### check (fullcheck, checker)
+
+Run every check -- typing, side effects and ownership -- without generating
+code.
+
+### compile (comp, compiler)
 
 Execute compilation.
 
-### transpile
+### transpile (trans, transpiler)
 
 Convert to Python script.
 
-### run (exec)
+### run (exec, execute)
 
-Display the result of execution.
+Display the result of execution. This is the default, so the name may be
+omitted.
 
-### server
+### read (byteread, reader, dis)
+
+Deserialize a `.pyc` file and dump its code object.
+
+### server (language-server)
 
 Starts the language server.
+
+### lint (linter)
+
+Lint the program.
+
+### fmt (format, formatter)
+
+Reformat source code. See [tools/fmt.md](./tools/fmt.md).
+
+### pack (package)
+
+Run the package manager. See [tools/pack.md](./tools/pack.md).
+
+### pydecl (py-decl)
+
+Generate Erg declarations (`.d.er`) from Python sources and type stubs.
 
 ## options
 

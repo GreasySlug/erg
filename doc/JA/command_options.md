@@ -2,33 +2,63 @@
 
 ## サブコマンド
 
-### lex
+以下の名前はいずれも`--mode`でも指定できます。括弧内は別名で、どれを使っても同じです。
+
+### lex (lexer)
 
 字句解析結果を表示します。
 
-### parse
+### parse (parser)
 
 構文解析結果を表示します。
 
-### typecheck
+### desugar (desugarer)
+
+脱糖後のASTを表示します。ネストした変数の展開やパターンの書き換えが済んだ状態です。
+
+### typecheck (lower, tc)
 
 型検査結果を表示します。
 
-### compile
+### check (fullcheck, checker)
+
+型・副作用・所有権のすべての検査を行い、コード生成は行いません。
+
+### compile (comp, compiler)
 
 コンパイルを実行します。
 
-### transpile
+### transpile (trans, transpiler)
 
 Pythonスクリプトへ変換します。
 
-### run (exec)
+### run (exec, execute)
 
-実行結果を表示します。
+実行結果を表示します。既定のモードなので、名前を省略できます。
 
-### server
+### read (byteread, reader, dis)
+
+`.pyc`ファイルを逆シリアライズし、コードオブジェクトを表示します。
+
+### server (language-server)
 
 ランゲージサーバーを起動します。
+
+### lint (linter)
+
+プログラムをlintします。
+
+### fmt (format, formatter)
+
+ソースコードを整形します。[tools/fmt.md](./tools/fmt.md)を参照してください。
+
+### pack (package)
+
+パッケージマネージャを起動します。[tools/pack.md](./tools/pack.md)を参照してください。
+
+### pydecl (py-decl)
+
+Pythonのソースや型スタブからErgの宣言(`.d.er`)を生成します。
 
 ## オプション
 

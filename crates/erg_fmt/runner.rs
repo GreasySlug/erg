@@ -32,6 +32,12 @@ impl From<&FmtConfig> for FmtOptions {
     }
 }
 
+/// Whether a directory's own name marks it as not part of the source tree.
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+}
+
 /// The `erg fmt` runner.
 #[derive(Debug, Default)]
 pub struct Formatter {
@@ -182,6 +188,12 @@ impl Formatter {
     /// longer paths. Nothing is missed by declining: a symlinked file inside the
     /// tree is reached through its real path, and one pointing outside is not
     /// this tree's to rewrite.
+    ///
+    /// Dot-directories are skipped, as `.git`, `.venv` and a git worktree under
+    /// `.claude` all hold Erg that is either not the author's to reformat or a
+    /// second copy of a file already reached where it really lives. The root
+    /// itself is always walked, so `erg fmt .config` still does what it says --
+    /// naming a path is how you ask for one of these.
     fn collect(&self, root: &Path) -> Vec<PathBuf> {
         let mut found = Vec::new();
         let mut stack = vec![root.to_path_buf()];
@@ -195,7 +207,9 @@ impl Formatter {
                     continue;
                 }
                 if path.is_dir() {
-                    stack.push(path);
+                    if !is_hidden(&path) {
+                        stack.push(path);
+                    }
                 } else if path.extension().is_some_and(|ext| ext == "er") {
                     found.push(path);
                 }

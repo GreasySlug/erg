@@ -67,6 +67,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: rustup update stable
       - run: cargo build --all --all-targets --verbose
+      # Here rather than in `lint` because the binary it needs has just been
+      # built: clippy produces no linked binary, so a job of its own would pay
+      # for a second full build. Running it on every OS is not redundant --
+      # `.gitattributes` sets `text=auto`, so Windows checks out CRLF, and
+      # keeping those endings is the formatter's job (design 5.4.1).
+      - name: erg fmt --check
+        run: cargo run -- fmt --check .
 
   lint:
     runs-on: ubuntu-latest

@@ -229,3 +229,28 @@ fn a_symlink_cycle_does_not_hang_the_walk() {
         "reached by its real path"
     );
 }
+
+/// A dot-directory is not the author's source tree: `.git` holds objects,
+/// `.venv` holds someone else's code, and a git worktree under `.claude` holds
+/// a second copy of files already reached where they really live. Rewriting any
+/// of them is at best pointless and at worst destructive.
+#[test]
+fn a_dot_directory_is_not_walked() {
+    let sandbox = Sandbox::new("hidden");
+    sandbox.write("a.er", UNFORMATTED);
+    sandbox.write(".venv/b.er", UNFORMATTED);
+    sandbox.write("nested/.git/c.er", UNFORMATTED);
+    assert_eq!(run(&sandbox.root, FmtConfig::default()), 0);
+    assert_eq!(sandbox.read("a.er"), FORMATTED);
+    assert_eq!(sandbox.read(".venv/b.er"), UNFORMATTED);
+    assert_eq!(sandbox.read("nested/.git/c.er"), UNFORMATTED);
+}
+
+/// ...but naming one is how you ask for it, so the root is always walked.
+#[test]
+fn a_dot_directory_named_directly_is_walked() {
+    let sandbox = Sandbox::new("hidden_named");
+    sandbox.write(".config/a.er", UNFORMATTED);
+    assert_eq!(run(&sandbox.root.join(".config"), FmtConfig::default()), 0);
+    assert_eq!(sandbox.read(".config/a.er"), FORMATTED);
+}

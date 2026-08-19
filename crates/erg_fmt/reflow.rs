@@ -24,9 +24,9 @@ use erg_parser::token::TokenKind;
 ///
 /// A split costs two lines at minimum, so buying a few columns with them is a
 /// bad trade. Measured over every split the formatter makes across this
-/// repository: the 68 worth keeping all came in at 69% or below, and the two
-/// that read worse than the line they replaced were at 79% and 82%. Three
-/// quarters sits in the gap.
+/// repository, on the tree as it stood before it was formatted: the 84 worth
+/// keeping all came in at 68% or below, and the three that read worse than the
+/// line they replaced were at 79%, 81% and 81%. Three quarters sits in the gap.
 ///
 /// The 79% is
 ///

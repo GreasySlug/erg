@@ -21,9 +21,7 @@
     startDocument!: (self: RefMut(.ContentHandler!)) => NoneType
     endDocument!: (self: RefMut(.ContentHandler!)) => NoneType
     startPrefixMapping!: (
-        self: RefMut(.ContentHandler!),
-        prefix: Str or NoneType,
-        uri: Str
+        self: RefMut(.ContentHandler!), prefix: Str or NoneType, uri: Str
     ) => NoneType
     endPrefixMapping!: (self: RefMut(.ContentHandler!), prefix: Str or NoneType) => NoneType
     startElement!: (self: RefMut(.ContentHandler!), name: Str, attrs: Obj) => NoneType

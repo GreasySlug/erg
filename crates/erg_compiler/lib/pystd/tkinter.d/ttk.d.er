@@ -11,11 +11,7 @@
 .Checkbutton! <: Widget!
 .Checkbutton!.
     __call__: (
-        master := Obj,
-        text := Str,
-        variable := Obj,
-        command := Obj,
-        **kwargs: Obj
+        master := Obj, text := Str, variable := Obj, command := Obj, **kwargs: Obj
     ) -> Checkbutton!
 
 .Notebook!: ClassType
@@ -38,12 +34,7 @@
 .Radiobutton! <: Widget!
 .Radiobutton!.
     __call__: (
-        master := Obj,
-        text := Str,
-        variable := Obj,
-        value := Obj,
-        command := Obj,
-        **kwargs: Obj
+        master := Obj, text := Str, variable := Obj, value := Obj, command := Obj, **kwargs: Obj
     ) -> Radiobutton!
 
 .Separator!: ClassType

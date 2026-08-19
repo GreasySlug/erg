@@ -9,10 +9,7 @@
 .singledispatch: |C <: GenericCallable|(function: C) -> C
 .singledispatchmethod: |C <: GenericCallable|(function: C) -> C
 .update_wrapper: |T: Type|(
-    wrapper: T,
-    wrapped: T,
-    assigned := Iterable(Str),
-    updated := Iterable(Str)
+    wrapper: T, wrapped: T, assigned := Iterable(Str), updated := Iterable(Str)
 ) -> T
 .wraps: |T: Type|(wrapped: T, assigned := Iterable(Str), updated := Iterable(Str)) -> (T -> T)
 

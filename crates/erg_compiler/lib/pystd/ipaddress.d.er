@@ -87,8 +87,7 @@
 .IPv4Network <: _BaseV4
 .IPv4Network.
     __call__: (
-        address: Str or Nat or Bytes or ((Str or Nat or Bytes or IPv4Address), Nat),
-        strict := Bool
+        address: Str or Nat or Bytes or ((Str or Nat or Bytes or IPv4Address), Nat), strict := Bool
     ) -> IPv4Network
     max_prefixlen: Nat
     is_multicast: Bool
@@ -125,8 +124,7 @@
 .IPv6Network <: _BaseV6
 .IPv6Network.
     __call__: (
-        address: Str or Nat or Bytes or ((Str or Nat or Bytes or IPv6Address), Nat),
-        strict := Bool
+        address: Str or Nat or Bytes or ((Str or Nat or Bytes or IPv6Address), Nat), strict := Bool
     ) -> IPv6Network
     max_prefixlen: Nat
     is_multicast: Bool

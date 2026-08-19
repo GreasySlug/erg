@@ -5,9 +5,7 @@
     __len__: (self: .NamedTuple) -> Nat
 .NamedTuple.
     __call__: (
-        typename: Str,
-        field_names: Sequence(Str),
-        rename := Bool
+        typename: Str, field_names: Sequence(Str), rename := Bool
     ) -> (*Obj, **Obj) -> NamedTuple
 .Deque! = 'deque': ClassType
 .Deque!|<: Sized|.
@@ -48,8 +46,7 @@
     elements: (self: Ref OrderedDict!) -> Iterable(Obj)
     most_common: (self: Ref(OrderedDict!), n := Nat) -> List((Obj, Int))
     subtract!: (
-        self: RefMut(OrderedDict!),
-        iterable_or_mapping: Iterable(Obj) or Mapping(Obj, Obj)
+        self: RefMut(OrderedDict!), iterable_or_mapping: Iterable(Obj) or Mapping(Obj, Obj)
     ) => NoneType
     total: (self: Ref(OrderedDict!)) -> Nat
 .DefaultDict = 'defaultdict': ClassType

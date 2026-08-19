@@ -23,16 +23,10 @@
     assertEqual: |E <: Eq|(self: Ref(.TestCase!), first: E, second: E, msg := Str) -> NoneType
     assertNotEqual: |E <: Eq|(self: Ref(.TestCase!), first: E, second: E, msg := Str) -> NoneType
     assertIn: |E <: Eq|(
-        self: Ref(.TestCase!),
-        member: E,
-        container: Iterable(E),
-        msg := Str
+        self: Ref(.TestCase!), member: E, container: Iterable(E), msg := Str
     ) -> NoneType
     assertNotIn: |E <: Eq|(
-        self: Ref(.TestCase!),
-        member: E,
-        container: Iterable(E),
-        msg := Str
+        self: Ref(.TestCase!), member: E, container: Iterable(E), msg := Str
     ) -> NoneType
     assertIs: (self: Ref(.TestCase!), first: Obj, second: Obj, msg := Str) -> NoneType
     assertIsNot: (self: Ref(.TestCase!), first: Obj, second: Obj, msg := Str) -> NoneType
@@ -40,10 +34,7 @@
     assertLessEqual: |O <: Ord|(self: Ref(.TestCase!), first: O, second: O, msg := Str) -> NoneType
     assertGreater: |O <: Ord|(self: Ref(.TestCase!), first: O, second: O, msg := Str) -> NoneType
     assertGreaterEqual: |O <: Ord|(
-        self: Ref(.TestCase!),
-        first: O,
-        second: O,
-        msg := Str
+        self: Ref(.TestCase!), first: O, second: O, msg := Str
     ) -> NoneType
     assertIsNone: (self: Ref(.TestCase!), obj: Obj, msg := Str) -> NoneType
     assertIsNotNone: (self: Ref(.TestCase!), obj: Obj, msg := Str) -> NoneType

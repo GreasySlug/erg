@@ -8,8 +8,5 @@
     items: (self: Ref(.Headers!)) -> [(Str, Str); _]
     setdefault!: (self: RefMut(.Headers!), name: Str, value: Str) => Str
     add_header!: (
-        self: RefMut(.Headers!),
-        _name: Str,
-        _value: Str or NoneType,
-        **_params: Obj
+        self: RefMut(.Headers!), _name: Str, _value: Str or NoneType, **_params: Obj
     ) => NoneType

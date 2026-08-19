@@ -5,16 +5,12 @@
     __call__: (path: PathLike or FileLike!, mode := Str) => .ZipFile!
     open!: (name: PathLike, mode := Str) => .ZipFile!
     add!: (
-        self: RefMut(.ZipFile!),
-        name: PathLike,
-        arcname: PathLike or NoneType := NoneType,
+        self: RefMut(.ZipFile!), name: PathLike, arcname: PathLike or NoneType := NoneType,
         recursive := Bool
     ) => NoneType
     close!: (self: .ZipFile!,) => NoneType
     extractall!: (
-        self: RefMut(.ZipFile!),
-        path := PathLike,
-        members: [Str; _] or NoneType := NoneType,
+        self: RefMut(.ZipFile!), path := PathLike, members: [Str; _] or NoneType := NoneType,
         numeric_owner := Bool
     ) => NoneType
     namelist: (self: Ref(.ZipFile!),) -> [Str; _]

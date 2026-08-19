@@ -33,10 +33,7 @@
 .AsyncContextManager.
     __aenter__: (self: AsyncContextManager) -> AsyncContextManager
     __aexit__: (
-        self: AsyncContextManager,
-        exc_type: Type,
-        exc_value: Obj,
-        traceback: Obj
+        self: AsyncContextManager, exc_type: Type, exc_value: Obj, traceback: Obj
     ) -> NoneType
 {
     .DefaultDict;

@@ -50,9 +50,7 @@
     modify!: (self: RefMut(.Epoll!), fd: Int or FileLike!, eventmask: Nat) => NoneType
     unregister!: (self: RefMut(.Epoll!), fd: Int or FileLike!) => NoneType
     poll!: (
-        self: RefMut(.Epoll!),
-        timeout := Float or NoneType,
-        maxevents := Int
+        self: RefMut(.Epoll!), timeout := Float or NoneType, maxevents := Int
     ) => [(Nat, Nat); _]
 
 .poll!: () => .Poll! # unix only

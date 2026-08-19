@@ -26,14 +26,8 @@
     interrupt!: (self: RefMut(.Connection!)) => NoneType
 
 .connect!: (
-    database: PathLike,
-    timeout := Float,
-    detect_types := Int,
-    isolation_lelel := Str,
-    check_same_thread := Bool,
-    cached_statements := Int,
-    factory := .Connection!,
-    uri := Bool
+    database: PathLike, timeout := Float, detect_types := Int, isolation_lelel := Str,
+    check_same_thread := Bool, cached_statements := Int, factory := .Connection!, uri := Bool
 ) -> .Connection!
 
 .complete_statement: (sql: Str) -> Bool

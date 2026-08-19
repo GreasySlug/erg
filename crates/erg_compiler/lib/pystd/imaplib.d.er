@@ -17,10 +17,7 @@
     capabilities: (Str,)
     __call__: (host := Str, port := Nat, timeout := Float or NoneType) -> .IMAP4!
     open!: (
-        self: RefMut(.IMAP4!),
-        host := Str,
-        port := Nat,
-        timeout := Float or NoneType
+        self: RefMut(.IMAP4!), host := Str, port := Nat, timeout := Float or NoneType
     ) => NoneType
     read!: (self: RefMut(.IMAP4!), size: Nat) => Bytes
     readline!: (self: RefMut(.IMAP4!)) => Bytes

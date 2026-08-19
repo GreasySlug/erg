@@ -66,15 +66,11 @@
 .Islice(T) <: Iterable T
 .Islice(T).
     __call__: (
-        iterable: Iterable(T),
-        start := Int or NoneType,
-        stop := Int or NoneType,
+        iterable: Iterable(T), start := Int or NoneType, stop := Int or NoneType,
         step := Int or NoneType
     ) -> .Islice(T)
 .islice: |T|(
-    iterable: Iterable(T),
-    start := Int or NoneType,
-    stop := Int or NoneType,
+    iterable: Iterable(T), start := Int or NoneType, stop := Int or NoneType,
     step := Int or NoneType
 ) -> .Islice(T)
 
@@ -137,6 +133,5 @@
 .CombinationsWithReplacement(T).
     __call__: (iterable: Iterable(T), r := Nat) -> .CombinationsWithReplacement(T)
 .combinations_with_replacement: |T|(
-    iterable: Iterable(T),
-    r := Nat
+    iterable: Iterable(T), r := Nat
 ) -> .CombinationsWithReplacement(T)

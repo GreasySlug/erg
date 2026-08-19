@@ -25,8 +25,7 @@
         data := Obj,
     ) => .SelectorKey
     select!: (
-        self: RefMut(.BaseSelector!),
-        timeout := Float or NoneType
+        self: RefMut(.BaseSelector!), timeout := Float or NoneType
     ) => [(.SelectorKey, Nat); _]
     close!: (self: RefMut(.BaseSelector!)) => NoneType
     get_key: (self: Ref(.BaseSelector!), fileobj: FileLike! or Nat) -> .SelectorKey

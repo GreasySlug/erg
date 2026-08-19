@@ -28,8 +28,7 @@
 .relpath: (path: PathLike, start := PathLike) -> Str
 .samefile!: (path1: PathLike, path2: PathLike) => Bool
 .sameopenfile!: (
-    fp1: FileDescriptor or Nat or PathLike,
-    fp2: FileDescriptor or Nat or PathLike
+    fp1: FileDescriptor or Nat or PathLike, fp2: FileDescriptor or Nat or PathLike
 ) => Bool
 # TODO: StatResult
 .samestat!: (st1: Obj, st2: Obj) => Bool

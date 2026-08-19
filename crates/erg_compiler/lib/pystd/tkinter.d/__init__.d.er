@@ -32,11 +32,7 @@
 .Checkbutton! <: Widget!
 .Checkbutton!.
     __call__: (
-        master := Obj,
-        text := Str,
-        variable := Obj,
-        command := Obj,
-        **kwargs: Obj
+        master := Obj, text := Str, variable := Obj, command := Obj, **kwargs: Obj
     ) -> Checkbutton!
 
 .Entry!: ClassType
@@ -55,12 +51,7 @@
     __call__: (master := Obj, width := Int, height := Int, **kwargs: Obj) -> Canvas!
     create_line!: (self: RefMut(Canvas!), x1: Int, y1: Int, x2: Int, y2: Int, **kwargs: Obj) => Nat
     create_rectangle!: (
-        self: RefMut(Canvas!),
-        x1: Int,
-        y1: Int,
-        x2: Int,
-        y2: Int,
-        **kwargs: Obj
+        self: RefMut(Canvas!), x1: Int, y1: Int, x2: Int, y2: Int, **kwargs: Obj
     ) => Nat
     create_text!: (self: RefMut(Canvas!), x: Int, y: Int, text: Str, **kwargs: Obj) => Nat
 
@@ -87,11 +78,7 @@
 .OptionMenu! <: .Widget!
 .OptionMenu!.
     __call__: (
-        value: Str,
-        *values: Str,
-        master := Obj,
-        variable := Obj,
-        **kwargs: Obj
+        value: Str, *values: Str, master := Obj, variable := Obj, **kwargs: Obj
     ) -> OptionMenu!
 
 .Menubutton!: ClassType

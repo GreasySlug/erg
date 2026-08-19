@@ -46,11 +46,7 @@
 .finditer: (pattern: Str, string: Str, flags := Nat or .RegexFlag) -> [.Match; _]
 .sub: (pattern: Str, repl: Str, string: Str, count := Nat, flags := Nat or .RegexFlag) -> Str
 .subn: (
-    pattern: Str,
-    repl: Str,
-    string: Str,
-    count := Nat,
-    flags := Nat or .RegexFlag
+    pattern: Str, repl: Str, string: Str, count := Nat, flags := Nat or .RegexFlag
 ) -> (Str, Nat)
 .escape: (pattern: Str) -> Str
 .purge!: () => ()

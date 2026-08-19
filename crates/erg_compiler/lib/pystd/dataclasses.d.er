@@ -22,14 +22,8 @@
 .KW_ONLY: _KW_ONLY_TYPE
 
 .field: (
-    default := ._MISSING_TYPE,
-    default_factory := ._MISSING_TYPE,
-    init := Bool,
-    repr := Bool,
-    hash := Bool,
-    compare := Bool,
-    metadata := GenericDict,
-    kw_only := ._MISSING_TYPE
+    default := ._MISSING_TYPE, default_factory := ._MISSING_TYPE, init := Bool, repr := Bool,
+    hash := Bool, compare := Bool, metadata := GenericDict, kw_only := ._MISSING_TYPE
 ) -> (Obj -> Obj)
 
 .Field: ClassType

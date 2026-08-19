@@ -34,17 +34,12 @@
     connect!: (self: RefMut(.HTTPConnection!),) => NoneType
     close!: (self: RefMut(.HTTPConnection!),) => NoneType
     putrequest!: (
-        self: Ref(.HTTPConnection!),
-        method: Str,
-        url: Str,
-        skip_host := Bool,
+        self: Ref(.HTTPConnection!), method: Str, url: Str, skip_host := Bool,
         skip_accept_encoding := Bool
     ) => NoneType
     putheader!: (self: Ref(.HTTPConnection!), header: Str, argument: Str) => NoneType
     endheaders!: (
-        self: Ref(.HTTPConnection!),
-        message_body := Str,
-        encode_chunked := Bool
+        self: Ref(.HTTPConnection!), message_body := Str, encode_chunked := Bool
     ) => NoneType
     send!: (self: RefMut(.HTTPConnection!), data: Str) => NoneType
 

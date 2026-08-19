@@ -16,11 +16,28 @@
 //! only ever added and never removed, it keeps its bracket expanded for free:
 //! the break beside it survives whether or not the line would now fit.
 
+use std::ops::Range;
+
 use crate::render::{is_closing, is_layout, is_opening, Chunk, Layout};
 use erg_parser::token::TokenKind;
 
-/// How much narrower the longest line has to get before a split pays for
-/// itself: it must lose at least a quarter of its width.
+/// How much narrower the longest line has to get before a split pays for itself
+/// when the bracket was *not* where the width was: it must lose at least a
+/// quarter of its width.
+///
+/// A split whose longest line ends up inside the bracket is never weighed
+/// against this -- breaking the bracket is what shortened the line, which is
+/// the whole of the question. The ratio is for the other case, where what is
+/// still long is the text either side of the bracket:
+///
+/// ```erg
+/// [major, minor, patch, pre] -> major.isnumeric() and ... and pre.isalnum()
+/// ```
+///
+/// Exploding that pattern buys three columns; the length is in the `and` chain
+/// after the arrow, which no comma can break. The line above it in that file
+/// has three elements, fits, and stays whole -- so the split would also make
+/// two neighbouring lines disagree about their shape for nothing.
 ///
 /// A split costs two lines at minimum, so buying a few columns with them is a
 /// bad trade. Measured over every split the formatter makes across this
@@ -28,16 +45,6 @@ use erg_parser::token::TokenKind;
 /// keeping all came in at 68% or below, and the three that read worse than the
 /// line they replaced were at 79%, 81% and 81%. Three quarters sits in the gap.
 ///
-/// The 79% is
-///
-/// ```erg
-/// [major, minor, patch, pre] -> major.isnumeric() and ... and pre.isalnum()
-/// ```
-///
-/// where 121 columns become five lines whose longest is still 96. The length
-/// is in the `and` chain, which no comma can break, so exploding the pattern
-/// beside it moves the problem rather than solving it -- and the line above it
-/// in that file has three elements, fits, and stays whole.
 const WORTH_SPLITTING: (usize, usize) = (3, 4);
 
 /// Splits a chunk until every part fits, or until nothing more can be split.
@@ -56,14 +63,32 @@ pub fn wrap(layout: &Layout, chunk: Chunk) -> Vec<Chunk> {
     let Some(parts) = split_at_commas(layout, &chunk) else {
         return vec![chunk];
     };
-    // every part is strictly shorter than the chunk it came from, so this
-    // bottoms out
-    let split: Vec<Chunk> = parts.into_iter().flat_map(|p| wrap(layout, p)).collect();
-    // measured after the recursion: an element that is still too wide may have
-    // been broken up in turn, and it is the final shape that has to be worth it
-    let widest = split.iter().map(|p| layout.width(p)).max().unwrap_or(0);
+    // the first and last parts are the text either side of the bracket, which
+    // the split does not shorten; the ones between are its contents, which it
+    // does. Measured after the recursion, since an element that is still too
+    // wide may have been broken up in turn.
+    let last = parts.len() - 1;
+    let (mut inside, mut outside) = (0, 0);
+    let mut split = Vec::new();
+    for (at, part) in parts.into_iter().enumerate() {
+        let expanded = wrap(layout, part);
+        let widest = expanded.iter().map(|p| layout.width(p)).max().unwrap_or(0);
+        if at == 0 || at == last {
+            outside = outside.max(widest);
+        } else {
+            inside = inside.max(widest);
+        }
+        split.extend(expanded);
+    }
+    if inside >= outside {
+        // the bracket held the length, and breaking it is what shortened the
+        // line
+        return split;
+    }
+    // it did not: what is left over-long is text the split never touched, so
+    // the break has to buy enough width to be worth the lines it costs
     let (num, den) = WORTH_SPLITTING;
-    if widest * den <= width * num {
+    if outside * den <= width * num {
         split
     } else {
         vec![chunk]
@@ -91,21 +116,32 @@ fn split_at_commas(layout: &Layout, chunk: &Chunk) -> Option<Vec<Chunk>> {
         return None;
     }
 
+    let mut elements = Vec::new();
+    let mut from = 0;
+    for cut in cuts.into_iter().chain([inner.len()]) {
+        if from < cut {
+            elements.push(from..cut);
+        }
+        from = cut;
+    }
+    let level = chunk.level + 1;
+    let rows = if is_parameter_list(layout, chunk, close) {
+        pack(layout, level, inner, &elements)
+    } else {
+        elements
+    };
+
     let mut parts = vec![Chunk {
         level: chunk.level,
         tokens: chunk.tokens[..=open].to_vec(),
         continued: false,
     }];
-    let mut from = 0;
-    for cut in cuts.into_iter().chain([inner.len()]) {
-        if from < cut {
-            parts.push(Chunk {
-                level: chunk.level + 1,
-                tokens: inner[from..cut].to_vec(),
-                continued: false,
-            });
-        }
-        from = cut;
+    for row in rows {
+        parts.push(Chunk {
+            level,
+            tokens: inner[row].to_vec(),
+            continued: false,
+        });
     }
     // every cut here is inside a bracket, where a break needs no `\`; only the
     // tail still ends where the chunk did, so only it keeps the continuation
@@ -115,6 +151,55 @@ fn split_at_commas(layout: &Layout, chunk: &Chunk) -> Option<Vec<Chunk>> {
         continued: chunk.continued,
     });
     Some(parts)
+}
+
+/// Whether the pair closing at `close` is a function type's parameter list --
+/// `(a, b) -> T` -- rather than a call's argument list.
+///
+/// Both are commas inside brackets, and until the closing bracket there is
+/// nothing to tell them apart, so the arrow after it is the whole test.
+fn is_parameter_list(layout: &Layout, chunk: &Chunk, close: usize) -> bool {
+    chunk.tokens.get(close + 1).is_some_and(|&index| {
+        matches!(
+            layout.tok(index).kind,
+            TokenKind::FuncArrow | TokenKind::ProcArrow
+        )
+    })
+}
+
+/// Groups adjacent elements into as few lines as the width allows.
+///
+/// A parameter list is read as a set: you look for one name in it, and the
+/// signature it belongs to is the thing you are actually reading. Giving each
+/// parameter its own line turns a declaration into a paragraph -- fine in a
+/// definition with a body under it, but a declaration file is a column of them,
+/// and nine lines per member is a column you can no longer scan.
+///
+/// An element too wide to share a line is left on its own, where [`wrap`] gets
+/// another chance to break it.
+fn pack(
+    layout: &Layout,
+    level: usize,
+    inner: &[usize],
+    elements: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    let mut rows: Vec<Range<usize>> = Vec::new();
+    for element in elements {
+        if let Some(last) = rows.last_mut() {
+            let merged = last.start..element.end;
+            let candidate = Chunk {
+                level,
+                tokens: inner[merged.clone()].to_vec(),
+                continued: false,
+            };
+            if layout.width(&candidate) <= layout.opts.max_width {
+                *last = merged;
+                continue;
+            }
+        }
+        rows.push(element.clone());
+    }
+    rows
 }
 
 /// The outermost bracket pair spanning the most tokens, as positions *within*
@@ -288,6 +373,67 @@ mod tests {
         );
     }
 
+    /// A parameter list is read as a set -- you look for one name in it -- so
+    /// it is packed rather than stacked. A declaration file is a column of
+    /// these, and one member per nine lines is a column you cannot scan.
+    #[test]
+    fn a_parameter_list_is_packed_not_stacked() {
+        assert_eq!(
+            fmt_at(30, "f: (aaa: Int, bbb: Int, ccc: Int, ddd: Int) -> Int\n"),
+            "f: (\n    aaa: Int, bbb: Int,\n    ccc: Int, ddd: Int\n) -> Int\n"
+        );
+    }
+
+    #[test]
+    fn a_procedure_type_is_packed_too() {
+        assert_eq!(
+            fmt_at(30, "g: (aaa: Int, bbb: Int, ccc: Int, ddd: Int) => Int\n"),
+            "g: (\n    aaa: Int, bbb: Int,\n    ccc: Int, ddd: Int\n) => Int\n"
+        );
+    }
+
+    /// The arrow is the whole test, so a lambda's parameters pack as well.
+    #[test]
+    fn a_lambdas_parameters_are_packed() {
+        assert_eq!(
+            fmt_at(20, "f = (aaa, bbb, ccc, ddd) -> aaa\n"),
+            "f = (\n    aaa, bbb, ccc,\n    ddd\n) -> aaa\n"
+        );
+    }
+
+    /// Arguments are not a set to scan but a sequence to read one at a time,
+    /// and they stay one per line.
+    #[test]
+    fn an_argument_list_is_still_stacked() {
+        assert_eq!(
+            fmt_at(20, "_ = h(aaa, bbb, ccc, ddd, eee)\n"),
+            "_ = h(\n    aaa,\n    bbb,\n    ccc,\n    ddd,\n    eee\n)\n"
+        );
+    }
+
+    #[test]
+    fn a_parameter_too_wide_to_share_gets_its_own_line() {
+        assert_eq!(
+            fmt_at(
+                30,
+                "f: (aaaaaaaaaaaaaaaaaaaaaaaa: Int, b: Int, c: Int) -> Int\n"
+            ),
+            "f: (\n    aaaaaaaaaaaaaaaaaaaaaaaa: Int,\n    b: Int, c: Int\n) -> Int\n"
+        );
+    }
+
+    /// Packing leaves the longest line just under the limit, so measuring it
+    /// against a line only slightly over would decline every marginal split:
+    /// here 28 of 35 columns is 80%, past the 3/4 the ratio asks for. A split
+    /// that reaches the width is not weighed against it at all.
+    #[test]
+    fn a_split_that_reaches_the_width_is_not_weighed() {
+        assert_eq!(
+            fmt_at(30, "f: (aaaaaa: Int, bbbbbb: Int) -> Int\n"),
+            "f: (\n    aaaaaa: Int, bbbbbb: Int\n) -> Int\n"
+        );
+    }
+
     #[test]
     fn breaking_is_idempotent() {
         for src in [
@@ -296,6 +442,8 @@ mod tests {
             "f = (x) ->\n    result = compute(alpha, beta, gamma)\n",
             "_ = f(alpha, beta) and \\\n    gamma\n",
             "_ = f(a, b) + cccccccccccccccccccccccccccccccccccccccc\n",
+            "f: (aaa: Int, bbb: Int, ccc: Int, ddd: Int) -> Int\n",
+            "f = (aaa, bbb, ccc, ddd) -> aaa\n",
         ] {
             let once = fmt_at(20, src);
             assert_eq!(fmt_at(20, &once), once, "not idempotent for {src:?}");

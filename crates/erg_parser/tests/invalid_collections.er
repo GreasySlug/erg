@@ -1,6 +1,6 @@
 #[list]#
 [1,,]
-[Nat;2;] # [Nat; 1]
+[Nat; 2;] # [Nat; 1]
 a = [1: "a"] # [1: Nat]
 [1, 2,,]
 
@@ -18,23 +18,23 @@ a,,
 #[dict]#
 {"a": 1,,}
 {"a": 1, "b" 2}
-{:1}
+{: 1}
 {"a":}
 
 #[record]#
-{x=}
-{=x}
+{x =}
+{= x}
 {x;;}
-{;x}
+{; x}
 
 #[collection access]#
 a = [1, 2, 3]
-a[1;2]
+a[1; 2]
 a[Nat; 3]
 a[1: 1]
 
 t = (1, True, "a")
 t.-1
 
-r = {name = "John Doe"; age = 21; from="Unknown"}
+r = {name = "John Doe"; age = 21; from = "Unknown"}
 r.attr

@@ -24,7 +24,10 @@
         events: Nat,
         data := Obj,
     ) => .SelectorKey
-    select!: (self: RefMut(.BaseSelector!), timeout := Float or NoneType) => [(.SelectorKey, Nat); _]
+    select!: (
+        self: RefMut(.BaseSelector!),
+        timeout := Float or NoneType
+    ) => [(.SelectorKey, Nat); _]
     close!: (self: RefMut(.BaseSelector!)) => NoneType
     get_key: (self: Ref(.BaseSelector!), fileobj: FileLike! or Nat) -> .SelectorKey
     get_map: (self: Ref(.BaseSelector!)) -> {Obj: .SelectorKey}

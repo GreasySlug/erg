@@ -12,8 +12,16 @@
     types_map: ({Str: Str}, {Str: Str})
     types_map_inv: ({Str: Str}, {Str: Str})
     __call__: (filenames := [Str; _], strict := Bool) -> .MimeTypes!
-    guess_type: (self: Ref(.MimeTypes!), url: Str, strict := Bool) -> (Str or NoneType, Str or NoneType)
-    guess_file_type: (self: Ref(.MimeTypes!), path: PathLike, strict := Bool) -> (Str or NoneType, Str or NoneType)
+    guess_type: (
+        self: Ref(.MimeTypes!),
+        url: Str,
+        strict := Bool
+    ) -> (Str or NoneType, Str or NoneType)
+    guess_file_type: (
+        self: Ref(.MimeTypes!),
+        path: PathLike,
+        strict := Bool
+    ) -> (Str or NoneType, Str or NoneType)
     guess_all_extensions: (self: Ref(.MimeTypes!), type: Str, strict := Bool) -> [Str; _]
     guess_extension: (self: Ref(.MimeTypes!), type: Str, strict := Bool) -> Str or NoneType
     add_type!: (self: RefMut(.MimeTypes!), type: Str, ext: Str, strict := Bool) => NoneType

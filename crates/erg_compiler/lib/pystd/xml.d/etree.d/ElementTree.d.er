@@ -28,8 +28,16 @@
     set!: (self: RefMut(.Element!), key: Str, value: Str) => NoneType
     keys: (self: Ref(.Element!)) -> Iterable(Str)
     items: (self: Ref(.Element!)) -> [(Str, Str); _]
-    find: (self: Ref(.Element!), path: Str, namespaces := {Str: Str} or NoneType) -> .Element! or NoneType
-    findall: (self: Ref(.Element!), path: Str, namespaces := {Str: Str} or NoneType) -> [.Element!; _]
+    find: (
+        self: Ref(.Element!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType
+    ) -> .Element! or NoneType
+    findall: (
+        self: Ref(.Element!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType
+    ) -> [.Element!; _]
     findtext: (
         self: Ref(.Element!),
         path: Str,
@@ -49,9 +57,21 @@
 .ElementTree!.
     __call__: (element := .Element! or NoneType, file := PathLike or NoneType) -> .ElementTree!
     getroot: (self: Ref(.ElementTree!)) -> .Element!
-    parse!: (self: RefMut(.ElementTree!), source: PathLike or Readable!, parser := Obj or NoneType) => .Element!
-    find: (self: Ref(.ElementTree!), path: Str, namespaces := {Str: Str} or NoneType) -> .Element! or NoneType
-    findall: (self: Ref(.ElementTree!), path: Str, namespaces := {Str: Str} or NoneType) -> [.Element!; _]
+    parse!: (
+        self: RefMut(.ElementTree!),
+        source: PathLike or Readable!,
+        parser := Obj or NoneType
+    ) => .Element!
+    find: (
+        self: Ref(.ElementTree!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType
+    ) -> .Element! or NoneType
+    findall: (
+        self: Ref(.ElementTree!),
+        path: Str,
+        namespaces := {Str: Str} or NoneType
+    ) -> [.Element!; _]
     findtext: (
         self: Ref(.ElementTree!),
         path: Str,

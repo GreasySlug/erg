@@ -9,8 +9,8 @@ decimal = pyimport "decimal"
     denominator: Int
     __call__: \
         ((numerator := Int, denominator := Int) -> .Fraction) \
-            and ((string: decimal.Decimal) -> .Fraction) \
-            and (string: Str) -> .Fraction
+        and ((string: decimal.Decimal) -> .Fraction) \
+        and (string: Str) -> .Fraction
     as_integer_ratio: (self: .Fraction) -> (Int, Int)
     from_float: (float: Float) -> .Fraction
     from_decimal: (decimal: decimal.Decimal) -> .Fraction

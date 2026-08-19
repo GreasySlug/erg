@@ -3,7 +3,12 @@ http = pyimport "http"
 .OpenerDirector!: ClassType
 .OpenerDirector!.
     add_handler!: (self: RefMut OpenerDirector!, handler: BaseHandler!) => NoneType
-    open!: (self: Ref OpenerDirector!, url: Str or .Request!, data: Bytes or NoneType := NoneType, timeout: Nat or NoneType := NoneType) -> http.client.HTTPResponse
+    open!: (
+        self: Ref OpenerDirector!,
+        url: Str or .Request!,
+        data: Bytes or NoneType := NoneType,
+        timeout: Nat or NoneType := NoneType
+    ) -> http.client.HTTPResponse
 .BaseHandler!: ClassType
 .BaseHandler!.
     parent: BaseHandler! or NoneType
@@ -50,6 +55,10 @@ http = pyimport "http"
     add_header!: (self: RefMut Request!, key: Str, val: Str) => NoneType
     remove_header!: (self: RefMut Request!, header: Str) => NoneType
 
-.urlopen!: (url: Str or .Request!, data: Bytes or NoneType := NoneType, timeout: Nat or NoneType := NoneType) -> http.client.HTTPResponse
+.urlopen!: (
+    url: Str or .Request!,
+    data: Bytes or NoneType := NoneType,
+    timeout: Nat or NoneType := NoneType
+) -> http.client.HTTPResponse
 .install_opener!: (opener: OpenerDirector!) => NoneType
 .build_opener!: (handler: BaseHandler!) => OpenerDirector!

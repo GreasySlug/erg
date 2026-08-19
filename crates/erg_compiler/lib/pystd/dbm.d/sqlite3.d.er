@@ -6,7 +6,11 @@
 .Sqlite3Dbm! <: ContextManager
 .Sqlite3Dbm!.
     keys!: (self: Ref(.Sqlite3Dbm!)) => [Bytes; _]
-    get!: (self: Ref(.Sqlite3Dbm!), key: Str or Bytes, default := Bytes or NoneType) => Bytes or NoneType
+    get!: (
+        self: Ref(.Sqlite3Dbm!),
+        key: Str or Bytes,
+        default := Bytes or NoneType
+    ) => Bytes or NoneType
     setdefault!: (self: RefMut(.Sqlite3Dbm!), key: Str or Bytes, default := Bytes) => Bytes
     close!: (self: RefMut(.Sqlite3Dbm!)) => NoneType
 

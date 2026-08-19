@@ -2,9 +2,9 @@ Queue! T: Type, N: Nat! = Class {.payload = [T; !N]}
 Queue!.
     new = Self!(*, 0)::__new__ {.payload = []}
 Queue!(T, N).
-    enqueue!(ref!(self(T, N ~> N+1)), x: T) =
+    enqueue!(ref!(self(T, N ~> N + 1)), x: T) =
         self.payload.push! x
-    dequeue!(ref! self(T, N ~> N-1)): T =
+    dequeue!(ref! self(T, N ~> N - 1)): T =
         self.payload.remove!(0)
 
 q = Queue!.new()

@@ -61,10 +61,10 @@ AddForInt|<: Add(Int)|.
 # TODO: Mul and Div
 NumForInterval M, N, O, P: Int = Patch M..N
 NumForInterval(M, N, O, P)|<: Add(O..P)|.
-    Output = M+O..N+P
+    Output = M + O..N + P
     __add__(self: Self, other: O..P) = magic("NumForInterval.`_+_`")
 NumForInterval(M, N, O, P)|<: Sub(O..P)|.
-    Output = M-P..N-O
+    Output = M - P..N - O
     __sub__(self: Self, other: O..P) = magic("NumForInterval.`_-_`")
 
 Read = Trait {

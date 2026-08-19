@@ -16,7 +16,12 @@
     untagged_responses: {Str: [Obj; _]}
     capabilities: (Str,)
     __call__: (host := Str, port := Nat, timeout := Float or NoneType) -> .IMAP4!
-    open!: (self: RefMut(.IMAP4!), host := Str, port := Nat, timeout := Float or NoneType) => NoneType
+    open!: (
+        self: RefMut(.IMAP4!),
+        host := Str,
+        port := Nat,
+        timeout := Float or NoneType
+    ) => NoneType
     read!: (self: RefMut(.IMAP4!), size: Nat) => Bytes
     readline!: (self: RefMut(.IMAP4!)) => Bytes
     send!: (self: RefMut(.IMAP4!), data: Bytes) => NoneType

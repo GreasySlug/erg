@@ -1,5 +1,5 @@
 {.BaseEventLoop!; .Server!} = import "base_events"
-{.iscoroutine;. iscoroutinefunction;} = pyimport "coroutines"
+{.iscoroutine;.iscoroutinefunction;} = pyimport "coroutines"
 {
     .AbstractEventLoop!;
     .AbstractEventLoopPolicy!;

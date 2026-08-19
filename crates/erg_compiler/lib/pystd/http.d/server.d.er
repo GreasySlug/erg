@@ -28,7 +28,11 @@
     ) => NoneType
     send_response!: (self: RefMut(.BaseHTTPRequestHandler!), code: Nat, message := Str) => NoneType
     send_header!: (self: RefMut(.BaseHTTPRequestHandler!), keyword: Str, value: Str) => NoneType
-    send_response_only!: (self: RefMut(.BaseHTTPRequestHandler!), code: Nat, message := Str) => NoneType
+    send_response_only!: (
+        self: RefMut(.BaseHTTPRequestHandler!),
+        code: Nat,
+        message := Str
+    ) => NoneType
     end_headers!: (self: RefMut(.BaseHTTPRequestHandler!)) => NoneType
     flush_headers!: (self: RefMut(.BaseHTTPRequestHandler!)) => NoneType
     log_request!: (

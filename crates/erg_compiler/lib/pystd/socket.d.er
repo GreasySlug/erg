@@ -90,8 +90,18 @@
 
 .Socket! = 'socket': ClassType
 .Socket!.
-    new!: (family := Int, type := Int, proto := Int, fileno: Int or NoneType := NoneType) => .Socket!
-    __call__!: (family := Int, type := Int, proto := Int, fileno: Int or NoneType := NoneType) => .Socket!
+    new!: (
+        family := Int,
+        type := Int,
+        proto := Int,
+        fileno: Int or NoneType := NoneType
+    ) => .Socket!
+    __call__!: (
+        family := Int,
+        type := Int,
+        proto := Int,
+        fileno: Int or NoneType := NoneType
+    ) => .Socket!
     accept!: (self: RefMut(.Socket!)) => (.Socket!, (Str, Int))
     bind!: (self: RefMut(.Socket!), address: (Str, Int)) => NoneType
     close!: (self: RefMut(.Socket!)) => NoneType
@@ -109,8 +119,18 @@
     listen!: (self: RefMut(.Socket!), backlog: Int) => NoneType
     recv!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => Str
     recvfrom!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => (Str, (Str, Int))
-    recvmsg!: (self: RefMut(.Socket!), bufsize: Int, ancbufsize := Int, flags := Int) => (Str, (Str, Int), Int)
-    recvmsg_into!: (self: RefMut(.Socket!), buffers: Iterable(Writable!), ancbufsize := Int, flags := Int) => (Str, (Str, Int), Int)
+    recvmsg!: (
+        self: RefMut(.Socket!),
+        bufsize: Int,
+        ancbufsize := Int,
+        flags := Int
+    ) => (Str, (Str, Int), Int)
+    recvmsg_into!: (
+        self: RefMut(.Socket!),
+        buffers: Iterable(Writable!),
+        ancbufsize := Int,
+        flags := Int
+    ) => (Str, (Str, Int), Int)
     recvfrom_into!: (self: RefMut(.Socket!), buffer: Writable!, flags := Int) => (Str, (Str, Int))
     recv_into!: (self: RefMut(.Socket!), buffer: Writable!, nbytes := Int, flags := Int) => Nat
     send!: (self: RefMut(.Socket!), data: Bytes, flags := Int) => Int

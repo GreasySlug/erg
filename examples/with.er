@@ -6,7 +6,7 @@ with! open!("examples/set.er"), f =>
         print!("line: " + line)
 
 open_file!(path) =
-    with! open!(path, mode:="r" , encoding:="utf_8"), f =>
+    with! open!(path, mode:="r", encoding:="utf_8"), f =>
         data = f.read!()
         data
 

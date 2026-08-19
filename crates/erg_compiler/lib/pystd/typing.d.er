@@ -32,7 +32,12 @@
 .AsyncContextManager: ClassType
 .AsyncContextManager.
     __aenter__: (self: AsyncContextManager) -> AsyncContextManager
-    __aexit__: (self: AsyncContextManager, exc_type: Type, exc_value: Obj, traceback: Obj) -> NoneType
+    __aexit__: (
+        self: AsyncContextManager,
+        exc_type: Type,
+        exc_value: Obj,
+        traceback: Obj
+    ) -> NoneType
 {
     .DefaultDict;
     .OrderedDict!;
@@ -113,7 +118,7 @@
     __name__: Str
     __default__: Type or NoneType
     __call__: (
-        name : Str,
+        name: Str,
         default := Type,
     ) -> TypeVarTuple
     has_default: (self: TypeVarTuple) -> Bool

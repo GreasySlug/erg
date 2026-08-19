@@ -3,7 +3,7 @@
 
 a = 2.5f64           # Float (inferred)
 b: Float = 1.0f64    # annotated Float
-c: Float = (1/2)f64  # suffix on a parenthesized expression
+c: Float = (1 / 2)f64  # suffix on a parenthesized expression
 d = 15f32            # f32 is also Float
 g = (1 + 2)f64       # suffix on an arbitrary parenthesized expression
 

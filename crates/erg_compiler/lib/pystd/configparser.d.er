@@ -25,11 +25,40 @@
     read_file!: (self: RefMut(ConfigParser!), f := FileLike or Iterable(Str)) => [Str; _]
     read_string: (self: Ref(ConfigParser!), string: Str, source := Str) -> [Str; _]
     read_dict: (self: Ref(ConfigParser!), dictionary: {Str: {Str: Str}}, source := Str) -> [Str; _]
-    get: (self: Ref(ConfigParser!), section: Str, option: Str, raw := Bool, vars := {Str: Str}) -> Str
-    getint: (self: Ref(ConfigParser!), section: Str, option: Str, raw := Bool, vars := {Str: Str}) -> Int
-    getfloat: (self: Ref(ConfigParser!), section: Str, option: Str, raw := Bool, vars := {Str: Str}) -> Float
-    getboolean: (self: Ref(ConfigParser!), section: Str, option: Str, raw := Bool, vars := {Str: Str}) -> Bool
-    items: (self: Ref(ConfigParser!), section: Str, raw := Bool, vars := {Str: Str}) -> [(Str, Str); _]
+    get: (
+        self: Ref(ConfigParser!),
+        section: Str,
+        option: Str,
+        raw := Bool,
+        vars := {Str: Str}
+    ) -> Str
+    getint: (
+        self: Ref(ConfigParser!),
+        section: Str,
+        option: Str,
+        raw := Bool,
+        vars := {Str: Str}
+    ) -> Int
+    getfloat: (
+        self: Ref(ConfigParser!),
+        section: Str,
+        option: Str,
+        raw := Bool,
+        vars := {Str: Str}
+    ) -> Float
+    getboolean: (
+        self: Ref(ConfigParser!),
+        section: Str,
+        option: Str,
+        raw := Bool,
+        vars := {Str: Str}
+    ) -> Bool
+    items: (
+        self: Ref(ConfigParser!),
+        section: Str,
+        raw := Bool,
+        vars := {Str: Str}
+    ) -> [(Str, Str); _]
     set!: (self: RefMut(ConfigParser!), section: Str, option: Str, value: Str) => NoneType
     write!: (self: Ref(ConfigParser!), fp: FileLike, space_around_delimiters := Bool) => NoneType
     remove_option!: (self: RefMut(ConfigParser!), section: Str, option: Str) => Bool

@@ -6,7 +6,11 @@
     archive: Str
     prefix: Str
     __call__: (path: PathLike) -> .ZipImporter!
-    find_spec!: (self: Ref(.ZipImporter!), fullname: Str, target := Obj or NoneType) => Obj or NoneType
+    find_spec!: (
+        self: Ref(.ZipImporter!),
+        fullname: Str,
+        target := Obj or NoneType
+    ) => Obj or NoneType
     get_code!: (self: Ref(.ZipImporter!), fullname: Str) => Code
     get_data!: (self: Ref(.ZipImporter!), pathname: PathLike) => Bytes
     get_filename!: (self: Ref(.ZipImporter!), fullname: Str) => Str

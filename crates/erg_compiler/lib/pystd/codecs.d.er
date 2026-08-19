@@ -79,6 +79,12 @@
 .getencoder: (encoding: Str) -> (obj: Str) -> (Bytes, Nat)
 .getdecoder: (encoding: Str) -> (obj: Bytes) -> (Str, Nat)
 
-.open!: (filename: Str, mode := Str, encoding := Str, errors := Str, buffering := Int) -> StreamReaderWriter!
+.open!: (
+    filename: Str,
+    mode := Str,
+    encoding := Str,
+    errors := Str,
+    buffering := Int
+) -> StreamReaderWriter!
 .register!: (search_function: (name: Str) -> CodecInfo or NoneType) => NoneType
 .unregister!: (search_function: (name: Str) -> CodecInfo or NoneType) => NoneType

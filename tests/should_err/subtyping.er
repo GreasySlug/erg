@@ -29,7 +29,7 @@ for! zip([1], ["a"]), (is) =>
     _ = s + 1 # ERR
     print! k
 
-for! zip([1+1], ["a"+"b"]), ((i, s),) => # i: Nat, s: Str
+for! zip([1 + 1], ["a" + "b"]), ((i, s),) => # i: Nat, s: Str
     print! i + 1
     print! s + "b"
     print! s + 1 # ERR

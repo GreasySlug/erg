@@ -93,10 +93,21 @@
 .TextIOWrapper!: ClassType
 .TextIOWrapper! <: .TextIOBase!
 .TextIOWrapper!.
-    __call__: (buffer: .BufferedIOBase!, encoding := Str, errors := Str, newline := Str, line_buffering := Bool) -> .TextIOWrapper!
+    __call__: (
+        buffer: .BufferedIOBase!,
+        encoding := Str,
+        errors := Str,
+        newline := Str,
+        line_buffering := Bool
+    ) -> .TextIOWrapper!
     line_buffering: Bool
     write_through: Bool
-    reconfigure!: (self: RefMut(.TextIOWrapper!), encoding := Str, errors := Str, newline := Str) => NoneType
+    reconfigure!: (
+        self: RefMut(.TextIOWrapper!),
+        encoding := Str,
+        errors := Str,
+        newline := Str
+    ) => NoneType
 
 .StringIO!: ClassType
 .StringIO! <: .TextIOBase!

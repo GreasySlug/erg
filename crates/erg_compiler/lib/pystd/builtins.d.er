@@ -196,13 +196,13 @@ opened in a text mode, and for bytes a BytesIO can be used like a file
 opened in a binary mode.
 '''
 .open!: (
-  file: PathLike,
-  mode := Str,
-  buffering := Int,
-  encoding := Str or NoneType,
-  errors := Str or NoneType,
-  newline := Str or NoneType,
-  closefd := Bool,
+    file: PathLike,
+    mode := Str,
+    buffering := Int,
+    encoding := Str or NoneType,
+    errors := Str or NoneType,
+    newline := Str or NoneType,
+    closefd := Bool,
 ) => File!
 
 '''

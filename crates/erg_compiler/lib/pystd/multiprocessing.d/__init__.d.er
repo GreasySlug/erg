@@ -110,7 +110,6 @@
     abort!: (self: RefMut(.Barrier!)) => NoneType
 
 
-
 .Manager!: () => SyncManager!
 .Pipe!: (duplex := Bool) => (Connection!, Connection!)
 

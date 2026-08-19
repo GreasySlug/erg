@@ -5,14 +5,14 @@ l = !0
 m = !0
 for! [1, 2], _i =>
     for! [3, 4], _j =>
-            for! [5, 6], _k =>
+        for! [5, 6], _k =>
 
-                i.inc!()
+            i.inc!()
 
 
-            j.inc!()
+        j.inc!()
 
-            k.inc!()
+        k.inc!()
     l.inc!()
 
 m.inc!()

@@ -5,7 +5,7 @@
 .library: Str
 
 # `dbm.ndbm` does not expose the database class itself, so it is module-private here
-Ndbm! : ClassType
+Ndbm!: ClassType
 Ndbm! <: ContextManager
 Ndbm!.
     keys!: (self: Ref(Ndbm!)) => [Bytes; _]

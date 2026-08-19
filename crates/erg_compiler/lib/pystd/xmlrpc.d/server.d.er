@@ -44,14 +44,20 @@
 .CGIXMLRPCRequestHandler!: ClassType
 .CGIXMLRPCRequestHandler! <: .SimpleXMLRPCDispatcher!
 .CGIXMLRPCRequestHandler!.
-    handle_request!: (self: RefMut(.CGIXMLRPCRequestHandler!), request_text := Str or NoneType) => NoneType
+    handle_request!: (
+        self: RefMut(.CGIXMLRPCRequestHandler!),
+        request_text := Str or NoneType
+    ) => NoneType
 
 .DocXMLRPCServer!: ClassType
 .DocXMLRPCServer! <: .SimpleXMLRPCServer!
 .DocXMLRPCServer!.
     set_server_title!: (self: RefMut(.DocXMLRPCServer!), server_title: Str) => NoneType
     set_server_name!: (self: RefMut(.DocXMLRPCServer!), server_name: Str) => NoneType
-    set_server_documentation!: (self: RefMut(.DocXMLRPCServer!), server_documentation: Str) => NoneType
+    set_server_documentation!: (
+        self: RefMut(.DocXMLRPCServer!),
+        server_documentation: Str
+    ) => NoneType
 
 .DocCGIXMLRPCRequestHandler!: ClassType
 .DocCGIXMLRPCRequestHandler! <: .CGIXMLRPCRequestHandler!

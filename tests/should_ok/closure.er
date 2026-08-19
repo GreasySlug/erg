@@ -43,7 +43,7 @@ Triple.
     new version = Triple { .version; }
 .Version! = Class Dict! { Str: List!(Triple) }
 .Version!.
-    new!() = .Version! !{ "a" : ![Triple.new(SemVer.from_str("0.1.0"))] }
+    new!() = .Version! !{ "a": ![Triple.new(SemVer.from_str("0.1.0"))] }
     insert!(ref! self, name: Str, version: SemVer) =
         if! all(map((triple) -> not(triple.version.compatible_with(version)), self::base[name])), do!:
             self::base[name].push!(Triple.new(version))

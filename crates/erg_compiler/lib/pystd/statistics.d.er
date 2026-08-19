@@ -16,4 +16,8 @@
 .quantiles: (data: Iterable(Float), n := Nat, method := Str) -> [Float; _]
 .covariance: (x: Iterable(Float), y: Iterable(Float)) -> Float
 .correlation: (x: Iterable(Float), y: Iterable(Float), method := Str) -> Float
-.linear_regression: (x: Iterable(Float), y: Iterable(Float), proportional := Bool) -> NamedTuple { .slope = Float; intercept = Float }
+.linear_regression: (
+    x: Iterable(Float),
+    y: Iterable(Float),
+    proportional := Bool
+) -> NamedTuple { .slope = Float; intercept = Float }

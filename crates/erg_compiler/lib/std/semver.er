@@ -5,7 +5,7 @@
 .Identifier|.Identifier <: Eq|.
     __eq__ self, other: .Identifier =
         hasattr(other, "name") and hasattr(other, "num") and \
-        self.name == other.name and self.num == other.num
+            self.name == other.name and self.num == other.num
 .Identifier.
     from_str s: Str =
         match s.split("."):
@@ -58,7 +58,7 @@
 .SemVer|<: Eq|.
     __eq__ self, other: .SemVer =
         hasattr(other, "major") and hasattr(other, "minor") and hasattr(other, "patch") and hasattr(other, "pre") and \
-        self.major == other.major and self.minor == other.minor and self.patch == other.patch and self.pre == other.pre
+            self.major == other.major and self.minor == other.minor and self.patch == other.patch and self.pre == other.pre
 
 .SemVerPrefix = Class { "~", "==", "<", ">", "<=", "<=", }
 .SemVerSpec = Class { .prefix = .SemVerPrefix; .version = .SemVer }

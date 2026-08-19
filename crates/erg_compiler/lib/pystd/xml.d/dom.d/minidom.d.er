@@ -183,5 +183,9 @@
     ) => .Node!
 
 .getDOMImplementation!: (features := Str or NoneType) => .DOMImplementation! or NoneType
-.parse!: (file: PathLike or Readable!, parser := Obj or NoneType, bufsize := Nat or NoneType) => .Document!
+.parse!: (
+    file: PathLike or Readable!,
+    parser := Obj or NoneType,
+    bufsize := Nat or NoneType
+) => .Document!
 .parseString!: (string: Str or Bytes, parser := Obj or NoneType) => .Document!

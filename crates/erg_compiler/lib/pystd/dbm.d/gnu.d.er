@@ -5,7 +5,7 @@
 .open_flags: Str
 
 # `dbm.gnu` does not expose the database class itself, so it is module-private here
-Gdbm! : ClassType
+Gdbm!: ClassType
 Gdbm! <: ContextManager
 Gdbm!.
     firstkey!: (self: Ref(Gdbm!)) => Bytes or NoneType

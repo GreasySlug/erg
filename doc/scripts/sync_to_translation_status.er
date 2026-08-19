@@ -63,5 +63,9 @@ for! LANGUAGES_KEBAB_CASE, lang =>
         relative_file_path = "\{lang.replace "-", "_"}\{mylib.str_slice en_path, 2}"
         add_table_row_text! "[\{mylib.str_slice en_path, 3}](../\{en_path})", "[📝](../\{relative_file_path}) \{get_badge!(mylib.path_join(cwd, relative_file_path))}"
 
-    with! open!(mylib.path_join(cwd, mylib.path_join("translation_status", "translation_status_\{lang}.md")), encoding := "utf-8", mode := "w"), f =>
+    with! open!(
+        mylib.path_join(cwd, mylib.path_join("translation_status", "translation_status_\{lang}.md")),
+        encoding := "utf-8",
+        mode := "w"
+    ), f =>
         discard f.write! str(result_text)

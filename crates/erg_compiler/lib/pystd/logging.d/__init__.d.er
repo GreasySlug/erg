@@ -83,6 +83,13 @@
 .getLevelName!: (level: Nat) -> Str
 .makeLogRecord!: (args: GenericTuple) -> .LogRecord
 # TODO: stream
-.basicConfig!: (level := Nat, format := Str, datefmt := Str, filename := Str, filemode := Str, stream := Obj) => NoneType
+.basicConfig!: (
+    level := Nat,
+    format := Str,
+    datefmt := Str,
+    filename := Str,
+    filemode := Str,
+    stream := Obj
+) => NoneType
 .shutdown!: () => NoneType
 .root: .RootLogger!

@@ -8,7 +8,12 @@
 .partialmethod: |T: Type|(func!: T => T, *args: T, **kwargs: T) -> T
 .singledispatch: |C <: GenericCallable|(function: C) -> C
 .singledispatchmethod: |C <: GenericCallable|(function: C) -> C
-.update_wrapper: |T: Type|(wrapper: T, wrapped: T, assigned := Iterable(Str), updated := Iterable(Str)) -> T
+.update_wrapper: |T: Type|(
+    wrapper: T,
+    wrapped: T,
+    assigned := Iterable(Str),
+    updated := Iterable(Str)
+) -> T
 .wraps: |T: Type|(wrapped: T, assigned := Iterable(Str), updated := Iterable(Str)) -> (T -> T)
 
 .Partial = 'partial': ClassType

@@ -22,17 +22,17 @@ cd = Dimension(1)
 .kelvin = .k
 .candela = .cd
 
-assert .kg in  Dimension(Int, 1, 0, 0, 0, 0, 0, 0)
-assert .m in   Dimension(Int, 0, 1, 0, 0, 0, 0, 0)
-assert .s in   Dimension(Int, 0, 0, 1, 0, 0, 0, 0)
-assert .a in   Dimension(Int, 0, 0, 0, 1, 0, 0, 0)
-assert .k in   Dimension(Int, 0, 0, 0, 0, 1, 0, 0)
+assert .kg in Dimension(Int, 1, 0, 0, 0, 0, 0, 0)
+assert .m in Dimension(Int, 0, 1, 0, 0, 0, 0, 0)
+assert .s in Dimension(Int, 0, 0, 1, 0, 0, 0, 0)
+assert .a in Dimension(Int, 0, 0, 0, 1, 0, 0, 0)
+assert .k in Dimension(Int, 0, 0, 0, 0, 1, 0, 0)
 assert .mol in Dimension(Int, 0, 0, 0, 0, 0, 1, 0)
-assert .cd in  Dimension(Int, 0, 0, 0, 0, 0, 0, 1)
-assert .meter in   Dimension(Int, 0, 1, 0, 0, 0, 0, 0)
-assert .sec in     Dimension(Int, 0, 0, 1, 0, 0, 0, 0)
-assert .ampere in  Dimension(Int, 0, 0, 0, 1, 0, 0, 0)
-assert .kelvin in  Dimension(Int, 0, 0, 0, 0, 1, 0, 0)
+assert .cd in Dimension(Int, 0, 0, 0, 0, 0, 0, 1)
+assert .meter in Dimension(Int, 0, 1, 0, 0, 0, 0, 0)
+assert .sec in Dimension(Int, 0, 0, 1, 0, 0, 0, 0)
+assert .ampere in Dimension(Int, 0, 0, 0, 1, 0, 0, 0)
+assert .kelvin in Dimension(Int, 0, 0, 0, 0, 1, 0, 0)
 assert .candela in Dimension(Int, 0, 0, 0, 0, 0, 0, 1)
 
 # Base unit types

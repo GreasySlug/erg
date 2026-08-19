@@ -16,6 +16,6 @@ Tree = Class Node or Leaf
 Tree|<: Show|.
     __str__ ref self = match self::base:
         (l: Leaf) -> l.__str__()
-        (n: Node)-> n.__str__()
+        (n: Node) -> n.__str__()
 
 print! Node.new { left = Tree.new Leaf.new 1; right = Tree.new Leaf.new 2 }

@@ -1251,10 +1251,19 @@ Step 2 で入れた `raw_since_token_start()` がそのデータそのものだ�
 9. ~~**折り返し**~~ ✅ — §5.7。magic trailing comma は自動的に成立した
 10. ~~**CLI 配線**~~ ✅ — `ErgMode::Fmt`、`Formatter`、`FmtConfig`（§7）
 11. ~~**ELS 連携**~~ ✅ — `textDocument/formatting`（§8）
-12. **`examples/` 全体での非破壊性テスト** — 最終関門。`examples_test.rs` が
-    `examples` / `tests/should_ok` / `tests/should_err` / `crates/erg_compiler/lib` を
-    掃いて「整形結果が検証を通る」ことを固定している。
+12. ~~**リポジトリ全体での非破壊性テスト**~~ ✅ — 最終関門。`examples_test.rs` が
+    リポジトリの `.er` 576ファイルすべてを掃いて「整形結果が検証を通る」
+    「二度掛けても変わらない」ことを固定している。
     `crates/erg_compiler/lib` を足した時点で §5.4.3 の設計漏れが出た
+
+    掃く対象は `SWEPT` テーブルに持つ。ディレクトリを列挙するのは、
+    コーパスごとに「全ファイルがレックスできるはずか」が違うため
+    （`tests/should_err` と `crates/erg_parser/tests` だけが `false`）。
+    掃きは**レックスできないファイルを飛ばす**ので、この期待値がないと
+    レキサの退行がコーパスまるごとを無検査にしても素通りする。
+    列挙が腐らないよう、`no_er_file_is_left_unswept` が `SWEPT` を
+    実際の木と突き合わせる — 掃きが意味を失うのは落ちるときではなく、
+    Erg が増えるたびに覆う割合が減っていくときなので
 
 ステップ7〜9の時点でリポジトリの `.er` 257ファイル中 16ファイルに差分が出る。
 内訳はインデント、カンマ周りの空白、`+ - * /` の正規化のみ。

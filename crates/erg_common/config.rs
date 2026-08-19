@@ -52,7 +52,7 @@ impl TryFrom<&str> for ErgMode {
             "fullcheck" | "check" | "checker" => Ok(Self::FullCheck),
             "comp" | "compile" | "compiler" => Ok(Self::Compile),
             "trans" | "transpile" | "transpiler" => Ok(Self::Transpile),
-            "run" | "execute" => Ok(Self::Execute),
+            "run" | "exec" | "execute" => Ok(Self::Execute),
             "server" | "language-server" => Ok(Self::LanguageServer),
             "lint" | "linter" => Ok(Self::Lint),
             "byteread" | "read" | "reader" | "dis" => Ok(Self::Read),
@@ -60,6 +60,47 @@ impl TryFrom<&str> for ErgMode {
             "pydecl" | "py-decl" => Ok(Self::PyDecl),
             "fmt" | "format" | "formatter" => Ok(Self::Fmt),
             _ => Err(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ErgMode;
+
+    /// Every name `erg --help` prints has to be one `--mode` accepts. `exec`
+    /// was advertised in two places and accepted in neither -- it fell through
+    /// to being read as a file path, so `erg exec foo.er` reported `foo.er` as
+    /// an invalid argument.
+    #[test]
+    fn every_advertised_subcommand_is_accepted() {
+        for name in [
+            "lex",
+            "parse",
+            "desugar",
+            "typecheck",
+            "lower",
+            "tc",
+            "check",
+            "fullcheck",
+            "compile",
+            "transpile",
+            "run",
+            "exec",
+            "execute",
+            "server",
+            "language-server",
+            "lint",
+            "read",
+            "dis",
+            "pack",
+            "pydecl",
+            "fmt",
+        ] {
+            assert!(
+                ErgMode::try_from(name).is_ok(),
+                "`{name}` is documented but not accepted"
+            );
         }
     }
 }

@@ -7,18 +7,20 @@ use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
-    FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation, GotoImplementationParams,
-    GotoTypeDefinition, GotoTypeDefinitionParams, HoverRequest, InlayHintRequest,
-    InlayHintResolveRequest, References, ResolveCompletionItem, SelectionRangeRequest,
-    SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
+    FoldingRangeRequest, Formatting, GotoDeclaration, GotoDefinition, GotoImplementation,
+    GotoImplementationParams, GotoTypeDefinition, GotoTypeDefinitionParams, HoverRequest,
+    InlayHintRequest, InlayHintResolveRequest, RangeFormatting, References, ResolveCompletionItem,
+    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
+    WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     CodeAction, CodeActionParams, CodeLensParams, CompletionItem, CompletionParams,
-    DocumentFormattingParams, DocumentHighlightParams, DocumentLinkParams, DocumentSymbolParams,
-    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, HoverParams, InlayHint,
-    InlayHintParams, ReferenceParams, RenameFilesParams, SelectionRangeParams,
-    SemanticTokensParams, SignatureHelpParams, WorkspaceSymbolParams,
+    DocumentFormattingParams, DocumentHighlightParams, DocumentLinkParams,
+    DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandParams, FoldingRangeParams,
+    GotoDefinitionParams, HoverParams, InlayHint, InlayHintParams, ReferenceParams,
+    RenameFilesParams, SelectionRangeParams, SemanticTokensParams, SignatureHelpParams,
+    WorkspaceSymbolParams,
 };
 
 use crate::server::Server;
@@ -40,6 +42,7 @@ pub struct SendChannels {
     completion: mpsc::Sender<WorkerMessage<CompletionParams>>,
     resolve_completion: mpsc::Sender<WorkerMessage<CompletionItem>>,
     goto_definition: mpsc::Sender<WorkerMessage<GotoDefinitionParams>>,
+    goto_declaration: mpsc::Sender<WorkerMessage<GotoDefinitionParams>>,
     goto_type_definition: mpsc::Sender<WorkerMessage<GotoTypeDefinitionParams>>,
     goto_implementation: mpsc::Sender<WorkerMessage<GotoImplementationParams>>,
     semantic_tokens_full: mpsc::Sender<WorkerMessage<SemanticTokensParams>>,
@@ -63,6 +66,7 @@ pub struct SendChannels {
     document_highlight: mpsc::Sender<WorkerMessage<DocumentHighlightParams>>,
     document_link: mpsc::Sender<WorkerMessage<DocumentLinkParams>>,
     formatting: mpsc::Sender<WorkerMessage<DocumentFormattingParams>>,
+    range_formatting: mpsc::Sender<WorkerMessage<DocumentRangeFormattingParams>>,
     pub(crate) health_check: mpsc::Sender<WorkerMessage<()>>,
 }
 
@@ -71,6 +75,7 @@ impl SendChannels {
         let (tx_completion, rx_completion) = mpsc::channel();
         let (tx_resolve_completion, rx_resolve_completion) = mpsc::channel();
         let (tx_goto_definition, rx_goto_definition) = mpsc::channel();
+        let (tx_goto_declaration, rx_goto_declaration) = mpsc::channel();
         let (tx_goto_type_definition, rx_goto_type_definition) = mpsc::channel();
         let (tx_goto_implementation, rx_goto_implementation) = mpsc::channel();
         let (tx_semantic_tokens_full, rx_semantic_tokens_full) = mpsc::channel();
@@ -94,12 +99,14 @@ impl SendChannels {
         let (tx_document_highlight, rx_document_highlight) = mpsc::channel();
         let (tx_document_link, rx_document_link) = mpsc::channel();
         let (tx_formatting, rx_formatting) = mpsc::channel();
+        let (tx_range_formatting, rx_range_formatting) = mpsc::channel();
         let (tx_health_check, rx_health_check) = mpsc::channel();
         (
             Self {
                 completion: tx_completion,
                 resolve_completion: tx_resolve_completion,
                 goto_definition: tx_goto_definition,
+                goto_declaration: tx_goto_declaration,
                 goto_type_definition: tx_goto_type_definition,
                 goto_implementation: tx_goto_implementation,
                 semantic_tokens_full: tx_semantic_tokens_full,
@@ -123,12 +130,14 @@ impl SendChannels {
                 document_highlight: tx_document_highlight,
                 document_link: tx_document_link,
                 formatting: tx_formatting,
+                range_formatting: tx_range_formatting,
                 health_check: tx_health_check,
             },
             ReceiveChannels {
                 completion: rx_completion,
                 resolve_completion: rx_resolve_completion,
                 goto_definition: rx_goto_definition,
+                goto_declaration: rx_goto_declaration,
                 goto_type_definition: rx_goto_type_definition,
                 goto_implementation: rx_goto_implementation,
                 semantic_tokens_full: rx_semantic_tokens_full,
@@ -152,6 +161,7 @@ impl SendChannels {
                 document_highlight: rx_document_highlight,
                 document_link: rx_document_link,
                 formatting: rx_formatting,
+                range_formatting: rx_range_formatting,
                 health_check: rx_health_check,
             },
         )
@@ -161,6 +171,7 @@ impl SendChannels {
         let _ = self.completion.send(WorkerMessage::Kill);
         let _ = self.resolve_completion.send(WorkerMessage::Kill);
         let _ = self.goto_definition.send(WorkerMessage::Kill);
+        let _ = self.goto_declaration.send(WorkerMessage::Kill);
         let _ = self.goto_type_definition.send(WorkerMessage::Kill);
         let _ = self.goto_implementation.send(WorkerMessage::Kill);
         let _ = self.semantic_tokens_full.send(WorkerMessage::Kill);
@@ -184,6 +195,7 @@ impl SendChannels {
         let _ = self.document_highlight.send(WorkerMessage::Kill);
         let _ = self.document_link.send(WorkerMessage::Kill);
         let _ = self.formatting.send(WorkerMessage::Kill);
+        let _ = self.range_formatting.send(WorkerMessage::Kill);
         let _ = self.health_check.send(WorkerMessage::Kill);
     }
 }
@@ -193,6 +205,7 @@ pub struct ReceiveChannels {
     pub(crate) completion: mpsc::Receiver<WorkerMessage<CompletionParams>>,
     pub(crate) resolve_completion: mpsc::Receiver<WorkerMessage<CompletionItem>>,
     pub(crate) goto_definition: mpsc::Receiver<WorkerMessage<GotoDefinitionParams>>,
+    pub(crate) goto_declaration: mpsc::Receiver<WorkerMessage<GotoDefinitionParams>>,
     pub(crate) goto_type_definition: mpsc::Receiver<WorkerMessage<GotoTypeDefinitionParams>>,
     pub(crate) goto_implementation: mpsc::Receiver<WorkerMessage<GotoImplementationParams>>,
     pub(crate) semantic_tokens_full: mpsc::Receiver<WorkerMessage<SemanticTokensParams>>,
@@ -218,6 +231,7 @@ pub struct ReceiveChannels {
     pub(crate) document_highlight: mpsc::Receiver<WorkerMessage<DocumentHighlightParams>>,
     pub(crate) document_link: mpsc::Receiver<WorkerMessage<DocumentLinkParams>>,
     pub(crate) formatting: mpsc::Receiver<WorkerMessage<DocumentFormattingParams>>,
+    pub(crate) range_formatting: mpsc::Receiver<WorkerMessage<DocumentRangeFormattingParams>>,
     pub(crate) health_check: mpsc::Receiver<WorkerMessage<()>>,
 }
 
@@ -255,6 +269,7 @@ macro_rules! impl_sendable {
 impl_sendable!(Completion, CompletionParams, completion);
 impl_sendable!(ResolveCompletionItem, CompletionItem, resolve_completion);
 impl_sendable!(GotoDefinition, GotoDefinitionParams, goto_definition);
+impl_sendable!(GotoDeclaration, GotoDefinitionParams, goto_declaration);
 impl_sendable!(
     GotoTypeDefinition,
     GotoTypeDefinitionParams,
@@ -306,3 +321,8 @@ impl_sendable!(
 );
 impl_sendable!(DocumentLinkRequest, DocumentLinkParams, document_link);
 impl_sendable!(Formatting, DocumentFormattingParams, formatting);
+impl_sendable!(
+    RangeFormatting,
+    DocumentRangeFormattingParams,
+    range_formatting
+);

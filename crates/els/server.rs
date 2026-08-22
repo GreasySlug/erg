@@ -39,20 +39,22 @@ use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
-    FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation, GotoTypeDefinition,
-    HoverRequest, InlayHintRequest, InlayHintResolveRequest, PrepareRenameRequest, References,
-    Rename, Request, ResolveCompletionItem, SelectionRangeRequest, SemanticTokensFullRequest,
-    SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
+    FoldingRangeRequest, Formatting, GotoDeclaration, GotoDefinition, GotoImplementation,
+    GotoTypeDefinition, HoverRequest, InlayHintRequest, InlayHintResolveRequest,
+    PrepareRenameRequest, RangeFormatting, References, Rename, Request, ResolveCompletionItem,
+    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
+    WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyServerCapability, CodeActionKind, CodeActionOptions, CodeActionProviderCapability,
     CodeLensOptions, CompletionOptions, ConfigurationItem, ConfigurationParams,
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentLinkOptions, ExecuteCommandOptions, FoldingRangeProviderCapability,
-    HoverProviderCapability, ImplementationProviderCapability, InitializeParams, InitializeResult,
-    InlayHintOptions, InlayHintServerCapabilities, NumberOrString, OneOf, Position, ProgressParams,
-    ProgressParamsValue, RenameOptions, SelectionRangeProviderCapability, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    DeclarationCapability, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentLinkOptions, ExecuteCommandOptions,
+    FoldingRangeProviderCapability, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InitializeResult, InlayHintOptions, InlayHintServerCapabilities,
+    NumberOrString, OneOf, Position, ProgressParams, ProgressParamsValue, RenameOptions,
+    SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
     TypeDefinitionProviderCapability, WorkDoneProgress, WorkDoneProgressBegin,
     WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressOptions,
@@ -523,6 +525,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         }));
         capabilities.references_provider = Some(OneOf::Left(true));
         capabilities.definition_provider = Some(OneOf::Left(true));
+        capabilities.declaration_provider = Some(DeclarationCapability::Simple(true));
         capabilities.type_definition_provider =
             Some(TypeDefinitionProviderCapability::Simple(true));
         capabilities.implementation_provider = Some(ImplementationProviderCapability::Simple(true));
@@ -646,11 +649,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 .contains(&DefaultFeatures::DocumentHighlight)
                 .not(),
         ));
-        capabilities.document_formatting_provider = Some(OneOf::Left(
-            self.disabled_features
-                .contains(&DefaultFeatures::Formatting)
-                .not(),
-        ));
+        let formatting = self
+            .disabled_features
+            .contains(&DefaultFeatures::Formatting)
+            .not();
+        capabilities.document_formatting_provider = Some(OneOf::Left(formatting));
+        capabilities.document_range_formatting_provider = Some(OneOf::Left(formatting));
         capabilities
     }
 
@@ -680,6 +684,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.start_service::<GotoDefinition>(
             receivers.goto_definition,
             Self::handle_goto_definition,
+        );
+        self.start_service::<GotoDeclaration>(
+            receivers.goto_declaration,
+            Self::handle_goto_declaration,
         );
         self.start_service::<GotoTypeDefinition>(
             receivers.goto_type_definition,
@@ -755,6 +763,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             Self::handle_document_link,
         );
         self.start_service::<Formatting>(receivers.formatting, Self::handle_formatting);
+        self.start_service::<RangeFormatting>(
+            receivers.range_formatting,
+            Self::handle_range_formatting,
+        );
         self.start_client_health_checker(receivers.health_check);
     }
 
@@ -1000,6 +1012,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             Completion::METHOD => self.parse_send::<Completion>(id, msg),
             ResolveCompletionItem::METHOD => self.parse_send::<ResolveCompletionItem>(id, msg),
             GotoDefinition::METHOD => self.parse_send::<GotoDefinition>(id, msg),
+            GotoDeclaration::METHOD => self.parse_send::<GotoDeclaration>(id, msg),
             GotoTypeDefinition::METHOD => self.parse_send::<GotoTypeDefinition>(id, msg),
             GotoImplementation::METHOD => self.parse_send::<GotoImplementation>(id, msg),
             HoverRequest::METHOD => self.parse_send::<HoverRequest>(id, msg),
@@ -1033,6 +1046,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             DocumentLinkRequest::METHOD => self.parse_send::<DocumentLinkRequest>(id, msg),
             Formatting::METHOD => self.parse_send::<Formatting>(id, msg),
+            RangeFormatting::METHOD => self.parse_send::<RangeFormatting>(id, msg),
             other => self.send_error(Some(id), -32600, format!("{other} is not supported")),
         }
     }

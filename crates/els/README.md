@@ -13,6 +13,7 @@ ELS is a language server for the [Erg](https://github.com/erg-lang/erg) programm
 - [x] Diagnostics
 - [x] Hover
 - [x] Go to definition
+- [x] Go to declaration
 - [x] Go to type definition
 - [x] Go to implementation
 - [x] Find references
@@ -34,8 +35,11 @@ ELS is a language server for the [Erg](https://github.com/erg-lang/erg) programm
 - [x] Call hierarchy
 - [x] Folding range
   - [x] Folding imports
+  - [x] Folding functions, methods, classes, and other blocks
 - [x] Selection range
 - [x] Formatting (`erg_fmt`; no type checking, so it works on a file mid-edit)
+  - [x] Document formatting
+  - [x] Range formatting
 
 ## Installation
 

@@ -95,7 +95,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     self.file_cache.get_token_relatively(&uri, pos, -1)
                 }
                 TokenCategory::StrInterpLeft => self.file_cache.get_token_relatively(&uri, pos, 1),
-                // TODO: StrInterpMid
+                // `} text {` sits between two interpolations; prefer the expr
+                // that closed just before the mid, then the one that opens after.
+                TokenCategory::StrInterpMid => self
+                    .file_cache
+                    .get_token_relatively(&uri, pos, -1)
+                    .or_else(|| self.file_cache.get_token_relatively(&uri, pos, 1)),
                 _ => Some(token),
             }
         } else {

@@ -131,4 +131,42 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let result = self.get_definition_location(&uri, pos)?;
         Ok(result.map(GotoDefinitionResponse::Scalar))
     }
+
+    /// The binding of the name under the cursor, without following imports or
+    /// aliases. `textDocument/definition` already walks through those; this is
+    /// the C/C++-style declaration (the name itself) for the same position.
+    pub(crate) fn get_declaration_location(
+        &self,
+        uri: &NormalizedUrl,
+        pos: Position,
+    ) -> ELSResult<Option<Location>> {
+        let Some(token) = self.file_cache.get_symbol(uri, pos) else {
+            self.send_log("lex error occurred")?;
+            return Ok(None);
+        };
+        let Some(vi) = self.get_definition(uri, &token)? else {
+            return Ok(None);
+        };
+        match (vi.def_loc.module, util::loc_to_range(vi.def_loc.loc)) {
+            (Some(path), Some(range)) => {
+                let def_uri = Url::from_file_path(path).unwrap();
+                Ok(Some(Location::new(def_uri, range)))
+            }
+            _ => {
+                self.send_log("not found (maybe builtin)")?;
+                Ok(None)
+            }
+        }
+    }
+
+    pub(crate) fn handle_goto_declaration(
+        &mut self,
+        params: GotoDefinitionParams,
+    ) -> ELSResult<Option<GotoDefinitionResponse>> {
+        self.send_log(format!("declaration requested: {params:?}"))?;
+        let uri = NormalizedUrl::new(params.text_document_position_params.text_document.uri);
+        let pos = params.text_document_position_params.position;
+        let result = self.get_declaration_location(&uri, pos)?;
+        Ok(result.map(GotoDefinitionResponse::Scalar))
+    }
 }

@@ -1,7 +1,7 @@
 use erg_common::error::Location;
-use erg_common::traits::Locational;
+use erg_common::traits::{Locational, Stream, Traversable};
 use erg_compiler::artifact::BuildRunnable;
-use erg_compiler::erg_parser::ast::Expr;
+use erg_compiler::erg_parser::ast::{Expr, Module};
 use erg_compiler::erg_parser::parse::Parsable;
 
 use lsp_types::{FoldingRange, FoldingRangeKind, FoldingRangeParams};
@@ -20,6 +20,49 @@ fn imports_range(start: &Location, end: &Location) -> Option<FoldingRange> {
     })
 }
 
+fn region(loc: Location) -> Option<FoldingRange> {
+    let start_line = loc.ln_begin()?.saturating_sub(1);
+    let end_line = loc.ln_end()?.saturating_sub(1);
+    if end_line <= start_line {
+        return None;
+    }
+    Some(FoldingRange {
+        start_line,
+        start_character: loc.col_begin(),
+        end_line,
+        end_character: loc.col_end(),
+        kind: Some(FoldingRangeKind::Region),
+    })
+}
+
+fn is_foldable(expr: &Expr) -> bool {
+    match expr {
+        Expr::Def(def) if def.def_kind().is_import() => false,
+        Expr::Def(_)
+        | Expr::Methods(_)
+        | Expr::ClassDef(_)
+        | Expr::PatchDef(_)
+        | Expr::Lambda(_)
+        | Expr::Call(_)
+        | Expr::Record(_)
+        | Expr::List(_)
+        | Expr::Tuple(_)
+        | Expr::Dict(_)
+        | Expr::Set(_)
+        | Expr::Compound(_)
+        | Expr::ReDef(_)
+        | Expr::InlineModule(_) => true,
+        _ => false,
+    }
+}
+
+fn fold_expr(expr: &Expr, out: &mut Vec<FoldingRange>) {
+    if is_foldable(expr) {
+        out.extend(region(expr.loc()));
+    }
+    expr.traverse(&mut |child| fold_expr(child, out));
+}
+
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_folding_range(
         &mut self,
@@ -28,31 +71,34 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         _log!(self, "folding range requested: {params:?}");
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut res = vec![];
-        res.extend(self.fold_imports(&uri));
-        Ok(Some(res))
-    }
-
-    fn fold_imports(&self, uri: &NormalizedUrl) -> Vec<FoldingRange> {
-        let mut res = vec![];
-        if let Ok(module) = self.build_ast(uri) {
-            let mut ranges = vec![];
-            for chunk in module.into_iter() {
-                match chunk {
-                    Expr::Def(def) if def.def_kind().is_import() => {
-                        ranges.push(def.loc());
-                    }
-                    _ => {
-                        if let Some((start, end)) = ranges.first().zip(ranges.last()) {
-                            res.extend(imports_range(start, end));
-                            ranges.clear();
-                        }
-                    }
-                }
-            }
-            if let Some((start, end)) = ranges.first().zip(ranges.last()) {
-                res.extend(imports_range(start, end));
+        if let Ok(module) = self.build_ast(&uri) {
+            res.extend(fold_imports(&module));
+            for chunk in module.iter() {
+                fold_expr(chunk, &mut res);
             }
         }
-        res
+        Ok(Some(res))
     }
+}
+
+fn fold_imports(module: &Module) -> Vec<FoldingRange> {
+    let mut res = vec![];
+    let mut ranges = vec![];
+    for chunk in module.iter() {
+        match chunk {
+            Expr::Def(def) if def.def_kind().is_import() => {
+                ranges.push(def.loc());
+            }
+            _ => {
+                if let Some((start, end)) = ranges.first().zip(ranges.last()) {
+                    res.extend(imports_range(start, end));
+                    ranges.clear();
+                }
+            }
+        }
+    }
+    if let Some((start, end)) = ranges.first().zip(ranges.last()) {
+        res.extend(imports_range(start, end));
+    }
+    res
 }

@@ -4,9 +4,9 @@ use std::collections::VecDeque;
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
-    DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition, GotoImplementation, HoverRequest,
-    InlayHintRequest, InlayHintResolveRequest, References, Request, ResolveCompletionItem,
-    SemanticTokensFullRequest, SignatureHelpRequest,
+    DocumentSymbolRequest, FoldingRangeRequest, GotoDeclaration, GotoDefinition,
+    GotoImplementation, HoverRequest, InlayHintRequest, InlayHintResolveRequest, References,
+    Request, ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 
 use erg_common::{shared::Shared, spawn::safe_yield};
@@ -50,6 +50,7 @@ impl From<&str> for RequestKind {
             Completion::METHOD => Self::Completion,
             HoverRequest::METHOD => Self::Hover,
             GotoDefinition::METHOD => Self::GotoDefinition,
+            GotoDeclaration::METHOD => Self::GotoDefinition,
             GotoImplementation::METHOD => Self::GotoImplementation,
             SignatureHelpRequest::METHOD => Self::SignatureHelp,
             DocumentSymbolRequest::METHOD => Self::DocumentSymbol,

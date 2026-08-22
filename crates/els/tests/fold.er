@@ -1,0 +1,7 @@
+f x =
+    y = x + 1
+    y
+
+C = Class { .x = Int }
+C.
+    new x: Int = C { .x = x }

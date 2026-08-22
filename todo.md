@@ -42,18 +42,27 @@
 
 ## P2: 完全未実装の LSP 機能
 
-- [ ] フォーマット系: `formatting` / `rangeFormatting` / `onTypeFormatting`
-- [ ] `textDocument/declaration`
+- [x] フォーマット系: `formatting` / `rangeFormatting` (`onTypeFormatting` は未)
+  → **完了 (formatting は既存)**: `rangeFormatting` はファイル全体を `erg_fmt` し、
+    変更領域が選択範囲に収まるときだけその領域の TextEdit を返す(仕様上、edit は
+    要求 range 内になければならない)。test_range_formatting。
+- [x] `textDocument/declaration`
+  → **完了**: 名前の束縛位置を返す。`definition` が import/alias を辿るのに対し、
+    宣言は辿らない。test_goto_declaration。
 - [ ] 型階層: `prepareTypeHierarchy` / supertypes / subtypes
 - [ ] `workspace/didChangeWatchedFiles`, `workspace/didChangeConfiguration`
 - [ ] Pull diagnostics, `linkedEditingRange`, `moniker`
+- [ ] `onTypeFormatting`
 
 ## P3: 部分実装の改善
 
-- [ ] Folding: import のみ → 関数/クラス/ブロック対応 (`folding_range.rs`)
+- [x] Folding: import のみ → 関数/クラス/ブロック対応 (`folding_range.rs`)
+  → **完了**: 複数行の Def/Methods/ClassDef/Lambda/Call/Record 等を Region として
+    折りたたむ。import は従来どおり Imports kind。test_folding_range_blocks。
 - [ ] 補完: site-packages モジュール非対応 (`completion.rs:454`)、複数行コメント抑制(573)
 - [ ] Rename: multi-path import 非対応 (`rename.rs:231`)
-- [ ] Hover: `StrInterpMid` 非対応 (`hover.rs:98`)
+- [x] Hover: `StrInterpMid` 非対応 (`hover.rs:98`)
+  → **完了**: Mid の直前(閉じた補間)を優先し、なければ直後の式を hover。
 - [ ] Workspace Symbol: `container_name` 常に None
 - [ ] Signature Help: `VBar`(型適用)トリガーで None
 

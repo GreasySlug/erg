@@ -2,15 +2,15 @@ use std::path::Path;
 
 use erg_common::spawn::safe_yield;
 use lsp_types::request::{
-    CallHierarchyOutgoingCalls, CallHierarchyPrepare, Formatting, GotoImplementation,
-    GotoImplementationParams, PrepareRenameRequest,
+    CallHierarchyOutgoingCalls, CallHierarchyPrepare, Formatting, GotoDeclaration,
+    GotoImplementation, GotoImplementationParams, PrepareRenameRequest, RangeFormatting,
 };
 use lsp_types::{
     CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams, CompletionResponse,
-    DiagnosticSeverity, DocumentFormattingParams, DocumentSymbolResponse, FoldingRange,
-    FoldingRangeKind, FormattingOptions, GotoDefinitionResponse, HoverContents, InlayHintLabel,
-    MarkedString, Position, PrepareRenameResponse, TextDocumentIdentifier,
-    TextDocumentPositionParams,
+    DiagnosticSeverity, DocumentFormattingParams, DocumentRangeFormattingParams,
+    DocumentSymbolResponse, FoldingRange, FoldingRangeKind, FormattingOptions,
+    GotoDefinitionParams, GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString,
+    Position, PrepareRenameResponse, Range, TextDocumentIdentifier, TextDocumentPositionParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -23,6 +23,7 @@ const FILE_WITH_LENGTH: &str = "tests/with_length.er";
 const FILE_PREPARE_RENAME: &str = "tests/prepare_rename.er";
 const FILE_INHERIT_LENS: &str = "tests/inherit_lens.er";
 const FILE_CALL_HIERARCHY: &str = "tests/call_hierarchy.er";
+const FILE_FOLD: &str = "tests/fold.er";
 
 use els::{NormalizedUrl, Server};
 use erg_proc_macros::exec_new_thread;
@@ -663,6 +664,127 @@ fn test_formatting() -> Result<(), Box<dyn std::error::Error>> {
         edits[0].range.end,
         Position::new(2, 0),
         "past the last line"
+    );
+    Ok(())
+}
+
+fn formatting_options() -> FormattingOptions {
+    FormattingOptions {
+        tab_size: 4,
+        insert_spaces: true,
+        ..FormattingOptions::default()
+    }
+}
+
+fn range_formatting_params(uri: lsp_types::Url, range: Range) -> DocumentRangeFormattingParams {
+    DocumentRangeFormattingParams {
+        text_document: TextDocumentIdentifier::new(uri),
+        range,
+        options: formatting_options(),
+        work_done_progress_params: Default::default(),
+    }
+}
+
+fn goto_params(uri: lsp_types::Url, line: u32, col: u32) -> GotoDefinitionParams {
+    GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier::new(uri),
+            position: Position::new(line, col),
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    }
+}
+
+/// `textDocument/rangeFormatting` must rewrite only a change that sits inside
+/// the selection. A selection that does not contain the change is left alone.
+#[test]
+fn test_range_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+
+    // `x = 1` -> `x =   1`, in the buffer only
+    client.notify_change(uri.clone().raw(), add_char(0, 3, "  "))?;
+    let first_line = Range {
+        start: Position::new(0, 0),
+        end: Position::new(1, 0),
+    };
+    let edits = client
+        .request::<RangeFormatting>(range_formatting_params(uri.clone().raw(), first_line))?
+        .unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "x = 1\n");
+    assert_eq!(edits[0].range, first_line);
+
+    let second_line = Range {
+        start: Position::new(1, 0),
+        end: Position::new(2, 0),
+    };
+    let edits = client
+        .request::<RangeFormatting>(range_formatting_params(uri.raw(), second_line))?
+        .unwrap();
+    assert!(
+        edits.is_empty(),
+        "a selection that does not contain the change must not be rewritten: {edits:?}"
+    );
+    Ok(())
+}
+
+/// `textDocument/declaration` jumps to the binding and does not follow an
+/// import the way `textDocument/definition` does.
+#[test]
+#[exec_new_thread]
+fn test_goto_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+    let Some(GotoDefinitionResponse::Scalar(location)) =
+        client.request::<GotoDeclaration>(goto_params(uri.clone().raw(), 1, 4))?
+    else {
+        return Err("no declaration found for `x`".into());
+    };
+    assert_eq!(&location.range, &oneline_range(0, 0, 1));
+
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_IMPORTS).canonicalize()?)?;
+    client.notify_open(FILE_IMPORTS)?;
+    // `glob` on the import line: declaration stays on the binding.
+    let Some(GotoDefinitionResponse::Scalar(location)) =
+        client.request::<GotoDeclaration>(goto_params(uri.raw(), 0, 0))?
+    else {
+        return Err("no declaration found for imported `glob`".into());
+    };
+    assert_eq!(&location.range, &oneline_range(0, 0, 4));
+    Ok(())
+}
+
+/// Folding covers functions and method blocks, not only consecutive imports.
+#[test]
+#[exec_new_thread]
+fn test_folding_range_blocks() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_FOLD).canonicalize()?)?;
+    client.notify_open(FILE_FOLD)?;
+    let ranges = client.request_folding_range(uri.raw())?.unwrap();
+    assert!(
+        ranges.iter().any(|r| {
+            r.kind == Some(FoldingRangeKind::Region) && r.start_line == 0 && r.end_line >= 2
+        }),
+        "function `f` should fold: {ranges:?}"
+    );
+    assert!(
+        ranges.iter().any(|r| {
+            r.kind == Some(FoldingRangeKind::Region)
+                && r.start_line >= 4
+                && r.end_line > r.start_line
+        }),
+        "methods of `C` should fold: {ranges:?}"
     );
     Ok(())
 }

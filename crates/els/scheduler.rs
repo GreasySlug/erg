@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
@@ -114,6 +114,8 @@ pub struct Task {
 pub struct Scheduler {
     pending: Shared<VecDeque<Task>>,
     executing: Shared<Vec<Task>>,
+    /// IDs cancelled via `$/cancelRequest`, including tasks already executing.
+    cancelled: Shared<HashSet<TaskID>>,
 }
 
 impl fmt::Display for Scheduler {
@@ -149,6 +151,7 @@ impl Scheduler {
         Self {
             pending: Shared::new(VecDeque::with_capacity(10)),
             executing: Shared::new(Vec::with_capacity(10)),
+            cancelled: Shared::new(HashSet::new()),
         }
     }
 
@@ -204,15 +207,32 @@ impl Scheduler {
         }
     }
 
-    /// Only pending tasks can be cancelled
-    /// TODO: cancel executing tasks
+    /// Marks `id` as cancelled. Pending tasks are removed so [`acquire`] returns
+    /// `None`; executing tasks keep running but [`is_cancelled`] is true so the
+    /// worker can send `-32800` instead of the result.
     pub fn cancel(&self, id: TaskID) -> Option<Task> {
-        let mut lock = self.pending.borrow_mut();
-        let idx = lock.iter().position(|task| task.id == id)?;
-        lock.remove(idx)
+        self.cancelled.borrow_mut().insert(id);
+        let pending_idx = self
+            .pending
+            .borrow()
+            .iter()
+            .position(|task| task.id == id);
+        if let Some(idx) = pending_idx {
+            return self.pending.borrow_mut().remove(idx);
+        }
+        self.executing
+            .borrow()
+            .iter()
+            .find(|task| task.id == id)
+            .copied()
+    }
+
+    pub fn is_cancelled(&self, id: TaskID) -> bool {
+        self.cancelled.borrow().contains(&id)
     }
 
     pub fn finish(&self, id: TaskID) -> Option<Task> {
+        self.cancelled.borrow_mut().remove(&id);
         let mut lock = self.executing.borrow_mut();
         let idx = lock.iter().position(|task| task.id == id)?;
         Some(lock.remove(idx))
@@ -241,5 +261,36 @@ impl Scheduler {
             .map(|task| now.saturating_sub(task.started_at))
             .max()
             .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_pending_makes_acquire_none() {
+        let s = Scheduler::new();
+        for i in 0..MAX_WORKERS as i64 {
+            s.register(i, HoverRequest::METHOD);
+        }
+        let pending_id = MAX_WORKERS as i64;
+        s.register(pending_id, HoverRequest::METHOD);
+        assert!(s.cancel(pending_id).is_some());
+        assert!(s.acquire(pending_id).is_none());
+        assert!(s.is_cancelled(pending_id));
+    }
+
+    #[test]
+    fn cancel_executing_keeps_task_until_finish() {
+        let s = Scheduler::new();
+        s.register(1, HoverRequest::METHOD);
+        assert!(s.acquire(1).is_some());
+        assert!(s.cancel(1).is_some());
+        assert!(s.is_cancelled(1));
+        assert!(s.acquire(1).is_some());
+        s.finish(1);
+        assert!(!s.is_cancelled(1));
+        assert!(s.acquire(1).is_none());
     }
 }

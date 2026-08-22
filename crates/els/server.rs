@@ -35,6 +35,7 @@ use erg_compiler::ty::{HasType, Type};
 pub use molc::RedirectableStdout;
 use molc::{FakeClient, LangServer};
 
+use lsp_types::error_codes::REQUEST_CANCELLED;
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, CodeActionResolveRequest, CodeLensRequest, Completion,
@@ -186,6 +187,8 @@ pub struct Flags {
     pub(crate) client_initialized: Arc<AtomicBool>,
     pub(crate) workspace_checked: Arc<AtomicBool>,
     pub(crate) builtin_modules_loaded: Arc<AtomicBool>,
+    /// Bumped on [`Server::restart`] so the health-check sender thread exits.
+    pub(crate) health_check_gen: Arc<AtomicU64>,
 }
 
 impl Flags {
@@ -683,6 +686,16 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         }))
     }
 
+    fn send_request_cancelled(&self, id: i64) -> ELSResult<()> {
+        self.send_stdout(&ErrorMessage::new(
+            Some(id),
+            json!({
+                "code": REQUEST_CANCELLED,
+                "message": "Request cancelled",
+            }),
+        ))
+    }
+
     /// Send a request from the server to the client (e.g. `workspace/applyEdit`).
     pub(crate) fn send_client_request<P: Serialize>(
         &self,
@@ -837,6 +850,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         // A dispatch that panicked (unwind) leaves `in_flight_since` set; clear it
         // on recovery so the watchdog does not flag the restarted server as stuck.
         self.in_flight_since.store(0, Ordering::Relaxed);
+        self.flags.health_check_gen.fetch_add(1, Ordering::Relaxed);
         // self.file_cache.clear();
         self.comp_cache.clear();
         if let Some(chan) = self.channels.as_ref() {
@@ -965,14 +979,25 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         _self.scheduler.register(id, R::METHOD);
                         if _self.scheduler.acquire(id).is_none() {
                             _log!(_self, "canceled: {id}");
+                            let _ = _self.send_request_cancelled(id);
                             continue;
                         }
                         // Drops at the end of this arm, removing the task from the
                         // executing set even if `handler` panics and unwinds.
                         let _finish = _self.scheduler.finish_on_drop(id);
+                        if _self.scheduler.is_cancelled(id) {
+                            _log!(_self, "canceled (executing): {id}");
+                            let _ = _self.send_request_cancelled(id);
+                            continue;
+                        }
                         match handler(&mut _self, params) {
                             Ok(result) => {
-                                let _ = _self.send_stdout(&LSPResult::new(id, result));
+                                if _self.scheduler.is_cancelled(id) {
+                                    _log!(_self, "canceled after handler: {id}");
+                                    let _ = _self.send_request_cancelled(id);
+                                } else {
+                                    let _ = _self.send_stdout(&LSPResult::new(id, result));
+                                }
                             }
                             Err(err) => {
                                 lsp_log!("error: {err}");
@@ -1142,7 +1167,6 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         .is_some_and(|r| r.start.character == 0)
                 {
                     let uri = NormalizedUrl::new(params.text_document.uri.clone());
-                    // TODO: reset mutable dependent types
                     self.quick_check_file(uri)?;
                 }
                 self.file_cache.incremental_update(params);
@@ -1212,12 +1236,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.shared.raw_ref_ctx_with_timeout(&path, timeout)
     }
 
-    /// TODO: Reuse cache.
-    /// Because of the difficulty of caching "transitional types" such as assert casting and mutable dependent types,
-    /// the cache is deleted after each analysis.
+    /// Inherited checker over the shared module cache.
+    /// Only this file is dropped from the cache (imported modules stay);
+    /// dependents are rebuilt by [`Self::check_file`].
     pub(crate) fn get_checker(&self, path: PathBuf) -> Checker {
         let shared = self.shared.clone();
-        shared.clear(&NormalizedPathBuf::from(&path));
+        shared.clear_path(&NormalizedPathBuf::from(&path));
         Checker::inherit(self.cfg.inherit(path), shared)
     }
 

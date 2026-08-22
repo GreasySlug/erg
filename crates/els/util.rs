@@ -101,10 +101,13 @@ pub(crate) fn _range_to_loc(range: Range) -> erg_common::error::Location {
 }
 
 pub(crate) fn loc_to_pos(loc: erg_common::error::Location) -> Option<Position> {
-    // FIXME: should `Position::new(loc.ln_begin()? - 1, loc.col_begin()?)`
-    // but completion doesn't work (because the newline will be included)
-    let start = Position::new(loc.ln_begin()?.saturating_sub(1), loc.col_begin()? + 1);
-    Some(start)
+    // Same origin as `loc_to_range.start`: Erg columns are 0-based like LSP.
+    // HIR lookup uses `pos_in_loc`, which compares `pos.character` with
+    // `col_begin..col_end` directly — do not add a column offset here.
+    Some(Position::new(
+        loc.ln_begin()?.saturating_sub(1),
+        loc.col_begin()?,
+    ))
 }
 
 pub fn pos_to_loc(pos: Position) -> erg_common::error::Location {
@@ -195,4 +198,26 @@ pub(crate) fn abs_loc_to_lsp_loc(loc: &AbsLocation) -> Option<lsp_types::Locatio
     let uri = Url::from_file_path(loc.module.as_ref()?).ok()?;
     let range = loc_to_range(loc.loc)?;
     Some(lsp_types::Location::new(uri, range))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use erg_common::error::Location;
+
+    #[test]
+    fn loc_to_pos_uses_col_begin() {
+        let loc = Location::range(2, 0, 2, 1);
+        assert_eq!(loc_to_pos(loc), Some(Position::new(1, 0)));
+        let loc = Location::range(1, 5, 1, 8);
+        assert_eq!(loc_to_pos(loc), Some(Position::new(0, 5)));
+    }
+
+    #[test]
+    fn loc_to_pos_matches_range_start() {
+        let loc = Location::range(3, 4, 3, 10);
+        let pos = loc_to_pos(loc).unwrap();
+        let range = loc_to_range(loc).unwrap();
+        assert_eq!(pos, range.start);
+    }
 }

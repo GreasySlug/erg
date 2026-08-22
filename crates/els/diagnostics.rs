@@ -258,7 +258,6 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(())
     }
 
-    // TODO: reset mutable dependent types
     pub(crate) fn quick_check_file(&mut self, uri: NormalizedUrl) -> ELSResult<()> {
         if self.file_cache.editing.borrow().contains(&uri) {
             _log!(self, "skipped: {uri}");
@@ -288,6 +287,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             return Ok(());
         }
         if let Some((mut lowerer, mut irs)) = self.steal_lowerer(&uri) {
+            if let Some(hir) = irs.hir.as_ref() {
+                lowerer.reset_transitional_types(hir);
+            }
             if let Some((hir_diff, hir)) =
                 HIRDiff::new(ast_diff.clone(), &mut lowerer).zip(irs.hir.as_mut())
             {
@@ -565,13 +567,17 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             return;
         };
         let _self = self.clone();
-        // FIXME: close this thread when the server is restarted
+        let health_check_gen = self.flags.health_check_gen.clone();
+        let my_gen = health_check_gen.load(Ordering::Relaxed);
         spawn_new_thread(
             move || {
                 while !_self.flags.client_initialized() {
                     safe_yield();
                 }
                 loop {
+                    if health_check_gen.load(Ordering::Relaxed) != my_gen {
+                        break;
+                    }
                     // self.send_log("checking client health").unwrap();
                     let params = ConfigurationParams { items: vec![] };
                     _self

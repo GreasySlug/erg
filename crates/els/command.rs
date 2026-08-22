@@ -6,7 +6,6 @@ use serde_json::Value;
 
 use erg_common::lsp_log;
 use erg_compiler::artifact::BuildRunnable;
-use erg_compiler::hir::Expr;
 
 use lsp_types::request::{ApplyWorkspaceEdit, Request};
 use lsp_types::{
@@ -104,9 +103,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .filter_map(|loc| {
                 let uri = NormalizedUrl::new(loc.uri.clone());
                 let visitor = self.get_visitor(&uri)?;
-                let Expr::ClassDef(class_def) = visitor.get_min_expr(loc.range.start)? else {
-                    return None;
-                };
+                let class_def = visitor.get_class_def_at(loc.range.start)?;
                 // exclude self-references inside the class's own body
                 // (e.g. `C { .x = x }` in `C`'s own constructor)
                 (&class_def.sig.ident().vi.def_loc != referee).then_some(loc)

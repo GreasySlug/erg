@@ -9,12 +9,11 @@ use erg_compiler::varinfo::VarInfo;
 use lsp_types::Position;
 
 use crate::file_cache::FileCache;
-use crate::util::{self, pos_to_loc, NormalizedUrl};
+use crate::util::{self, NormalizedUrl};
 
 trait PosLocational {
     fn ln_begin(&self) -> Option<u32>;
     fn ln_end(&self) -> Option<u32>;
-    fn loc(&self) -> erg_common::error::Location;
 }
 
 impl PosLocational for Position {
@@ -23,9 +22,6 @@ impl PosLocational for Position {
     }
     fn ln_end(&self) -> Option<u32> {
         Some(self.line + 1)
-    }
-    fn loc(&self) -> erg_common::error::Location {
-        pos_to_loc(*self)
     }
 }
 
@@ -242,6 +238,20 @@ impl<'a> HIRVisitor<'a> {
         None
     }
 
+    /// The top-level `ClassDef` whose span contains `pos`, if any.
+    /// Unlike [`get_min_expr`], this is not the innermost expression (e.g. `C` in
+    /// `D = Inherit C` is an accessor; the enclosing class is `D`).
+    pub fn get_class_def_at(&self, pos: Position) -> Option<&ClassDef> {
+        for chunk in self.hir.module.iter() {
+            if let Expr::ClassDef(class_def) = chunk {
+                if util::pos_in_loc(class_def, pos) || util::roughly_pos_in_loc(class_def, pos) {
+                    return Some(class_def);
+                }
+            }
+        }
+        None
+    }
+
     fn return_expr_if_same<'e>(
         &'e self,
         expr: &'e Expr,
@@ -251,7 +261,7 @@ impl<'a> HIRVisitor<'a> {
         if !self.search.matches(expr) {
             return None;
         }
-        if l.loc().contains(r.loc()) {
+        if util::pos_in_loc(l, r) {
             Some(expr)
         } else {
             None
@@ -264,7 +274,7 @@ impl<'a> HIRVisitor<'a> {
         pos: Position,
         loc: &impl Locational,
     ) -> Option<&'e Expr> {
-        (loc.loc().contains(pos.loc()) && self.search.matches(expr)).then_some(expr)
+        (util::pos_in_loc(loc, pos) && self.search.matches(expr)).then_some(expr)
     }
 
     fn get_expr<'e>(&'e self, expr: &'e Expr, pos: Position) -> Option<&'e Expr> {
@@ -316,7 +326,7 @@ impl<'a> HIRVisitor<'a> {
         bin: &'e BinOp,
         pos: Position,
     ) -> Option<&'e Expr> {
-        if bin.op.loc().contains(pos.loc()) && self.search.matches(expr) {
+        if util::pos_in_loc(&bin.op, pos) && self.search.matches(expr) {
             return Some(expr);
         }
         self.get_expr(&bin.lhs, pos)
@@ -443,9 +453,7 @@ impl<'a> HIRVisitor<'a> {
         lambda: &'e Lambda,
         pos: Position,
     ) -> Option<&'e Expr> {
-        if util::pos_in_loc(&lambda.params, util::loc_to_pos(pos.loc())?)
-            && self.search.matches(expr)
-        {
+        if util::pos_in_loc(&lambda.params, pos) && self.search.matches(expr) {
             return Some(expr);
         }
         self.get_expr_from_block(lambda.body.iter(), pos)

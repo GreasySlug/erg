@@ -794,6 +794,34 @@ impl Context {
             .remove(name)
             .or_else(|| self.locals.remove(name))
     }
+
+    /// Overwrite the stored type of `name` after assert-casting or a mutable
+    /// dependent-type update (`v.push!`, etc.). Recurses into method/type scopes.
+    pub fn restore_var_type(&mut self, name: &str, t: Type) {
+        if let Some(vi) = self.locals.get_mut(name) {
+            vi.t = t.clone();
+        }
+        if let Some(vi) = self.decls.get_mut(name) {
+            vi.t = t.clone();
+        }
+        for (opt_name, vi) in self.params.iter_mut() {
+            if opt_name.as_ref().is_some_and(|n| n.inspect() == name) {
+                vi.t = t.clone();
+            }
+        }
+        for methods in self.methods_list.iter_mut() {
+            methods.restore_var_type(name, t.clone());
+        }
+        for ctx in self.mono_types.values_mut() {
+            ctx.restore_var_type(name, t.clone());
+        }
+        for ctx in self.poly_types.values_mut() {
+            ctx.restore_var_type(name, t.clone());
+        }
+        for ctx in self.patches.values_mut() {
+            ctx.restore_var_type(name, t.clone());
+        }
+    }
 }
 
 impl Context {
@@ -1656,5 +1684,15 @@ impl ModuleContext {
 
     pub fn is_empty(&self) -> bool {
         self.context.is_empty()
+    }
+
+    /// Restore a variable's type in this module (locals, params, nested scopes).
+    /// Used by ELS to undo assert-casting / mutable dependent-type updates before
+    /// incremental re-lowering.
+    pub fn restore_var_type(&mut self, name: &str, t: Type) {
+        self.context.restore_var_type(name, t.clone());
+        for ctx in self.scope.values_mut() {
+            ctx.restore_var_type(name, t.clone());
+        }
     }
 }

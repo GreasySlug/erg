@@ -10,7 +10,6 @@ use erg_common::shared::MappedRwLockReadGuard;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::context::ModuleContext;
 use erg_compiler::erg_parser::parse::Parsable;
-use erg_compiler::hir::Expr;
 use erg_compiler::ty::Type;
 use erg_compiler::varinfo::AbsLocation;
 use lsp_types::request::Request;
@@ -172,10 +171,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
 
     fn class_type_at(&self, uri: &NormalizedUrl, pos: lsp_types::Position) -> Option<Type> {
         let visitor = self.get_visitor(uri)?;
-        let Expr::ClassDef(class_def) = visitor.get_min_expr(pos)? else {
-            return None;
-        };
-        Some(class_def.obj.typ().clone())
+        Some(visitor.get_class_def_at(pos)?.obj.typ().clone())
     }
 
     /// Direct superclass (if any) plus traits this type implements itself.

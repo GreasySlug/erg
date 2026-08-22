@@ -86,8 +86,20 @@
 
 ## P4: 内部品質・性能
 
-- [ ] 実行中タスクの cancel (`scheduler.rs:202`)
-- [ ] mutable dependent type のリセット (`diagnostics.rs:261`, `server.rs:1077`)
-- [ ] health checker スレッドの再起動時 kill (`diagnostics.rs:568`)
-- [ ] `get_checker` のキャッシュ再利用 (`server.rs:1132`)
-- [ ] `loc_to_pos` の列オフセット回避策の根本解決 (`util.rs:104`)
+- [x] 実行中タスクの cancel (`scheduler.rs`)
+  → **完了**: `$/cancelRequest` は pending だけでなく executing も cancelled 集合に残し、
+    ワーカーは結果の代わりに `-32800 RequestCancelled` を返す(pending で acquire が
+    None のときも silent drop せず応答する)。test_cancel_request + scheduler 単体テスト。
+- [x] mutable dependent type のリセット (`diagnostics.rs`, `server.rs`)
+  → **完了**: `quick_check_file` の差分 lowering 前に HIR 定義時の型へ `restore_var_type`。
+    assert キャスト / `push!` で書き換わった locals を戻してから再 lowering する。
+- [x] health checker スレッドの再起動時 kill (`diagnostics.rs`)
+  → **完了**: `Flags::health_check_gen` を `restart()` でインクリメントし、
+    sender ループが世代不一致で抜ける。receiver は従来どおり `Kill`。
+- [x] `get_checker` のキャッシュ再利用 (`server.rs`)
+  → **完了**: 対象ファイルだけ `clear_path`(再帰的な dependents 削除をやめる)。
+    import 済みモジュールは共有キャッシュに残し、dependents は `check_file` が再検査。
+- [x] `loc_to_pos` の列オフセット回避策の根本解決 (`util.rs`)
+  → **完了**: `loc_to_pos` を `loc_to_range.start` と同じ `col_begin`(LSP 0-origin)に。
+    HIR visitor は `Location::contains(pos_to_loc)` ではなく `pos_in_loc` で照合。
+    (+1/-1 の相殺は completion が Newline を掴む回避策だった)

@@ -39,6 +39,7 @@ use els::{
 };
 use erg_proc_macros::exec_new_thread;
 use molc::{add_char, delete_line, oneline_range};
+use serde_json::json;
 
 #[test]
 fn test_open() -> Result<(), Box<dyn std::error::Error>> {
@@ -1036,4 +1037,48 @@ fn edit_rewrites_import(td: &lsp_types::TextDocumentEdit, importer: &lsp_types::
             lsp_types::OneOf::Left(te) => te.new_text.contains("sub/renamed"),
             lsp_types::OneOf::Right(ann) => ann.text_edit.new_text.contains("sub/renamed"),
         })
+}
+
+#[test]
+fn test_cancel_request() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify_open(FILE_A)?;
+    let _ = client.wait_diagnostics()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    const ID: i64 = 9999;
+    // Mark cancelled before the worker registers the request so the response
+    // is deterministically `-32800` (no race with a finished handler).
+    client.server.dispatch(json!({
+        "jsonrpc": "2.0",
+        "method": "$/cancelRequest",
+        "params": { "id": ID },
+    }))?;
+    client.server.dispatch(json!({
+        "jsonrpc": "2.0",
+        "id": ID,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": uri.raw() },
+            "position": { "line": 0, "character": 0 }
+        }
+    }))?;
+    for _ in 0..80 {
+        client.wait_messages(1)?;
+        if let Some(msg) = client
+            .responses
+            .iter()
+            .rev()
+            .find(|m| m.get("id") == Some(&json!(ID)))
+        {
+            assert_eq!(
+                msg["error"]["code"].as_i64(),
+                Some(-32800),
+                "expected RequestCancelled: {msg}"
+            );
+            return Ok(());
+        }
+    }
+    Err("no response for cancelled hover".into())
 }

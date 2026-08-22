@@ -286,6 +286,65 @@ impl<ASTBuilder: ASTBuildable> GenericASTLowerer<ASTBuilder> {
     pub fn unregister(&mut self, name: &str) -> Option<VarInfo> {
         self.module.context.unregister(name)
     }
+
+    /// Restore types mutated by assert-casting / `push!`-style updates to the
+    /// types recorded on the HIR at definition time. ELS calls this before
+    /// incremental re-lowering so a later mutation is not applied twice.
+    pub fn reset_transitional_types(&mut self, hir: &HIR) {
+        let mut types = vec![];
+        for chunk in hir.module.iter() {
+            collect_def_types(chunk, &mut types);
+        }
+        for (name, t) in types {
+            self.module.restore_var_type(&name, t);
+        }
+    }
+}
+
+fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type)>) {
+    match expr {
+        hir::Expr::Def(def) => {
+            out.push((def.sig.inspect().clone(), def.sig.ident().vi.t.clone()));
+            for chunk in def.body.block.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        hir::Expr::ClassDef(class) => {
+            out.push((class.sig.inspect().clone(), class.sig.ident().vi.t.clone()));
+            for methods in class.methods_list.iter() {
+                for chunk in methods.defs.iter() {
+                    collect_def_types(chunk, out);
+                }
+            }
+        }
+        hir::Expr::PatchDef(patch) => {
+            out.push((patch.sig.inspect().clone(), patch.sig.ident().vi.t.clone()));
+            for chunk in patch.methods.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        hir::Expr::Lambda(lambda) => {
+            for chunk in lambda.body.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        hir::Expr::Compound(block) | hir::Expr::Code(block) => {
+            for chunk in block.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        hir::Expr::Dummy(dummy) => {
+            for chunk in dummy.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        hir::Expr::ReDef(redef) => {
+            for chunk in redef.block.iter() {
+                collect_def_types(chunk, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 impl<A: ASTBuildable> GenericASTLowerer<A> {

@@ -111,12 +111,10 @@ pub(crate) fn loc_to_pos(loc: erg_common::error::Location) -> Option<Position> {
 }
 
 pub fn pos_to_loc(pos: Position) -> erg_common::error::Location {
-    erg_common::error::Location::range(
-        pos.line + 1,
-        pos.character.saturating_sub(1),
-        pos.line + 1,
-        pos.character,
-    )
+    // LSP `character` is already 0-based, same as Erg `col_begin`.
+    // A zero-width range at the cursor compares with token spans via
+    // `Location`'s overlap order (`col_end <= col_begin` ⇒ less).
+    erg_common::error::Location::range(pos.line + 1, pos.character, pos.line + 1, pos.character)
 }
 
 pub(crate) fn pos_in_loc<L: Locational>(loc: &L, pos: Position) -> bool {
@@ -219,5 +217,14 @@ mod tests {
         let pos = loc_to_pos(loc).unwrap();
         let range = loc_to_range(loc).unwrap();
         assert_eq!(pos, range.start);
+    }
+
+    #[test]
+    fn pos_to_loc_uses_the_lsp_column() {
+        let pos = Position::new(1, 7);
+        let loc = pos_to_loc(pos);
+        assert_eq!(loc.ln_begin(), Some(2));
+        assert_eq!(loc.col_begin(), Some(7));
+        assert_eq!(loc_to_pos(loc), Some(pos));
     }
 }

@@ -401,25 +401,22 @@ fn site_package_mod_names() -> Vec<String> {
     collect_site_package_mod_names(python_site_packages().iter().map(|p| p.as_path()))
 }
 
-fn site_package_stub_mod_names() -> Vec<String> {
+fn stub_mod_names_in(site: &Path) -> Vec<String> {
     let mut names = Set::new();
-    for site in python_site_packages() {
-        if site.join("__pycache__").is_dir() {
-            if let Ok(entries) = site.join("__pycache__").read_dir() {
-                for ent in entries.flatten() {
-                    let fname = ent.file_name();
-                    let fname = fname.to_string_lossy();
-                    if let Some(stem) = fname.strip_suffix(".d.er") {
-                        if is_exportable_mod_name(stem) {
-                            names.insert(stem.to_string());
-                        }
+    if site.join("__pycache__").is_dir() {
+        if let Ok(entries) = site.join("__pycache__").read_dir() {
+            for ent in entries.flatten() {
+                let fname = ent.file_name();
+                let fname = fname.to_string_lossy();
+                if let Some(stem) = fname.strip_suffix(".d.er") {
+                    if is_exportable_mod_name(stem) {
+                        names.insert(stem.to_string());
                     }
                 }
             }
         }
-        let Ok(entries) = site.read_dir() else {
-            continue;
-        };
+    }
+    if let Ok(entries) = site.read_dir() {
         for ent in entries.flatten() {
             let init_stub = ent.path().join("__pycache__").join("__init__.d.er");
             if init_stub.is_file() {
@@ -432,6 +429,22 @@ fn site_package_stub_mod_names() -> Vec<String> {
         }
     }
     names.into_iter().collect()
+}
+
+/// Relative module name of a `.d.er` stub under `root`, or `None` if `path` is
+/// not inside `root` (an empty root is rejected so we never treat a full
+/// filesystem path as a module name).
+fn module_name_from_stub_path(path: &Path, root: &Path) -> Option<String> {
+    if root.as_os_str().is_empty() {
+        return None;
+    }
+    let rel = path.strip_prefix(root).ok()?;
+    let rel_s = rel.to_string_lossy().replace('\\', "/");
+    let name = rel_s
+        .trim_end_matches("/__init__.d.er")
+        .trim_end_matches(".d.er")
+        .replace(".d", "");
+    (!name.is_empty()).then_some(name)
 }
 
 fn site_package_module_item(name: &str) -> CompletionItem {
@@ -475,16 +488,14 @@ fn load_modules<'a>(
     if cache.get("<module>").is_none() {
         cache.insert("<module>".into(), module_completions());
     }
-    let std_path = root.display().to_string().replace('\\', "/");
     for (path, entry) in shared.py_mod_cache.ref_inner().iter() {
+        if !root.as_os_str().is_empty() && !path.starts_with(root) {
+            continue;
+        }
         let dir = entry.module.context.local_dir();
-        let mod_name = path.display().to_string().replace('\\', "/");
-        let mod_name = mod_name
-            .trim_start_matches(&std_path)
-            .trim_start_matches('/')
-            .trim_end_matches("/__init__.d.er")
-            .trim_end_matches(".d.er")
-            .replace(".d", "");
+        let Some(mod_name) = module_name_from_stub_path(path, root) else {
+            continue;
+        };
         let items = dir
             .into_iter()
             .filter(|(name, _)| !name.inspect().starts_with('%'))
@@ -560,14 +571,18 @@ impl CompletionCache {
                             comps.extend(site_mods.iter().map(|n| site_package_module_item(n)));
                         }
                     }
-                    let stub_mods = site_package_stub_mod_names();
-                    if !stub_mods.is_empty() {
+                    let stub_sites = python_site_packages();
+                    for site in stub_sites {
+                        let stub_mods = stub_mod_names_in(site);
+                        if stub_mods.is_empty() {
+                            continue;
+                        }
                         load_modules(
-                            cfg,
-                            clone,
-                            Path::new(""),
+                            cfg.clone(),
+                            clone.clone(),
+                            site,
                             stub_mods.iter().map(|s| s.as_str()),
-                            shared,
+                            shared.clone(),
                         );
                     }
                     flags
@@ -868,6 +883,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             if !self
                 .disabled_features
+                .borrow()
                 .contains(&DefaultFeatures::DeepCompletion)
             {
                 result.extend(self.neighbor_completion(&uri, arg_pt, &mut already_appeared));
@@ -1030,5 +1046,33 @@ mod tests {
         assert!(!names
             .iter()
             .any(|n| n.contains("dist-info") || n == "__pycache__"));
+    }
+
+    #[test]
+    fn stub_path_under_root_becomes_a_module_name() {
+        let root = Path::new("/site-packages");
+        let path = Path::new("/site-packages/requests/__init__.d.er");
+        assert_eq!(
+            module_name_from_stub_path(path, root).as_deref(),
+            Some("requests")
+        );
+        assert_eq!(
+            module_name_from_stub_path(Path::new("/other/foo.d.er"), root),
+            None,
+            "stubs outside the root must not be treated as modules"
+        );
+        assert_eq!(
+            module_name_from_stub_path(path, Path::new("")),
+            None,
+            "an empty root would turn the full path into a completion label"
+        );
+        assert_eq!(
+            module_name_from_stub_path(
+                Path::new("/site-packages-extra/foo.d.er"),
+                Path::new("/site-packages")
+            ),
+            None,
+            "a path that only shares a string prefix with the root is not inside it"
+        );
     }
 }

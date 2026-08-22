@@ -54,7 +54,7 @@ use crate::error::{
 use crate::hir;
 use crate::hir::HIR;
 use crate::link_ast::ASTLinker;
-use crate::varinfo::{VarInfo, VarKind};
+use crate::varinfo::{AbsLocation, VarInfo, VarKind};
 use crate::{feature_error, unreachable_error};
 use crate::{AccessKind, GenericHIRBuilder};
 
@@ -295,22 +295,82 @@ impl<ASTBuilder: ASTBuildable> GenericASTLowerer<ASTBuilder> {
         for chunk in hir.module.iter() {
             collect_def_types(chunk, &mut types);
         }
-        for (name, t) in types {
-            self.module.restore_var_type(&name, t);
+        for (name, t, loc) in types {
+            self.module.restore_var_type(&name, t, &loc);
         }
     }
 }
 
-fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type)>) {
-    match expr {
-        hir::Expr::Def(def) => {
-            out.push((def.sig.inspect().clone(), def.sig.ident().vi.t.clone()));
-            for chunk in def.body.block.iter() {
-                collect_def_types(chunk, out);
-            }
+fn collect_binding(name: &Str, vi: &VarInfo, out: &mut Vec<(Str, Type, AbsLocation)>) {
+    out.push((name.clone(), vi.t.clone(), vi.def_loc.clone()));
+}
+
+fn collect_from_params(params: &hir::Params, out: &mut Vec<(Str, Type, AbsLocation)>) {
+    let nd = params
+        .non_defaults
+        .iter()
+        .chain(params.var_params.as_deref())
+        .chain(params.kw_var_params.as_deref());
+    for p in nd {
+        if let Some(name) = p.inspect() {
+            collect_binding(name, &p.vi, out);
         }
+        if let Some(expr) = &p.t_spec_as_expr {
+            collect_def_types(expr, out);
+        }
+    }
+    for p in params.defaults.iter() {
+        if let Some(name) = p.inspect() {
+            collect_binding(name, &p.sig.vi, out);
+        }
+        if let Some(expr) = &p.sig.t_spec_as_expr {
+            collect_def_types(expr, out);
+        }
+        collect_def_types(&p.default_val, out);
+    }
+    for guard in params.guards.iter() {
+        match guard {
+            hir::GuardClause::Condition(expr) => collect_def_types(expr, out),
+            hir::GuardClause::Bind(def) => collect_from_def(def, out),
+        }
+    }
+}
+
+fn collect_from_args(args: &hir::Args, out: &mut Vec<(Str, Type, AbsLocation)>) {
+    for arg in args.pos_args.iter() {
+        collect_def_types(&arg.expr, out);
+    }
+    if let Some(var) = &args.var_args {
+        collect_def_types(&var.expr, out);
+    }
+    for arg in args.kw_args.iter() {
+        collect_def_types(&arg.expr, out);
+    }
+    if let Some(var) = &args.kw_var {
+        collect_def_types(&var.expr, out);
+    }
+}
+
+fn collect_from_def(def: &hir::Def, out: &mut Vec<(Str, Type, AbsLocation)>) {
+    let ident = def.sig.ident();
+    collect_binding(ident.inspect(), &ident.vi, out);
+    if let hir::Signature::Subr(subr) = &def.sig {
+        collect_from_params(&subr.params, out);
+    }
+    for chunk in def.body.block.iter() {
+        collect_def_types(chunk, out);
+    }
+}
+
+fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type, AbsLocation)>) {
+    match expr {
+        hir::Expr::Def(def) => collect_from_def(def, out),
         hir::Expr::ClassDef(class) => {
-            out.push((class.sig.inspect().clone(), class.sig.ident().vi.t.clone()));
+            let ident = class.sig.ident();
+            collect_binding(ident.inspect(), &ident.vi, out);
+            if let Some(req) = class.require_or_sup.as_deref() {
+                collect_def_types(req, out);
+            }
             for methods in class.methods_list.iter() {
                 for chunk in methods.defs.iter() {
                     collect_def_types(chunk, out);
@@ -318,16 +378,68 @@ fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type)>) {
             }
         }
         hir::Expr::PatchDef(patch) => {
-            out.push((patch.sig.inspect().clone(), patch.sig.ident().vi.t.clone()));
+            let ident = patch.sig.ident();
+            collect_binding(ident.inspect(), &ident.vi, out);
+            collect_def_types(&patch.base, out);
             for chunk in patch.methods.iter() {
                 collect_def_types(chunk, out);
             }
         }
         hir::Expr::Lambda(lambda) => {
+            collect_from_params(&lambda.params, out);
             for chunk in lambda.body.iter() {
                 collect_def_types(chunk, out);
             }
         }
+        hir::Expr::Call(call) => {
+            collect_def_types(&call.obj, out);
+            collect_from_args(&call.args, out);
+        }
+        hir::Expr::Record(rec) => {
+            for def in rec.attrs.iter() {
+                collect_from_def(def, out);
+            }
+        }
+        hir::Expr::List(lis) => match lis {
+            hir::List::Normal(lis) => collect_from_args(&lis.elems, out),
+            hir::List::Comprehension(lis) => {
+                collect_def_types(&lis.elem, out);
+                collect_def_types(&lis.guard, out);
+            }
+            hir::List::WithLength(lis) => {
+                collect_def_types(&lis.elem, out);
+                if let Some(len) = lis.len.as_deref() {
+                    collect_def_types(len, out);
+                }
+            }
+        },
+        hir::Expr::Tuple(hir::Tuple::Normal(tup)) => collect_from_args(&tup.elems, out),
+        hir::Expr::Dict(dict) => match dict {
+            hir::Dict::Normal(dict) => {
+                for kv in dict.kvs.iter() {
+                    collect_def_types(&kv.key, out);
+                    collect_def_types(&kv.value, out);
+                }
+            }
+            hir::Dict::Comprehension(dict) => {
+                collect_def_types(&dict.key, out);
+                collect_def_types(&dict.value, out);
+                collect_def_types(&dict.guard, out);
+            }
+        },
+        hir::Expr::Set(set) => match set {
+            hir::Set::Normal(set) => collect_from_args(&set.elems, out),
+            hir::Set::WithLength(set) => {
+                collect_def_types(&set.elem, out);
+                collect_def_types(&set.len, out);
+            }
+        },
+        hir::Expr::BinOp(bin) => {
+            collect_def_types(&bin.lhs, out);
+            collect_def_types(&bin.rhs, out);
+        }
+        hir::Expr::UnaryOp(unary) => collect_def_types(&unary.expr, out),
+        hir::Expr::TypeAsc(ta) => collect_def_types(&ta.expr, out),
         hir::Expr::Compound(block) | hir::Expr::Code(block) => {
             for chunk in block.iter() {
                 collect_def_types(chunk, out);
@@ -343,7 +455,7 @@ fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type)>) {
                 collect_def_types(chunk, out);
             }
         }
-        _ => {}
+        hir::Expr::Literal(_) | hir::Expr::Accessor(_) | hir::Expr::Import(_) => {}
     }
 }
 

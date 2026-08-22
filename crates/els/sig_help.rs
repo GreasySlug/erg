@@ -71,7 +71,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .map(Trigger::from);
         let result = match trigger {
             Some(Trigger::Paren) => self.get_first_help(&uri, pos),
-            Some(Trigger::Comma) => self.get_continuous_help(&uri, pos),
+            Some(Trigger::Comma) => self
+                .get_continuous_type_app_help(&uri, pos)
+                .or_else(|| self.get_continuous_help(&uri, pos)),
             Some(Trigger::VBar) => self.get_type_app_help(&uri, pos),
             None => None,
         };
@@ -141,6 +143,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         pos: Position,
         ctx: &SignatureHelpContext,
     ) -> Option<SignatureHelp> {
+        if let Some(help) = self.get_continuous_type_app_help(uri, pos) {
+            return Some(help);
+        }
         if let Some(token) = self.file_cache.get_token(uri, pos) {
             crate::_log!(self, "token: {token}");
             if let Some(call) = self.get_min::<Call>(uri, pos) {
@@ -184,6 +189,64 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         }
         crate::_log!(self, "failed to get type application help");
         None
+    }
+
+    /// `,` inside `id|T, U|` is a type-parameter separator, not a call argument.
+    fn get_continuous_type_app_help(
+        &mut self,
+        uri: &NormalizedUrl,
+        pos: Position,
+    ) -> Option<SignatureHelp> {
+        let (expr, nth) = self.type_app_at(uri, pos)?;
+        self.make_type_app_help(&expr, nth)
+    }
+
+    fn type_app_at(&mut self, uri: &NormalizedUrl, pos: Position) -> Option<(Expr, u32)> {
+        let tokens = self.file_cache.get_token_stream(uri)?;
+        let loc = pos_to_loc(pos);
+        let mut open_bar = None;
+        for (i, tk) in tokens.iter().enumerate() {
+            if tk.loc() > loc {
+                break;
+            }
+            if tk.is(TokenKind::VBar) {
+                open_bar = match open_bar {
+                    Some(_) => None,
+                    None => Some(i),
+                };
+            }
+        }
+        let open = open_bar?;
+        // An unclosed `|` from an earlier line must not steal `,` / retrigger
+        // help for a later call (`id|T` then `foo(1,`).
+        for tk in tokens.iter().skip(open + 1) {
+            if tk.loc() > loc || tk.is(TokenKind::VBar) {
+                break;
+            }
+            if matches!(
+                tk.kind,
+                TokenKind::Newline
+                    | TokenKind::Semi
+                    | TokenKind::Assign
+                    | TokenKind::Walrus
+                    | TokenKind::Indent
+                    | TokenKind::Dedent
+            ) {
+                return None;
+            }
+        }
+        let bar_pos = loc_to_pos(tokens[open].loc())?;
+        let (_tok, expr) = self.get_min_expr(uri, bar_pos, -1)?;
+        let mut nth = 0u32;
+        for tk in tokens.iter().skip(open + 1) {
+            if tk.loc() > loc || tk.is(TokenKind::VBar) {
+                break;
+            }
+            if tk.is(TokenKind::Comma) {
+                nth += 1;
+            }
+        }
+        Some((expr, nth))
     }
 
     fn make_type_app_help<S: HasType + NoTypeDisplay>(

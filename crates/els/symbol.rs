@@ -1,6 +1,8 @@
-use std::path::Path;
+use std::collections::HashSet;
 
+use erg_common::pathutil::project_entry_dir_of;
 use erg_common::traits::Locational;
+use erg_compiler::context::Context;
 
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::ast::DefKind;
@@ -9,8 +11,8 @@ use erg_compiler::hir::Expr;
 use erg_compiler::ty::{HasType, Type};
 use erg_compiler::varinfo::VarInfo;
 use lsp_types::{
-    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, SymbolInformation, SymbolKind,
-    WorkspaceSymbolParams,
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Location, SymbolInformation,
+    SymbolKind, Url, WorkspaceSymbolParams,
 };
 
 use crate::_log;
@@ -38,32 +40,46 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         params: WorkspaceSymbolParams,
     ) -> ELSResult<Option<Vec<SymbolInformation>>> {
         _log!(self, "workspace symbol requested: {params:?}");
+        let project_root = project_entry_dir_of(&self.home).unwrap_or(self.home.clone());
+        let uris: Vec<_> = self
+            .shared
+            .raw_path_and_modules()
+            .filter(|(path, _)| path.starts_with(&project_root))
+            .filter_map(|(path, _)| NormalizedUrl::from_file_path(path.as_path()).ok())
+            .collect();
         let mut res = vec![];
-        for context in self.get_workspace_ctxs() {
-            for (name, vi) in context.local_dir() {
-                if name.inspect().starts_with(['%']) {
-                    continue;
+        let mut seen = HashSet::new();
+        for nurl in uris {
+            let uri = nurl.clone().raw();
+            let module_name = nurl
+                .to_file_path()
+                .ok()
+                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()));
+            if let Some(hir) = self.get_hir(&nurl) {
+                for chunk in hir.module.iter() {
+                    if let Some(symbol) = self.symbol(chunk) {
+                        flatten_workspace_symbol(
+                            symbol,
+                            &uri,
+                            module_name.clone(),
+                            &params.query,
+                            &mut seen,
+                            &mut res,
+                        );
+                    }
                 }
-                if vi
-                    .alias_of
-                    .as_ref()
-                    .is_some_and(|alias| &alias.name == name.inspect())
-                {
-                    continue;
-                }
-                let Some(location) = abs_loc_to_lsp_loc(&vi.def_loc) else {
-                    continue;
-                };
-                #[allow(deprecated)]
-                let info = SymbolInformation {
-                    name: name.to_string(),
-                    location,
-                    kind: symbol_kind(vi),
-                    container_name: symbol_container_name(vi),
-                    tags: None,
-                    deprecated: None,
-                };
-                res.push(info);
+                continue;
+            }
+            // Failed checks may still have a context with toplevel names.
+            if let Some(mod_ctx) = self.get_mod_ctx(&nurl) {
+                collect_context_workspace_symbols(
+                    &mod_ctx.context,
+                    &uri,
+                    module_name.as_deref(),
+                    &params.query,
+                    &mut seen,
+                    &mut res,
+                );
             }
         }
         Ok(Some(res))
@@ -184,19 +200,96 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     }
 }
 
-fn symbol_container_name(vi: &VarInfo) -> Option<String> {
-    let ns = vi.def_namespace().trim_start_matches("./");
-    if ns.is_empty() || ns == "<builtins>" || ns == "<dummy>" {
-        return None;
+fn collect_context_workspace_symbols(
+    ctx: &Context,
+    uri: &Url,
+    module_name: Option<&str>,
+    query: &str,
+    seen: &mut HashSet<String>,
+    res: &mut Vec<SymbolInformation>,
+) {
+    for (name, vi) in ctx.local_dir() {
+        if name.inspect().starts_with(['%']) {
+            continue;
+        }
+        if !query.is_empty()
+            && !name
+                .inspect()
+                .to_ascii_lowercase()
+                .contains(&query.to_ascii_lowercase())
+        {
+            continue;
+        }
+        if vi
+            .alias_of
+            .as_ref()
+            .is_some_and(|alias| &alias.name == name.inspect())
+        {
+            continue;
+        }
+        let Some(location) = abs_loc_to_lsp_loc(&vi.def_loc) else {
+            continue;
+        };
+        if &location.uri != uri {
+            continue;
+        }
+        let key = format!(
+            "{}@{}:{}:{}",
+            name.inspect(),
+            uri,
+            location.range.start.line,
+            location.range.start.character
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        #[allow(deprecated)]
+        res.push(SymbolInformation {
+            name: name.to_string(),
+            location,
+            kind: symbol_kind(vi),
+            container_name: module_name.map(str::to_string),
+            tags: None,
+            deprecated: None,
+        });
     }
-    if vi.is_toplevel() {
-        Path::new(ns)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .filter(|s| !s.is_empty())
-    } else {
-        ns.rsplit(['.', ':'])
-            .find(|s| !s.is_empty())
-            .map(|s| s.to_string())
+}
+
+fn flatten_workspace_symbol(
+    symbol: DocumentSymbol,
+    uri: &Url,
+    container: Option<String>,
+    query: &str,
+    seen: &mut HashSet<String>,
+    res: &mut Vec<SymbolInformation>,
+) {
+    if query.is_empty()
+        || symbol
+            .name
+            .to_ascii_lowercase()
+            .contains(&query.to_ascii_lowercase())
+    {
+        let key = format!(
+            "{}@{}:{}:{}",
+            symbol.name,
+            uri,
+            symbol.selection_range.start.line,
+            symbol.selection_range.start.character
+        );
+        if seen.insert(key) {
+            #[allow(deprecated)]
+            res.push(SymbolInformation {
+                name: symbol.name.clone(),
+                location: Location::new(uri.clone(), symbol.selection_range),
+                kind: symbol.kind,
+                container_name: container.clone(),
+                tags: symbol.tags.clone(),
+                deprecated: symbol.deprecated,
+            });
+        }
+    }
+    let child_container = Some(symbol.name);
+    for child in symbol.children.unwrap_or_default() {
+        flatten_workspace_symbol(child, uri, child_container.clone(), query, seen, res);
     }
 }

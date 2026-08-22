@@ -13,9 +13,9 @@
 //! contain the change is left alone.
 //!
 //! On-type formatting uses the same changed-region logic but only applies it
-//! when the change overlaps the line just typed (and, after a newline, the
-//! previous line). Unlike range formatting, the spec does not require the edit
-//! to stay inside a request range.
+//! when the change overlaps the typed line or the line above (closing `}`
+//! often reindents both). Unlike range formatting, the spec does not require
+//! the edit to stay inside a request range.
 
 use erg_common::config::FmtConfig;
 use erg_compiler::artifact::BuildRunnable;
@@ -141,21 +141,14 @@ fn range_edits(code: &str, range: Range, opts: FmtOptions) -> Vec<TextEdit> {
     }
 }
 
-fn on_type_edits(code: &str, pos: Position, ch: &str, opts: FmtOptions) -> Vec<TextEdit> {
+fn on_type_edits(code: &str, pos: Position, _ch: &str, opts: FmtOptions) -> Vec<TextEdit> {
     let formatted = format_str(code, opts);
     let Some((change, new_text)) = changed_region(code, &formatted) else {
         return vec![];
     };
-    let nearby = if ch == "\n" {
-        Range {
-            start: Position::new(pos.line.saturating_sub(1), 0),
-            end: Position::new(pos.line.saturating_add(1), 0),
-        }
-    } else {
-        Range {
-            start: Position::new(pos.line, 0),
-            end: Position::new(pos.line.saturating_add(1), 0),
-        }
+    let nearby = Range {
+        start: Position::new(pos.line.saturating_sub(1), 0),
+        end: Position::new(pos.line.saturating_add(1), 0),
     };
     if range_overlaps(nearby, change) {
         vec![TextEdit {

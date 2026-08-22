@@ -1,5 +1,6 @@
 use std::env::current_dir;
 use std::ffi::OsStr;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
@@ -159,6 +160,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 #[cfg(feature = "lint")]
                 if self
                     .opt_features
+                    .borrow()
                     .contains(&crate::server::OptionalFeatures::Lint)
                 {
                     use erg_common::traits::Stream;
@@ -358,10 +360,15 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
 
     pub(crate) fn diagnostic_result_id(&self, uri: &NormalizedUrl) -> String {
         let path = NormalizedPathBuf::from(util::uri_to_path(uri));
-        let n_err = self.shared.errors.get(&path).len();
-        let n_warn = self.shared.warns.get(&path).len();
+        let errs = self.shared.errors.get(&path);
+        let warns = self.shared.warns.get(&path);
         let ver = self.file_cache.get_ver(uri).unwrap_or(0);
-        format!("{ver}:{n_err}:{n_warn}")
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for e in errs.iter().chain(warns.iter()) {
+            e.core.errno.hash(&mut h);
+            e.core.get_loc_with_fallback().hash(&mut h);
+        }
+        format!("{ver}:{:x}", h.finish())
     }
 
     pub(crate) fn diagnostic_uris(&self) -> Vec<NormalizedUrl> {
@@ -369,8 +376,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         for err in self
             .shared
             .errors
-            .raw_iter()
-            .chain(self.shared.warns.raw_iter())
+            .snapshot()
+            .into_iter()
+            .chain(self.shared.warns.snapshot())
         {
             let path = err
                 .input
@@ -413,6 +421,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     fn send_diagnostics(&self, uri: Url, diagnostics: Vec<Diagnostic>) -> ELSResult<()> {
         if self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Diagnostics)
         {
             return Ok(());
@@ -615,6 +624,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         let _self = self.clone();
         let health_check_gen = self.flags.health_check_gen.clone();
+        let recv_gen = health_check_gen.clone();
         let my_gen = health_check_gen.load(Ordering::Relaxed);
         spawn_new_thread(
             move || {
@@ -643,6 +653,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         spawn_new_thread(
             move || {
                 loop {
+                    if recv_gen.load(Ordering::Relaxed) != my_gen {
+                        break;
+                    }
                     match receiver.recv_timeout(TIMEOUT) {
                         Ok(WorkerMessage::Kill) => {
                             break;

@@ -13,7 +13,7 @@ use erg_common::config::{ErgConfig, ErgMode};
 use erg_common::consts::PYTHON_MODE;
 use erg_common::dict::Dict;
 use erg_common::env::erg_path;
-use erg_common::pathutil::{project_entry_dir_of, NormalizedPathBuf};
+use erg_common::pathutil::NormalizedPathBuf;
 use erg_common::set::Set;
 use erg_common::shared::{MappedRwLockReadGuard, Shared};
 use erg_common::spawn::{safe_yield, spawn_new_thread};
@@ -253,8 +253,8 @@ pub struct Server<Checker: BuildRunnable = PackageBuilder, Parser: Parsable = Si
     pub(crate) erg_path: PathBuf,
     pub(crate) init_params: InitializeParams,
     pub(crate) client_answers: Shared<Dict<i64, Value>>,
-    pub(crate) disabled_features: Vec<DefaultFeatures>,
-    pub(crate) opt_features: Vec<OptionalFeatures>,
+    pub(crate) disabled_features: Shared<Vec<DefaultFeatures>>,
+    pub(crate) opt_features: Shared<Vec<OptionalFeatures>>,
     pub(crate) file_cache: FileCache,
     pub(crate) comp_cache: CompletionCache,
     pub flags: Flags,
@@ -360,8 +360,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             erg_path: erg_path().clone(), // already normalized
             init_params: InitializeParams::default(),
             client_answers: Shared::new(Dict::new()),
-            disabled_features,
-            opt_features,
+            disabled_features: Shared::new(disabled_features),
+            opt_features: Shared::new(opt_features),
             file_cache: FileCache::new(stdout_redirect.clone()),
             channels: None,
             flags,
@@ -570,6 +570,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         comp_options.resolve_provider = Some(true);
         capabilities.completion_provider = if self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Completion)
         {
             None
@@ -588,11 +589,13 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         capabilities.implementation_provider = Some(ImplementationProviderCapability::Simple(true));
         capabilities.hover_provider = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Hover)
             .not()
             .then_some(HoverProviderCapability::Simple(true));
         capabilities.inlay_hint_provider = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::InlayHint)
             .not()
             .then_some(OneOf::Right(InlayHintServerCapabilities::Options(
@@ -635,6 +638,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         capabilities.semantic_tokens_provider = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::SemanticTokens)
             .not()
             .then_some(SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -642,6 +646,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             ));
         capabilities.code_action_provider = if self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::CodeAction)
         {
             None
@@ -663,6 +668,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         });
         capabilities.signature_help_provider = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::SignatureHelp)
             .not()
             .then_some(SignatureHelpOptions {
@@ -672,18 +678,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     work_done_progress: None,
                 },
             });
-        capabilities.code_lens_provider =
-            if self.disabled_features.contains(&DefaultFeatures::CodeLens) {
-                None
-            } else {
-                Some(CodeLensOptions {
-                    resolve_provider: Some(false),
-                })
-            };
+        capabilities.code_lens_provider = if self
+            .disabled_features
+            .borrow()
+            .contains(&DefaultFeatures::CodeLens)
+        {
+            None
+        } else {
+            Some(CodeLensOptions {
+                resolve_provider: Some(false),
+            })
+        };
         capabilities.workspace_symbol_provider = Some(OneOf::Left(true));
         capabilities.document_symbol_provider = Some(OneOf::Left(true));
         capabilities.document_link_provider = if self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::DocumentLink)
         {
             None
@@ -696,6 +706,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         capabilities.call_hierarchy_provider = Some(CallHierarchyServerCapability::Simple(true));
         capabilities.folding_range_provider = Some(FoldingRangeProviderCapability::Simple(
             self.disabled_features
+                .borrow()
                 .contains(&DefaultFeatures::FoldingRange)
                 .not(),
         ));
@@ -703,11 +714,13 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             Some(SelectionRangeProviderCapability::Simple(true));
         capabilities.document_highlight_provider = Some(OneOf::Left(
             self.disabled_features
+                .borrow()
                 .contains(&DefaultFeatures::DocumentHighlight)
                 .not(),
         ));
         let formatting = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Formatting)
             .not();
         capabilities.document_formatting_provider = Some(OneOf::Left(formatting));
@@ -801,13 +814,13 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .or_else(|| settings.get("erg"))
             .unwrap_or(settings);
         if let Some(disable) = string_list(els, &["disable", "disabledFeatures"]) {
-            self.disabled_features = disable
+            *self.disabled_features.borrow_mut() = disable
                 .iter()
                 .filter_map(|s| DefaultFeatures::from_name(s))
                 .collect();
         }
         if let Some(enable) = string_list(els, &["enable", "enabledFeatures"]) {
-            self.opt_features = enable
+            *self.opt_features.borrow_mut() = enable
                 .iter()
                 .filter_map(|s| OptionalFeatures::from_name(s))
                 .collect();
@@ -1148,6 +1161,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         if _self.scheduler.acquire(id).is_none() {
                             _log!(_self, "canceled: {id}");
                             let _ = _self.send_request_cancelled(id);
+                            // acquire never ran, so FinishGuard was not created.
+                            // Still drop the cancelled mark or a later request
+                            // reusing this id is treated as already cancelled.
+                            let _ = _self.scheduler.finish(id);
                             continue;
                         }
                         // Drops at the end of this arm, removing the task from the
@@ -1507,17 +1524,6 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         ctxs
     }
 
-    pub(crate) fn get_workspace_ctxs(&self) -> Vec<&Context> {
-        let project_root = project_entry_dir_of(&self.home).unwrap_or(self.home.clone());
-        let mut ctxs = vec![];
-        for (path, ent) in self.shared.raw_path_and_modules() {
-            if path.starts_with(&project_root) {
-                ctxs.push(&ent.module.context);
-            }
-        }
-        ctxs
-    }
-
     /// the ctx of `uri` is not included
     pub(crate) fn get_neighbor_ctxs(&self, uri: &NormalizedUrl) -> Vec<&Context> {
         let mut ctxs = vec![];
@@ -1659,11 +1665,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         MappedRwLockReadGuard::try_map(ent, |ent| ent.ast.as_ref()).ok()
     }
 
-    pub fn get_warns(&self, uri: &NormalizedUrl) -> Option<Vec<&CompileWarning>> {
+    pub fn get_warns(&self, uri: &NormalizedUrl) -> Option<Vec<CompileWarning>> {
         let path = NormalizedPathBuf::from(uri.to_file_path().ok()?);
-        let warns = self.shared.warns.raw_iter();
-        let warns = warns.filter(|warn| NormalizedPathBuf::from(warn.input.path()) == path);
-        Some(warns.collect())
+        Some(self.shared.warns.get(&path).into_iter().collect())
     }
 }
 
@@ -1678,8 +1682,14 @@ mod settings_tests {
         server.apply_client_settings(&json!({
             "els": { "disable": ["hover"], "enable": ["lint"], "indent": 2 }
         }));
-        assert!(server.disabled_features.contains(&DefaultFeatures::Hover));
-        assert!(server.opt_features.contains(&OptionalFeatures::Lint));
+        assert!(server
+            .disabled_features
+            .borrow()
+            .contains(&DefaultFeatures::Hover));
+        assert!(server
+            .opt_features
+            .borrow()
+            .contains(&OptionalFeatures::Lint));
         assert_eq!(server.cfg.fmt.indent, 2);
     }
 
@@ -1691,6 +1701,7 @@ mod settings_tests {
         }));
         assert!(server
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Diagnostics));
     }
 
@@ -1700,6 +1711,9 @@ mod settings_tests {
         server.apply_client_settings(&json!({
             "els": { "disable": ["not-a-feature", "hover"] }
         }));
-        assert_eq!(server.disabled_features, vec![DefaultFeatures::Hover]);
+        assert_eq!(
+            *server.disabled_features.borrow(),
+            vec![DefaultFeatures::Hover]
+        );
     }
 }

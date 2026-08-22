@@ -200,7 +200,22 @@ impl FileCache {
                 return false;
             }
             let start = tk.lineno.saturating_sub(1);
-            (start..=start + extra).contains(&pos.line)
+            let end = start + extra;
+            if !(start..=end).contains(&pos.line) {
+                return false;
+            }
+            // Only the interior lines are whole-line comments. Code before `#[`
+            // or after `]#` / `'''` on the same line must still complete.
+            if pos.line == start && pos.character < tk.col_begin {
+                return false;
+            }
+            if pos.line == end {
+                let last = tk.content.split('\n').next_back().unwrap_or("");
+                if pos.character >= last.chars().count() as u32 {
+                    return false;
+                }
+            }
+            true
         })
     }
 

@@ -173,38 +173,42 @@ impl Scheduler {
     /// Blocks until the task is allowed to be executed.
     /// `None` means that the task has already been cancelled.
     pub fn acquire(&self, id: TaskID) -> Option<Task> {
-        if let Some(idx) = self.executing.borrow().iter().find(|task| task.id == id) {
-            Some(*idx)
-        } else {
-            let task = self
-                .pending
-                .borrow()
-                .iter()
-                .find(|task| task.id == id)
-                .copied()?;
-            loop {
-                if self.executing.borrow().len() < MAX_WORKERS
-                    && self
-                        .pending
-                        .borrow()
-                        .iter()
-                        .all(|t| t.kind.priority() >= task.kind.priority())
-                {
-                    break;
-                } else {
-                    safe_yield();
-                }
-            }
-            let idx = self
-                .pending
-                .borrow()
-                .iter()
-                .position(|task| task.id == id)?;
-            let mut task = self.pending.borrow_mut().remove(idx)?;
-            task.started_at = now_millis();
-            self.executing.borrow_mut().push(task);
-            Some(task)
+        if let Some(task) = self
+            .executing
+            .borrow()
+            .iter()
+            .find(|task| task.id == id)
+            .copied()
+        {
+            return Some(task);
         }
+        let task = self
+            .pending
+            .borrow()
+            .iter()
+            .find(|task| task.id == id)
+            .copied()?;
+        loop {
+            if self.executing.borrow().len() < MAX_WORKERS
+                && self
+                    .pending
+                    .borrow()
+                    .iter()
+                    .all(|t| t.kind.priority() >= task.kind.priority())
+            {
+                break;
+            }
+            safe_yield();
+        }
+        // `position` and `remove` must share one lock: two workers that
+        // snapshot indices separately can `remove` the wrong task (or none).
+        let mut pending = self.pending.borrow_mut();
+        let idx = pending.iter().position(|task| task.id == id)?;
+        let mut task = pending.remove(idx)?;
+        drop(pending);
+        task.started_at = now_millis();
+        self.executing.borrow_mut().push(task);
+        Some(task)
     }
 
     /// Marks `id` as cancelled. Pending tasks are removed so [`acquire`] returns
@@ -212,10 +216,11 @@ impl Scheduler {
     /// worker can send `-32800` instead of the result.
     pub fn cancel(&self, id: TaskID) -> Option<Task> {
         self.cancelled.borrow_mut().insert(id);
-        let pending_idx = self.pending.borrow().iter().position(|task| task.id == id);
-        if let Some(idx) = pending_idx {
-            return self.pending.borrow_mut().remove(idx);
+        let mut pending = self.pending.borrow_mut();
+        if let Some(idx) = pending.iter().position(|task| task.id == id) {
+            return pending.remove(idx);
         }
+        drop(pending);
         self.executing
             .borrow()
             .iter()
@@ -288,5 +293,25 @@ mod tests {
         s.finish(1);
         assert!(!s.is_cancelled(1));
         assert!(s.acquire(1).is_none());
+    }
+
+    #[test]
+    fn finish_clears_cancelled_pending_so_the_id_can_be_reused() {
+        let s = Scheduler::new();
+        for i in 0..MAX_WORKERS as i64 {
+            s.register(i, HoverRequest::METHOD);
+        }
+        let pending_id = MAX_WORKERS as i64;
+        s.register(pending_id, HoverRequest::METHOD);
+        assert!(s.cancel(pending_id).is_some());
+        assert!(s.acquire(pending_id).is_none());
+        // Workers must `finish` even when acquire failed, or the next request
+        // with this id is treated as already cancelled.
+        s.finish(pending_id);
+        assert!(!s.is_cancelled(pending_id));
+        s.finish(0);
+        s.register(pending_id, HoverRequest::METHOD);
+        assert!(s.acquire(pending_id).is_some());
+        assert!(!s.is_cancelled(pending_id));
     }
 }

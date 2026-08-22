@@ -134,6 +134,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         }
         let items = if self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Diagnostics)
         {
             vec![]
@@ -155,6 +156,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         _log!(self, "workspace diagnostic requested: {params:?}");
         let disabled = self
             .disabled_features
+            .borrow()
             .contains(&DefaultFeatures::Diagnostics);
         let mut items = vec![];
         for uri in self.diagnostic_uris() {

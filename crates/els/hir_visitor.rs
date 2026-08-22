@@ -238,18 +238,137 @@ impl<'a> HIRVisitor<'a> {
         None
     }
 
-    /// The top-level `ClassDef` whose span contains `pos`, if any.
+    /// The innermost `ClassDef` whose span contains `pos`, if any.
     /// Unlike [`get_min_expr`], this is not the innermost expression (e.g. `C` in
-    /// `D = Inherit C` is an accessor; the enclosing class is `D`).
+    /// `D = Inherit C` is an accessor; the enclosing class is `D`). Nested
+    /// class definitions are preferred over the outer class that contains them.
     pub fn get_class_def_at(&self, pos: Position) -> Option<&ClassDef> {
+        let mut found = None;
         for chunk in self.hir.module.iter() {
-            if let Expr::ClassDef(class_def) = chunk {
+            self.walk_class_def(chunk, pos, &mut found);
+        }
+        found
+    }
+
+    fn walk_class_def<'e>(
+        &'e self,
+        expr: &'e Expr,
+        pos: Position,
+        found: &mut Option<&'e ClassDef>,
+    ) {
+        match expr {
+            Expr::ClassDef(class_def) => {
                 if util::pos_in_loc(class_def, pos) || util::roughly_pos_in_loc(class_def, pos) {
-                    return Some(class_def);
+                    *found = Some(class_def);
+                    for method in class_def.all_methods() {
+                        self.walk_class_def(method, pos, found);
+                    }
                 }
             }
+            Expr::Def(def) => {
+                for chunk in def.body.block.iter() {
+                    self.walk_class_def(chunk, pos, found);
+                }
+            }
+            Expr::PatchDef(patch) => {
+                self.walk_class_def(&patch.base, pos, found);
+                for method in patch.methods.iter() {
+                    self.walk_class_def(method, pos, found);
+                }
+            }
+            Expr::Lambda(lambda) => {
+                for chunk in lambda.body.iter() {
+                    self.walk_class_def(chunk, pos, found);
+                }
+            }
+            Expr::Call(call) => {
+                self.walk_class_def(&call.obj, pos, found);
+                self.walk_class_def_in_args(&call.args, pos, found);
+            }
+            Expr::Compound(block) | Expr::Code(block) => {
+                for chunk in block.iter() {
+                    self.walk_class_def(chunk, pos, found);
+                }
+            }
+            Expr::Dummy(dummy) => {
+                for chunk in dummy.iter() {
+                    self.walk_class_def(chunk, pos, found);
+                }
+            }
+            Expr::Record(rec) => {
+                for def in rec.attrs.iter() {
+                    for chunk in def.body.block.iter() {
+                        self.walk_class_def(chunk, pos, found);
+                    }
+                }
+            }
+            Expr::TypeAsc(ta) => self.walk_class_def(&ta.expr, pos, found),
+            Expr::BinOp(bin) => {
+                self.walk_class_def(&bin.lhs, pos, found);
+                self.walk_class_def(&bin.rhs, pos, found);
+            }
+            Expr::UnaryOp(unary) => self.walk_class_def(&unary.expr, pos, found),
+            Expr::List(lis) => match lis {
+                List::Normal(lis) => self.walk_class_def_in_args(&lis.elems, pos, found),
+                List::Comprehension(lis) => {
+                    self.walk_class_def(&lis.elem, pos, found);
+                    self.walk_class_def(&lis.guard, pos, found);
+                }
+                List::WithLength(lis) => {
+                    self.walk_class_def(&lis.elem, pos, found);
+                    if let Some(len) = lis.len.as_deref() {
+                        self.walk_class_def(len, pos, found);
+                    }
+                }
+            },
+            Expr::Tuple(Tuple::Normal(tup)) => self.walk_class_def_in_args(&tup.elems, pos, found),
+            Expr::Dict(dict) => match dict {
+                Dict::Normal(dict) => {
+                    for kv in dict.kvs.iter() {
+                        self.walk_class_def(&kv.key, pos, found);
+                        self.walk_class_def(&kv.value, pos, found);
+                    }
+                }
+                Dict::Comprehension(dict) => {
+                    self.walk_class_def(&dict.key, pos, found);
+                    self.walk_class_def(&dict.value, pos, found);
+                    self.walk_class_def(&dict.guard, pos, found);
+                }
+            },
+            Expr::Set(set) => match set {
+                Set::Normal(set) => self.walk_class_def_in_args(&set.elems, pos, found),
+                Set::WithLength(set) => {
+                    self.walk_class_def(&set.elem, pos, found);
+                    self.walk_class_def(&set.len, pos, found);
+                }
+            },
+            Expr::ReDef(redef) => {
+                for chunk in redef.block.iter() {
+                    self.walk_class_def(chunk, pos, found);
+                }
+            }
+            Expr::Literal(_) | Expr::Accessor(_) | Expr::Import(_) => {}
         }
-        None
+    }
+
+    fn walk_class_def_in_args<'e>(
+        &'e self,
+        args: &'e Args,
+        pos: Position,
+        found: &mut Option<&'e ClassDef>,
+    ) {
+        for arg in args.pos_args.iter() {
+            self.walk_class_def(&arg.expr, pos, found);
+        }
+        if let Some(var) = &args.var_args {
+            self.walk_class_def(&var.expr, pos, found);
+        }
+        for arg in args.kw_args.iter() {
+            self.walk_class_def(&arg.expr, pos, found);
+        }
+        if let Some(var) = &args.kw_var {
+            self.walk_class_def(&var.expr, pos, found);
+        }
     }
 
     fn return_expr_if_same<'e>(

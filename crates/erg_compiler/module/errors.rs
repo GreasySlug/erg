@@ -51,10 +51,10 @@ impl SharedCompileErrors {
             .collect()
     }
 
-    pub fn raw_iter(&self) -> impl Iterator<Item = &CompileError> {
-        let _ref = self.0.borrow();
-        let ref_ = unsafe { self.0.as_ptr().as_ref().unwrap() };
-        ref_.iter()
+    /// Clone while the lock is held. Prefer this over iterating unlocked
+    /// pointers into the set (see the old `raw_iter`).
+    pub fn snapshot(&self) -> Vec<CompileError> {
+        self.0.borrow().iter().cloned().collect()
     }
 }
 

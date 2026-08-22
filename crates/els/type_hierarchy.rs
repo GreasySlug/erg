@@ -164,6 +164,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     }
 
     fn type_from_item(&self, item: &TypeHierarchyItem) -> Option<Type> {
+        if let Some(data) = item.data.as_ref().and_then(|d| d.as_str()) {
+            if let Ok(loc) = AbsLocation::from_str(data) {
+                if let Some(path) = loc.module.as_ref() {
+                    if let Ok(uri) = NormalizedUrl::from_file_path(path) {
+                        if let Some(pos) = crate::util::loc_to_pos(loc.loc) {
+                            if let Some(typ) = self
+                                .class_type_at(&uri, pos)
+                                .or_else(|| self.type_at(&uri, pos))
+                            {
+                                return Some(typ);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let uri = NormalizedUrl::new(item.uri.clone());
         let mod_ctx = self.get_mod_ctx(&uri)?;
         Some(mod_ctx.context.get_type_ctx(&item.name)?.typ.clone())

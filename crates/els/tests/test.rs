@@ -45,6 +45,19 @@ use erg_proc_macros::exec_new_thread;
 use molc::{add_char, delete_line, oneline_range};
 use serde_json::json;
 
+fn wait_diagnostics_for(
+    client: &mut molc::FakeClient<Server>,
+    uri: &NormalizedUrl,
+) -> Result<lsp_types::PublishDiagnosticsParams, Box<dyn std::error::Error>> {
+    for _ in 0..32 {
+        let diags = client.wait_diagnostics()?;
+        if NormalizedUrl::new(diags.uri.clone()) == *uri {
+            return Ok(diags);
+        }
+    }
+    Err(format!("timed out waiting for diagnostics of {uri}").into())
+}
+
 #[test]
 fn test_open() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Server::bind_fake_client();
@@ -649,14 +662,15 @@ fn test_dependents_check() -> Result<(), Box<dyn std::error::Error>> {
     client.notify_open(FILE_C)?;
     client.wait_messages(6)?;
     let uri_b = NormalizedUrl::from_file_path(Path::new(FILE_B).canonicalize()?)?;
+    let uri_c = NormalizedUrl::from_file_path(Path::new(FILE_C).canonicalize()?)?;
     // delete b.er:3, causing an error in c.er
     client.notify_change(uri_b.clone().raw(), delete_line(2))?;
     client.wait_messages(2)?;
     client.responses.clear();
     client.notify_save(uri_b.clone().raw())?;
-    let b_diags = client.wait_diagnostics()?;
+    let b_diags = wait_diagnostics_for(&mut client, &uri_b)?;
     assert!(b_diags.diagnostics.is_empty(), "{:?}", b_diags.diagnostics);
-    let c_diags = client.wait_diagnostics()?;
+    let c_diags = wait_diagnostics_for(&mut client, &uri_c)?;
     assert_eq!(
         c_diags.diagnostics.len(),
         1,
@@ -673,9 +687,9 @@ fn test_dependents_check() -> Result<(), Box<dyn std::error::Error>> {
     client.wait_messages(1)?;
     client.responses.clear();
     client.notify_save(uri_b.clone().raw())?;
-    let b_diags = client.wait_diagnostics()?;
+    let b_diags = wait_diagnostics_for(&mut client, &uri_b)?;
     assert_eq!(b_diags.diagnostics.len(), 1, "{:?}", b_diags.diagnostics,);
-    let c_diags = client.wait_diagnostics()?;
+    let c_diags = wait_diagnostics_for(&mut client, &uri_c)?;
     assert!(c_diags
         .diagnostics
         .iter()
@@ -833,12 +847,21 @@ fn test_goto_declaration() -> Result<(), Box<dyn std::error::Error>> {
     let uri = NormalizedUrl::from_file_path(Path::new(FILE_IMPORTS).canonicalize()?)?;
     client.notify_open(FILE_IMPORTS)?;
     // `glob` on the import line: declaration stays on the binding.
-    let Some(GotoDefinitionResponse::Scalar(location)) =
-        client.request::<GotoDeclaration>(goto_params(uri.raw(), 0, 0))?
+    let Some(GotoDefinitionResponse::Scalar(declaration)) =
+        client.request::<GotoDeclaration>(goto_params(uri.clone().raw(), 0, 0))?
     else {
         return Err("no declaration found for imported `glob`".into());
     };
-    assert_eq!(&location.range, &oneline_range(0, 0, 4));
+    assert_eq!(&declaration.range, &oneline_range(0, 0, 4));
+    let Some(GotoDefinitionResponse::Scalar(definition)) =
+        client.request_goto_definition(uri.raw(), 0, 0)?
+    else {
+        return Err("no definition found for imported `glob`".into());
+    };
+    assert_ne!(
+        &definition, &declaration,
+        "definition should follow the import; declaration stays on the binding"
+    );
     Ok(())
 }
 
@@ -949,7 +972,7 @@ fn test_signature_help_vbar() -> Result<(), Box<dyn std::error::Error>> {
     client.notify_open(FILE_QUANTIFIED)?;
     client.notify_change(uri.clone().raw(), add_char(1, 6, "|"))?;
     let help = client
-        .request_signature_help(uri.raw(), 1, 7, "|")?
+        .request_signature_help(uri.clone().raw(), 1, 7, "|")?
         .ok_or("no signature help for type application")?;
     assert_eq!(help.signatures.len(), 1);
     let sig = &help.signatures[0];
@@ -959,6 +982,17 @@ fn test_signature_help_vbar() -> Result<(), Box<dyn std::error::Error>> {
         sig.label
     );
     assert_eq!(sig.active_parameter, Some(0));
+
+    client.notify_change(uri.clone().raw(), add_char(1, 7, "T"))?;
+    client.notify_change(uri.clone().raw(), add_char(1, 8, ","))?;
+    let help = client
+        .request_signature_help(uri.raw(), 1, 9, ",")?
+        .ok_or("type-application help disappeared after `,`")?;
+    assert!(
+        help.signatures[0].label.contains('|'),
+        "expected type-parameter signature after comma, got {}",
+        help.signatures[0].label
+    );
     Ok(())
 }
 
@@ -989,9 +1023,11 @@ fn test_workspace_symbol_container_name() -> Result<(), Box<dyn std::error::Erro
         "class C should be contained by the module, got {:?}",
         class.container_name
     );
-    if let Some(method) = symbols.iter().find(|s| s.name == "new") {
-        assert_eq!(method.container_name.as_deref(), Some("C"));
-    }
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "new")
+        .ok_or_else(|| format!("method new not found: {symbols:?}"))?;
+    assert_eq!(method.container_name.as_deref(), Some("C"));
     Ok(())
 }
 

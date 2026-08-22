@@ -91,6 +91,20 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         if ranges.is_empty() {
             return None;
         }
+        let width = |r: &Range| {
+            if r.start.line == r.end.line {
+                r.end.character.saturating_sub(r.start.character)
+            } else {
+                u32::MAX
+            }
+        };
+        let expected = util::loc_to_range(tok.loc())
+            .map(|r| width(&r))
+            .unwrap_or_else(|| width(&ranges[0]));
+        ranges.retain(|r| width(r) == expected);
+        if ranges.is_empty() {
+            return None;
+        }
         Some(LinkedEditingRanges {
             ranges,
             word_pattern: Some(String::from(r"[A-Za-z_][A-Za-z0-9_]*!?")),

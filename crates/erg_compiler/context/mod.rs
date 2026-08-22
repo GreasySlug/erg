@@ -795,31 +795,37 @@ impl Context {
             .or_else(|| self.locals.remove(name))
     }
 
-    /// Overwrite the stored type of `name` after assert-casting or a mutable
-    /// dependent-type update (`v.push!`, etc.). Recurses into method/type scopes.
-    pub fn restore_var_type(&mut self, name: &str, t: Type) {
+    /// Overwrite the stored type of the binding at `loc` after assert-casting
+    /// or a mutable dependent-type update (`v.push!`, etc.). Recurses into
+    /// method/type scopes. Matching is by definition location, not bare name,
+    /// so a shadowed `x` in a nested scope is not overwritten by the outer `x`.
+    pub fn restore_var_type(&mut self, name: &str, t: Type, loc: &AbsLocation) {
         if let Some(vi) = self.locals.get_mut(name) {
-            vi.t = t.clone();
+            if &vi.def_loc == loc {
+                vi.t = t.clone();
+            }
         }
         if let Some(vi) = self.decls.get_mut(name) {
-            vi.t = t.clone();
+            if &vi.def_loc == loc {
+                vi.t = t.clone();
+            }
         }
         for (opt_name, vi) in self.params.iter_mut() {
-            if opt_name.as_ref().is_some_and(|n| n.inspect() == name) {
+            if opt_name.as_ref().is_some_and(|n| n.inspect() == name) && &vi.def_loc == loc {
                 vi.t = t.clone();
             }
         }
         for methods in self.methods_list.iter_mut() {
-            methods.restore_var_type(name, t.clone());
+            methods.restore_var_type(name, t.clone(), loc);
         }
         for ctx in self.mono_types.values_mut() {
-            ctx.restore_var_type(name, t.clone());
+            ctx.restore_var_type(name, t.clone(), loc);
         }
         for ctx in self.poly_types.values_mut() {
-            ctx.restore_var_type(name, t.clone());
+            ctx.restore_var_type(name, t.clone(), loc);
         }
         for ctx in self.patches.values_mut() {
-            ctx.restore_var_type(name, t.clone());
+            ctx.restore_var_type(name, t.clone(), loc);
         }
     }
 }
@@ -1688,11 +1694,12 @@ impl ModuleContext {
 
     /// Restore a variable's type in this module (locals, params, nested scopes).
     /// Used by ELS to undo assert-casting / mutable dependent-type updates before
-    /// incremental re-lowering.
-    pub fn restore_var_type(&mut self, name: &str, t: Type) {
-        self.context.restore_var_type(name, t.clone());
+    /// incremental re-lowering. `loc` is the definition to update so homonyms in
+    /// other scopes are left alone.
+    pub fn restore_var_type(&mut self, name: &str, t: Type, loc: &AbsLocation) {
+        self.context.restore_var_type(name, t.clone(), loc);
         for ctx in self.scope.values_mut() {
-            ctx.restore_var_type(name, t.clone());
+            ctx.restore_var_type(name, t.clone(), loc);
         }
     }
 }

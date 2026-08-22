@@ -563,6 +563,11 @@ fn exec_tuple_test() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_try_op() -> Result<(), ()> {
+    expect_success("tests/should_ok/try_op.er", 1)
+}
+
+#[test]
 fn exec_use_unit() -> Result<(), ()> {
     expect_success("examples/use_unit.er", 0)
 }
@@ -852,6 +857,11 @@ fn exec_tuple_err() -> Result<(), ()> {
 #[test]
 fn exec_trait_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/trait.er", 1, 1)
+}
+
+#[test]
+fn exec_try_op_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/try_op.er", 0, 4)
 }
 
 #[test]

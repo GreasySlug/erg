@@ -19,3 +19,11 @@ class Error:
 
 def is_ok(obj) -> bool:
     return not isinstance(obj, Error)
+
+
+# The error alternative of a `T or E` value, as recognized by the `?` operator.
+# The compiler only lets `?` through when `E` is `NoneType` and/or a subtype of
+# `BaseException`, and never when the success type is one of those, so this
+# check picks exactly the error alternative.
+def is_err(obj) -> bool:
+    return obj is None or isinstance(obj, (Error, BaseException))

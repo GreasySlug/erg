@@ -10,7 +10,7 @@ from _erg_mutate_operator import mutate_operator
 from _erg_nat import Nat, NatMut
 from _erg_range import (ClosedRange, LeftOpenRange, OpenRange, Range,
                         RangeIterator, RightOpenRange)
-from _erg_result import Error, is_ok
+from _erg_result import Error, is_err, is_ok
 from _erg_set import Set
 from _erg_str import Str, StrMut
 from _erg_type import MutType as _MutType

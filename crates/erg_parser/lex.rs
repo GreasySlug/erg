@@ -433,6 +433,8 @@ impl Lexer /*<'a>*/ {
             TokenCategory::REnclosure
             | TokenCategory::Literal
             | TokenCategory::StrInterpRight
+            // a postfix operator ends an operand, so what follows is infix: `x? + 1`
+            | TokenCategory::PostfixOp
             | TokenCategory::Symbol => {
                 let before_op = self
                     .cursor

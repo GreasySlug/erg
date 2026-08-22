@@ -79,9 +79,16 @@ y = x： Int
 
 执行`c(obj)`。`x + y |>.foo()` 与 `(x + y).foo()` 相同
 
-### (x: Option T)`?` -> T
+### |T: Type, E: Type|(x: T or E)`?` -> T
 
-后缀运算符。如果出现错误，请立即调用 `x.unwrap()` 和 `return`
+后缀运算符。求值为`x`的成功值；如果`x`是错误`E`，则外围子例程立即将其`return`
+`E`必须是`NoneType`或`BaseException`的子类型。顶层没有可返回的子例程，因此不能使用`?`
+
+```python
+double_head(l: List(Int, 3)): Int or NoneType =
+    x = l.get(0)?  # 如果列表为空，则立即返回None
+    x * 2
+```
 
 ## match(obj, *lambdas: Lambda)
 

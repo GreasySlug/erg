@@ -441,6 +441,72 @@ impl LowerError {
         )
     }
 
+    /// `x?` was applied to a value that can never be an error.
+    pub fn invalid_try_operand_error(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        found: &Type,
+    ) -> Self {
+        let found = StyledString::new(found.to_string(), Some(ERR), Some(ATTR));
+        let question = StyledStr::new("?", Some(HINT), Some(ATTR));
+        let hint = Some(switch_lang!(
+            "japanese" => format!("{question}演算子は`T or NoneType`や`T or E`(E <: BaseException)にのみ適用できます"),
+            "simplified_chinese" => format!("{question}运算符只能应用于`T or NoneType`或`T or E`(E <: BaseException)"),
+            "traditional_chinese" => format!("{question}運算符只能應用於`T or NoneType`或`T or E`(E <: BaseException)"),
+            "english" => format!("the {question} operator is only applicable to `T or NoneType` or `T or E` (E <: BaseException)"),
+        ));
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!("{found}型の値はエラーになりえないため、{question}を適用できません"),
+                    "simplified_chinese" => format!("{found}类型的值不可能是错误，因此无法应用{question}"),
+                    "traditional_chinese" => format!("{found}類型的值不可能是錯誤，因此無法應用{question}"),
+                    "english" => format!("a value of type {found} can never be an error, so {question} cannot be applied"),
+                ),
+                errno,
+                TypeError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
+    /// `x?` was used where there is no subroutine to return from.
+    pub fn try_outside_subroutine_error(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+    ) -> Self {
+        let question = StyledStr::new("?", Some(ERR), Some(ATTR));
+        let hint = Some(switch_lang!(
+            "japanese" => "エラーを取り出すには`match`を使用してください".to_string(),
+            "simplified_chinese" => "请使用`match`取出错误".to_string(),
+            "traditional_chinese" => "請使用`match`取出錯誤".to_string(),
+            "english" => "use `match` to handle the error here".to_string(),
+        ));
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!("{question}はサブルーチンの外では使用できません"),
+                    "simplified_chinese" => format!("{question}不能在子例程外使用"),
+                    "traditional_chinese" => format!("{question}不能在子程序外使用"),
+                    "english" => format!("{question} cannot be used outside a subroutine"),
+                ),
+                errno,
+                SyntaxError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn sealed_trait_error(
         input: Input,
         errno: usize,

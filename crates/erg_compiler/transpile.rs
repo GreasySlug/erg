@@ -773,6 +773,10 @@ impl PyScriptGenerator {
     }
 
     fn write_unaryop(&mut self, unary: UnaryOp, out: &mut String) {
+        if unary.op.kind == TokenKind::Try {
+            // an early `return` cannot be expressed inside a Python expression
+            todo!("transpiling the `?` operator")
+        }
         if unary.op.kind == TokenKind::Mutate {
             self.load_mutate_op_if_not();
             out.push_str("mutate_operator(");

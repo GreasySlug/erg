@@ -31,8 +31,8 @@ use crate::artifact::{BuildRunnable, Buildable, CompleteArtifact, IncompleteArti
 use crate::build_package::CheckStatus;
 use crate::module::SharedCompilerResource;
 use crate::ty::constructors::{
-    free_var, from_str, func, guard, list_t, mono, poly, proc, refinement, set_t, singleton, ty_tp,
-    unsized_list_t, v_enum,
+    free_var, from_str, func, func1, guard, list_t, mono, poly, proc, refinement, set_t, singleton,
+    ty_tp, unsized_list_t, v_enum,
 };
 use crate::ty::free::{Constraint, HasLevel};
 use crate::ty::typaram::TyParam;
@@ -60,6 +60,21 @@ use crate::{AccessKind, GenericHIRBuilder};
 
 use VisibilityModifier::*;
 
+/// A subroutine body being lowered, as seen by the error propagation operator (`x?`).
+#[derive(Debug)]
+struct SubrFrame {
+    /// `Context::higher_order_caller.len()` when the frame was entered. A control-flow
+    /// block is always one caller deeper than the frame that encloses it, which is what
+    /// tells `if`'s `do:` block apart from a lambda defined *inside* that block: both
+    /// see the same `current_control_flow()`, but only the former is an argument of it.
+    hoc_len: usize,
+    /// Error types `?` propagated out of this frame. Always empty when `inlined`.
+    propagated: Vec<Type>,
+    /// Control-flow blocks are inlined into the enclosing code object, so `?` inside
+    /// them returns from the enclosing subroutine rather than from the block.
+    inlined: bool,
+}
+
 /// Checks & infers types of an AST, and convert (lower) it into a HIR
 #[derive(Debug)]
 pub struct GenericASTLowerer<ASTBuilder: ASTBuildable = DefaultASTBuilder> {
@@ -68,6 +83,9 @@ pub struct GenericASTLowerer<ASTBuilder: ASTBuildable = DefaultASTBuilder> {
     pub(crate) errs: LowerErrors,
     pub(crate) warns: LowerWarnings,
     fresh_gen: FreshNameGenerator,
+    /// One frame per subroutine body currently being lowered, innermost last.
+    /// Tracks where the error propagation operator (`x?`) returns to.
+    subr_frames: Vec<SubrFrame>,
     _parser: PhantomData<fn() -> ASTBuilder>,
 }
 
@@ -231,6 +249,7 @@ impl<ASTBuilder: ASTBuildable> GenericASTLowerer<ASTBuilder> {
             errs: LowerErrors::empty(),
             warns: LowerWarnings::empty(),
             fresh_gen: FreshNameGenerator::new("lower"),
+            subr_frames: vec![],
             _parser: PhantomData,
         }
     }
@@ -242,6 +261,7 @@ impl<ASTBuilder: ASTBuildable> GenericASTLowerer<ASTBuilder> {
             errs: LowerErrors::empty(),
             warns: LowerWarnings::empty(),
             fresh_gen: FreshNameGenerator::new("lower"),
+            subr_frames: vec![],
             _parser: PhantomData,
         }
     }
@@ -1568,12 +1588,91 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 
+    /// The lower bound of an as-yet unresolved alternative, so that the union
+    /// `?T(:> Nat) or ?U(:> NoneType)` can still be split into success and error
+    /// parts. Variables that are not constrained yet (sub bound `Never`) are left
+    /// alone: `Never` is a subtype of every error type and would classify as one.
+    fn known_alternative(t: &Type) -> Type {
+        match t {
+            Type::FreeVar(fv) if fv.is_linked() => Self::known_alternative(&fv.crack()),
+            Type::FreeVar(fv) => match fv.get_sub() {
+                Some(sub) if sub != Type::Never => sub,
+                _ => t.clone(),
+            },
+            _ => t.clone(),
+        }
+    }
+
+    /// Is `t` an error alternative of a `Result`-like union?
+    ///
+    /// `NoneType` (the `Option` case) and any subtype of `BaseException`
+    /// (the `Result` case) qualify. Both are distinguishable from every other
+    /// alternative at runtime by `is_err` (see `_erg_result.py`).
+    fn is_err_alternative(&self, t: &Type) -> bool {
+        let t = Self::known_alternative(t);
+        t.is_nonetype() || self.module.context.subtype_of(&t, &mono("BaseException"))
+    }
+
+    /// Lower the error propagation operator `x?`.
+    ///
+    /// `x: T or E` evaluates to `T`; if `x` turns out to be `E`, the innermost
+    /// enclosing subroutine returns it immediately. The error type is recorded so
+    /// that the subroutine's return type becomes `<body type> or E`.
+    fn lower_try_op(&mut self, unary: ast::UnaryOp) -> Failable<hir::UnaryOp> {
+        let mut errors = LowerErrors::empty();
+        let (op, expr) = unary.deconstruct();
+        let expr = self.lower_expr(expr, None).unwrap_or_else(|(expr, errs)| {
+            errors.extend(errs);
+            expr.unwrap_or(hir::Expr::Dummy(hir::Dummy::new(vec![])))
+        });
+        let operand_t = self.module.context.squash_tyvar(expr.t());
+        let (err_ts, ok_ts): (Vec<Type>, Vec<Type>) = operand_t
+            .ors()
+            .into_iter()
+            .partition(|t| self.is_err_alternative(t));
+        let loc = Location::concat(&expr, &op);
+        if err_ts.is_empty() {
+            errors.push(LowerError::invalid_try_operand_error(
+                self.input().clone(),
+                line!() as usize,
+                loc,
+                self.module.context.caused_by(),
+                &operand_t,
+            ));
+        } else if let Some(frame) = self.subr_frames.iter_mut().rev().find(|f| !f.inlined) {
+            frame.propagated.extend(err_ts.iter().cloned());
+        } else {
+            errors.push(LowerError::try_outside_subroutine_error(
+                self.input().clone(),
+                line!() as usize,
+                loc,
+                self.module.context.caused_by(),
+            ));
+        }
+        let ok_t = ok_ts
+            .into_iter()
+            .fold(Type::Never, |acc, t| self.module.context.union(&acc, &t));
+        let vi = VarInfo {
+            t: func1(operand_t, ok_t),
+            ..VarInfo::default()
+        };
+        let unary = hir::UnaryOp::new(op, expr, vi);
+        if errors.is_empty() {
+            Ok(unary)
+        } else {
+            Err((unary, errors))
+        }
+    }
+
     fn lower_unary(
         &mut self,
         unary: ast::UnaryOp,
         expect: Option<&Type>,
     ) -> Failable<hir::UnaryOp> {
         log!(info "entered {}({unary})", fn_name!());
+        if unary.op.is(TokenKind::Try) {
+            return self.lower_try_op(unary);
+        }
         let mut errors = LowerErrors::empty();
         let mut args = unary.args.into_iter();
         let arg = self
@@ -2224,6 +2323,19 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         if let Err(errs) = self.module.context.register_defs(&lambda.body) {
             errors.extend(errs);
         }
+        // control-flow blocks (`if`'s `do:` etc.) are inlined into the enclosing
+        // code object, so `?` inside them returns from the enclosing subroutine
+        let hoc_len = self.module.context.higher_order_caller.len();
+        let inlined = self.module.context.current_control_flow().is_some()
+            && self
+                .subr_frames
+                .last()
+                .is_none_or(|frame| hoc_len > frame.hoc_len);
+        self.subr_frames.push(SubrFrame {
+            hoc_len,
+            propagated: vec![],
+            inlined,
+        });
         let body = match self.lower_block(lambda.body, return_t) {
             Ok(body) => body,
             Err((body, es)) => {
@@ -2231,6 +2343,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 body
             }
         };
+        let propagated = self
+            .subr_frames
+            .pop()
+            .map_or(vec![], |frame| frame.propagated);
         if in_statement {
             for (var, vi) in overwritten.into_iter() {
                 if vi.kind.is_parameter() {
@@ -2334,13 +2450,17 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         } else {
             self.pop_append_errs();
         }
+        let mut return_t = body.t();
+        for err_t in propagated.iter() {
+            return_t = self.module.context.union(&return_t, err_t);
+        }
         let ty = if is_procedural {
             proc(
                 non_default_params,
                 var_params,
                 default_params,
                 kw_var_params,
-                body.t(),
+                return_t,
             )
         } else {
             func(
@@ -2348,7 +2468,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 var_params,
                 default_params,
                 kw_var_params,
-                body.t(),
+                return_t,
             )
         };
         let t = if ty.has_unbound_var() {
@@ -2843,9 +2963,24 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             .return_t
             .has_no_unbound_var()
             .then_some(registered_subr_t.return_t.as_ref());
-        match self.lower_block(body.block, return_t) {
+        // `?` inside the body returns from *this* subroutine, so its error types
+        // widen the inferred return type
+        self.subr_frames.push(SubrFrame {
+            hoc_len: self.module.context.higher_order_caller.len(),
+            propagated: vec![],
+            inlined: false,
+        });
+        let lowered = self.lower_block(body.block, return_t);
+        let propagated = self
+            .subr_frames
+            .pop()
+            .map_or(vec![], |frame| frame.propagated);
+        match lowered {
             Ok(block) => {
-                let found_body_t = self.module.context.squash_tyvar(block.t());
+                let mut found_body_t = self.module.context.squash_tyvar(block.t());
+                for err_t in propagated.iter() {
+                    found_body_t = self.module.context.union(&found_body_t, err_t);
+                }
                 let vi = match self.module.context.outer.as_mut().unwrap().assign_subr(
                     &sig,
                     body.id,

@@ -2295,6 +2295,12 @@ impl Parser {
                     let t_spec_op = TypeSpecWithOp::new(op, t_spec, t_spec_as_expr);
                     lhs = lhs.type_asc_expr(t_spec_op);
                 }
+                // error propagation operator (e.g. `f()?`)
+                // binds tighter than any binary operator, like `.attr` or `[i]`
+                Some(t) if t.is(Try) => {
+                    let op = self.lpop();
+                    lhs = Expr::UnaryOp(UnaryOp::new(op, lhs));
+                }
                 Some(op) if op.category_is(TC::BinOp) => {
                     let op_prec = op.kind.precedence().unwrap_or(0);
                     if op_prec < min_prec {

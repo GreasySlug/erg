@@ -61,9 +61,16 @@ if True, do:
 
 執行`c(obj)`。`x + y |>.foo()` 與 `(x + y).foo()` 相同
 
-### (x: Option T)`?` -> T
+### |T: Type, E: Type|(x: T or E)`?` -> T
 
-后綴運算符。如果出現錯誤，請立即調用 `x.unwrap()` 和 `return`
+後綴運算符。求值為`x`的成功值；如果`x`是錯誤`E`，則外圍子程序立即將其`return`
+`E`必須是`NoneType`或`BaseException`的子類型。頂層沒有可返回的子程序，因此不能使用`?`
+
+```python
+double_head(l: List(Int, 3)): Int or NoneType =
+    x = l.get(0)?  # 如果列表為空，則立即返回None
+    x * 2
+```
 
 ## `:`(x, T)
 

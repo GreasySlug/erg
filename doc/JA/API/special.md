@@ -60,9 +60,16 @@ objの属性を読み込む。
 
 `c(obj)`を実行する。`x + y |>.foo()`は`(x + y).foo()`と同じ。
 
-### (x: Option T)`?` -> T
+### |T: Type, E: Type|(x: T or E)`?` -> T
 
-後置演算子。`x.unwrap()`を呼び出し、エラーの場合はその場で`return`する。
+後置演算子。`x`の成功値に評価される。`x`がエラー`E`だった場合は、囲んでいるサブルーチンがその場で`return`する。
+`E`は`NoneType`または`BaseException`の部分型でなければならない。また、`return`する先のサブルーチンがないため、トップレベルでは使用できない。
+
+```python
+double_head(l: List(Int, 3)): Int or NoneType =
+    x = l.get(0)?  # リストが空ならその場でNoneを返す
+    x * 2
+```
 
 ## `:`(x, T)
 

@@ -1,0 +1,96 @@
+# the error propagation operator `?`
+# `x?` evaluates to the success value of `x: T or E`, and makes the enclosing
+# subroutine return `x` immediately when it turns out to be the error `E`.
+
+opt(x: Int): Int or NoneType = if x > 0, do x, do None
+
+# the runtime helper `?` relies on is imported at module level, so the first
+# subroutine to run need not be the first one whose body contains a `?`
+defined_first(x: Int): Int or NoneType = opt(x)? + 1
+defined_second(x: Int): Int or NoneType = opt(x)? + 2
+
+assert defined_second(1) == 3
+assert defined_first(1) == 2
+
+add_one(x: Int): Int or NoneType =
+    y = opt(x)?
+    y + 1
+
+assert add_one(1) == 2
+assert add_one(-1) == None
+
+# several `?` in a single expression
+add(a: Int, b: Int): Int or NoneType = opt(a)? + opt(b)?
+
+assert add(1, 2) == 3
+assert add(1, -2) == None
+assert add(-1, 2) == None
+
+# `?` in a control-flow block returns from the enclosing subroutine, not the block
+in_if(x: Int): Int or NoneType =
+    if x != 0:
+        do:
+            y = opt(x)?
+            y * 10
+        do 0
+
+assert in_if(7) == 70
+assert in_if(0) == 0
+assert in_if(-1) == None
+
+# `?` in a lambda returns from the lambda
+lam = x -> opt(x)? + 100
+
+assert lam(5) == 105
+assert lam(-5) == None
+
+# a lambda written inside a control-flow block is a subroutine of its own, so
+# `?` returns from that lambda and `in_block_lambda` still returns just `Int`
+in_block_lambda(x: Int): Int =
+    if x != 0:
+        do:
+            h = y -> opt(y)?
+            _ = h(x)
+            1
+        do 0
+
+assert in_block_lambda(5) == 1
+assert in_block_lambda(-5) == 1
+assert in_block_lambda(0) == 0
+
+# the return type can be inferred
+inferred x: Int = opt(x)? * 2
+
+assert inferred(3) == 6
+assert inferred(-3) == None
+
+# `?` binds tighter than binary operators, and chains like an accessor
+opt_list(x: Int): List(Int, 3) or NoneType = if x > 0, do [1, 2, 3], do None
+
+sum_head(x: Int): Int or NoneType = opt_list(x)?.sum() + opt_list(x)?[0]
+
+assert sum_head(1) == 7
+assert sum_head(-1) == None
+
+# the success value is discarded, but the error still propagates
+discarded(x: Int): Int or NoneType =
+    _ = opt(x)?
+    0
+
+assert discarded(1) == 0
+assert discarded(-1) == None
+
+# a procedure works the same way
+proc!(x: Int): Int or NoneType =
+    y = opt(x)?
+    print! y
+    y
+
+assert proc!(2) == 2
+assert proc!(-2) == None
+
+# an error type other than `NoneType` is propagated as-is
+# (the result is a union, so it cannot be compared directly)
+exc(x: Int or ValueError): Int or ValueError = x? + 1
+
+discard exc(1)

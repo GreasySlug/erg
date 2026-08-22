@@ -1,0 +1,34 @@
+# error propagation operator `?`
+opt(x: Int): Int or NoneType = if x > 0, do x, do None
+
+# the helper `?` relies on is imported at module level, so the first subroutine
+# to run need not be the first one whose body contains a `?`
+defined_first(x: Int): Int or NoneType = opt(x)? + 1
+defined_second(x: Int): Int or NoneType = opt(x)? + 2
+
+assert defined_second(1) == 3
+assert defined_first(1) == 2
+
+add_one(x: Int): Int or NoneType =
+    y = opt(x)?
+    y + 1
+
+assert add_one(1) == 2
+assert add_one(-1) == None
+
+# several `?` in one expression, and `?` inside a control-flow block
+add(a: Int, b: Int): Int or NoneType = opt(a)? + opt(b)?
+
+assert add(1, 2) == 3
+assert add(1, -2) == None
+
+in_if(x: Int): Int or NoneType =
+    if x != 0:
+        do:
+            y = opt(x)?
+            y * 10
+        do 0
+
+assert in_if(7) == 70
+assert in_if(0) == 0
+assert in_if(-1) == None

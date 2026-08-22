@@ -18,7 +18,7 @@ use erg_common::{
 };
 use erg_common::{fmt_vec_split_with, Str};
 
-use crate::token::{Token, TokenKind, EQUAL};
+use crate::token::{Token, TokenCategory, TokenKind, EQUAL};
 
 #[cfg(not(feature = "pylib"))]
 use erg_proc_macros::staticmethod as to_owned;
@@ -2176,7 +2176,12 @@ impl_display_from_nested!(UnaryOp);
 
 impl Locational for UnaryOp {
     fn loc(&self) -> Location {
-        Location::concat(&self.op, self.args[0].as_ref())
+        // a postfix operator (e.g. `x?`) comes *after* its operand
+        if self.op.category_is(TokenCategory::PostfixOp) {
+            Location::concat(self.args[0].as_ref(), &self.op)
+        } else {
+            Location::concat(&self.op, self.args[0].as_ref())
+        }
     }
 }
 

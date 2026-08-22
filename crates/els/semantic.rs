@@ -8,7 +8,7 @@ use erg_compiler::erg_parser::ast::{
     PolyTypeSpec, PreDeclTypeSpec, TypeSpec, UnaryOp, AST,
 };
 use erg_compiler::erg_parser::parse::Parsable;
-use erg_compiler::erg_parser::token::TokenKind;
+use erg_compiler::erg_parser::token::{TokenCategory, TokenKind};
 use erg_compiler::ASTBuilder;
 
 use lsp_types::{
@@ -252,9 +252,20 @@ impl ASTSemanticState {
     }
 
     fn gen_from_unary(&mut self, unary: UnaryOp) -> Vec<SemanticToken> {
-        let mut tokens = vec![self.gen_token(unary.op.loc(), SemanticTokenType::OPERATOR)];
+        // tokens are encoded as deltas from the previous one, so they must be
+        // emitted in source order: a postfix operator (`x?`) comes last
+        let is_postfix = unary.op.category_is(TokenCategory::PostfixOp);
+        let op_loc = unary.op.loc();
         let mut args = unary.args.into_iter();
+        let mut tokens = if is_postfix {
+            vec![]
+        } else {
+            vec![self.gen_token(op_loc, SemanticTokenType::OPERATOR)]
+        };
         tokens.extend(self.gen_from_expr(*args.next().unwrap()));
+        if is_postfix {
+            tokens.push(self.gen_token(op_loc, SemanticTokenType::OPERATOR));
+        }
         tokens
     }
 

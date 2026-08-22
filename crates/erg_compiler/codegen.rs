@@ -241,6 +241,7 @@ pub struct PyCodeGenerator {
     builtins_loaded: bool,
     fraction_loaded: bool,
     true_div_loaded: bool,
+    is_err_loaded: bool,
     unit_size: usize,
     units: PyCodeGenStack,
     pub(crate) fresh_gen: SharedFreshNameGenerator,
@@ -275,6 +276,7 @@ impl PyCodeGenerator {
             builtins_loaded: false,
             fraction_loaded: false,
             true_div_loaded: false,
+            is_err_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
             fresh_gen: SharedFreshNameGenerator::new("codegen"),
@@ -302,6 +304,7 @@ impl PyCodeGenerator {
             builtins_loaded: false,
             fraction_loaded: false,
             true_div_loaded: false,
+            is_err_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
             fresh_gen: self.fresh_gen.clone(),
@@ -332,6 +335,7 @@ impl PyCodeGenerator {
         self.builtins_loaded = false;
         self.fraction_loaded = false;
         self.true_div_loaded = false;
+        self.is_err_loaded = false;
     }
 
     #[inline]
@@ -1982,8 +1986,65 @@ impl PyCodeGenerator {
         }
     }
 
+    /// Emit the error propagation operator `x?`:
+    ///
+    /// ```python
+    /// tmp = x
+    /// if is_err(tmp):
+    ///     return tmp
+    /// tmp  # the success value
+    /// ```
+    ///
+    /// The early `return` is a plain `RETURN_VALUE`, so `?` returns from the code
+    /// object it is emitted into. Control-flow blocks (`if`'s `do:` etc.) are
+    /// inlined, so that is the enclosing subroutine, as the lowerer assumes.
+    fn emit_try_instr(&mut self, expr: Expr) {
+        log!(info "entered {}", fn_name!());
+        let init_stack_len = self.stack_len();
+        if !self.is_err_loaded {
+            self.load_is_err();
+        }
+        let tmp = Identifier::private_with_line(self.fresh_gen.fresh_varname(), 0);
+        self.emit_expr(expr);
+        self.emit_store_instr(tmp.clone(), Name);
+        // is_err(tmp)
+        self.emit_push_null();
+        self.emit_load_name_instr(Identifier::private("#is_err"));
+        self.fixup_push_null_order();
+        self.emit_load_name_instr(tmp.clone());
+        self.emit_call_instr(1, Name);
+        self.stack_dec();
+        self.emit_to_bool();
+        let idx_pop_jump_if_false = self.lasti();
+        self.write_opcode(EXTENDED_ARG);
+        self.write_arg(0);
+        self.write_instr(self.opcode_set.pop_jump_if_false());
+        // cannot detect where to jump to at this moment, so put as 0
+        self.write_arg(0);
+        let pjc = self.emit_pop_jump_cache();
+        // POP_JUMP pops the condition
+        self.stack_dec();
+        // error path: return the error object itself
+        self.emit_load_name_instr(tmp.clone());
+        self.write_opcode(RETURN_VALUE);
+        self.write_arg(0);
+        self.stack_dec();
+        let idx_ok_begin = if self.opcode_set.is_3_11_plus() {
+            self.lasti() - idx_pop_jump_if_false - 4 - pjc
+        } else {
+            self.lasti()
+        };
+        self.fill_jump(idx_pop_jump_if_false + 1, idx_ok_begin);
+        // success path: the value is already narrowed to the success type
+        self.emit_load_name_instr(tmp);
+        debug_assert_eq!(self.stack_len(), init_stack_len + 1);
+    }
+
     fn emit_unaryop(&mut self, unary: UnaryOp) {
         log!(info "entered {} ({unary})", fn_name!());
+        if unary.op.is(TokenKind::Try) {
+            return self.emit_try_instr(*unary.expr);
+        }
         let init_stack_len = self.stack_len();
         let val_t = unary
             .info
@@ -4132,6 +4193,7 @@ impl PyCodeGenerator {
         self.load_prelude_py();
         self.prelude_loaded = true;
         self.record_type_loaded = true;
+        self.is_err_loaded = true;
         self.cfg.no_std = no_std;
     }
 
@@ -4145,6 +4207,25 @@ impl PyCodeGenerator {
             )],
         );
         self.contains_op_loaded = true;
+    }
+
+    /// Import `is_err` from the prelude, bound to `#is_err`.
+    /// Used by the error propagation operator (`x?`) to tell the error
+    /// alternative of a `T or E` value from the success one at runtime.
+    ///
+    /// Normally `load_prelude_py` has already imported it at module level; this
+    /// is the fallback for when the prelude was not emitted, and it writes the
+    /// import wherever the first `?` happens to be.
+    fn load_is_err(&mut self) {
+        let mod_name = Identifier::static_public("_erg_std_prelude");
+        self.emit_global_import_items(
+            mod_name,
+            vec![(
+                Identifier::static_public("is_err"),
+                Some(Identifier::private("#is_err")),
+            )],
+        );
+        self.is_err_loaded = true;
     }
 
     fn load_mutate_op(&mut self) {
@@ -4230,10 +4311,16 @@ impl PyCodeGenerator {
         // escaping
         self.emit_global_import_items(
             erg_std_mod.clone(),
-            vec![(
-                Identifier::static_public("contains_operator"),
-                Some(Identifier::private("#contains_operator")),
-            )],
+            vec![
+                (
+                    Identifier::static_public("contains_operator"),
+                    Some(Identifier::private("#contains_operator")),
+                ),
+                (
+                    Identifier::static_public("is_err"),
+                    Some(Identifier::private("#is_err")),
+                ),
+            ],
         );
         self.emit_import_all_instr(erg_std_mod);
     }

@@ -370,6 +370,11 @@ fn exec_operators() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_option_result() -> Result<(), ()> {
+    expect_success("tests/should_ok/option_result.er", 0)
+}
+
+#[test]
 fn exec_or() -> Result<(), ()> {
     expect_success("tests/should_ok/or.er", 0)
 }
@@ -625,6 +630,11 @@ fn exec_addition_err() -> Result<(), ()> {
 #[test]
 fn exec_advanced_type_spec_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/advanced_type_spec.er", 0, 1)
+}
+
+#[test]
+fn exec_option_result_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/option_result.er", 0, 4)
 }
 
 #[test]

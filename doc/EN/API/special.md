@@ -63,7 +63,8 @@ Execute `c(obj)`. `x + y |>.foo()` is the same as `(x + y).foo()`.
 
 Postfix operator. Evaluates to the success value of `x`; if `x` turns out to be the error `E`,
 the enclosing subroutine `return`s it immediately.
-`E` must be `NoneType`, [`Error`](./types/classes/Error.md) or a subtype of `BaseException`.
+`E` must be `NoneType`, [`Error`](./types/classes/Error.md) or a subtype of `BaseException` —
+that is, `x` must be an [`Option`](./types/classes/Option.md) or a [`Result`](./types/classes/Result.md).
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =

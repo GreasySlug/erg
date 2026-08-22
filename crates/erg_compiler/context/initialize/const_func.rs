@@ -211,6 +211,40 @@ pub(crate) fn subsume_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResul
     Ok(ValueObj::gen_t(GenTypeObj::subsumed(t, sup, impls, additional)).into())
 }
 
+/// `Option T == T or NoneType`
+///
+/// An alias, not a type of its own: the result is the plain union, which is what
+/// the standard declarations, the `?` operator and the `OptionEq` patch all speak.
+pub(crate) fn option_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let t = args
+        .remove_left_or_key("T")
+        .ok_or_else(|| not_passed("T"))?;
+    let Some(t) = t.as_type(ctx) else {
+        return Err(type_mismatch("type", t, "T"));
+    };
+    Ok(ValueObj::builtin_type(ctx.union(t.typ(), &Type::NoneType)).into())
+}
+
+/// `Result T == T or Error`, or `Result(T, E) == T or E` for another error type.
+///
+/// An alias, like [`option_func`].
+pub(crate) fn result_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let t = args
+        .remove_left_or_key("T")
+        .ok_or_else(|| not_passed("T"))?;
+    let Some(t) = t.as_type(ctx) else {
+        return Err(type_mismatch("type", t, "T"));
+    };
+    let err_t = match args.remove_left_or_key("E") {
+        Some(e) => match e.as_type(ctx) {
+            Some(e) => e.typ().clone(),
+            None => return Err(type_mismatch("type", e, "E")),
+        },
+        None => mono("Error"),
+    };
+    Ok(ValueObj::builtin_type(ctx.union(t.typ(), &err_t)).into())
+}
+
 pub(crate) fn structural_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
     let type_ = args
         .remove_left_or_key("Type")

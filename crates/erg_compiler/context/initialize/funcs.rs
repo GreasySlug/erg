@@ -903,6 +903,33 @@ impl Context {
             None,
         ));
         self.register_builtin_const(STRUCTURAL, vis.clone(), None, ValueObj::Subr(structural));
+        // type aliases: `Option T == T or NoneType`, `Result T == T or Error`
+        let option = ConstSubr::Builtin(BuiltinConstSubr::new(
+            OPTION,
+            option_func,
+            nd_func(vec![kw(TY_T, Type)], None, Type),
+            None,
+        ));
+        self._register_builtin_const(
+            OPTION,
+            vis.clone(),
+            None,
+            ValueObj::Subr(option),
+            Some(OPTION.into()),
+        );
+        let result = ConstSubr::Builtin(BuiltinConstSubr::new(
+            RESULT,
+            result_func,
+            no_var_func(vec![kw(TY_T, Type)], vec![kw(TY_E, Type)], Type),
+            None,
+        ));
+        self._register_builtin_const(
+            RESULT,
+            vis.clone(),
+            None,
+            ValueObj::Subr(result),
+            Some(RESULT.into()),
+        );
         // decorators
         let inheritable_t = func1(ClassType, ClassType);
         let inheritable = ConstSubr::Builtin(BuiltinConstSubr::new(

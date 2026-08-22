@@ -1,0 +1,13 @@
+# misuses of the `Option` / `Result` aliases
+
+# ERR: `Option` needs a type argument
+a: Option = 1
+
+# ERR: `Str` does not fit `Option Int`, which is `Int or NoneType`
+b: Option Int = "not an int"
+
+# ERR: `Result Int` is `Int or Error`, so `None` is not a member
+c: Result Int = None
+
+# ERR: the alias expands to a union, and the declared return type is not one
+d(x: Int): Int = if x > 0, do x, do None

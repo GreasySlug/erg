@@ -1,6 +1,3 @@
-# from typing import TypeVar, Union, _SpecialForm, _type_check
-
-
 class ErrorFrame:
     """A subroutine an `Error` was propagated out of by the `?` operator.
 
@@ -44,15 +41,45 @@ class Error:
         return "{}: {}".format(self.kind, self.msg)
 
 
-# T = TypeVar("T")
-# @_SpecialForm
-# def Result(self, parameters):
-#    """Result type.
-#
-#    Result[T] is equivalent to Union[T, Error].
-#    """
-#    arg = _type_check(parameters, f"{self} requires a single type.")
-#    return [arg, Error]
+
+class _TypeAlias:
+    """A type-level alias, usable at runtime as both `Alias(T)` and `Alias[T]`.
+
+    Erg emits a type application as a subscript and a plain call as a call, and an
+    alias can appear either way, so both are accepted.
+    """
+
+    def __init__(self, name, expand):
+        self.__name__ = name
+        self._expand = expand
+
+    def __call__(self, *args):
+        return self._expand(*args)
+
+    def __getitem__(self, args):
+        if isinstance(args, tuple):
+            return self._expand(*args)
+        return self._expand(args)
+
+    def __repr__(self):
+        return self.__name__
+
+
+def _option(t):
+    from _erg_type import UnionType
+
+    return UnionType(t, type(None))
+
+
+def _result(t, e=Error):
+    from _erg_type import UnionType
+
+    return UnionType(t, e)
+
+
+# `Option T == T or NoneType`, `Result T == T or Error`
+Option = _TypeAlias("Option", _option)
+Result = _TypeAlias("Result", _result)
 
 
 def is_ok(obj) -> bool:

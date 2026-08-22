@@ -1,0 +1,20 @@
+# `Option` / `Result` aliases, including their runtime type values
+a: Option Int = 1
+assert a == 1
+b: Option Int = None
+assert b == None
+
+opt(x: Int): Option Int = if x > 0, do x, do None
+assert opt(3) == 3
+assert opt(-3) == None
+
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+halved = half(8)
+assert halved in Int
+assert halved == 4
+assert half(3) in Error
+
+# bound to a name, the alias is built at runtime
+MyOpt = Option Str
+m: MyOpt = "bound"
+assert m == "bound"

@@ -83,6 +83,7 @@ y = x： Int
 
 后缀运算符。求值为`x`的成功值；如果`x`是错误`E`，则外围子例程立即将其`return`
 `E`必须是`NoneType`、[`Error`](./types/classes/Error.md)或`BaseException`的子类型
+也就是说，`x`必须是[`Option`](./types/classes/Option.md)或[`Result`](./types/classes/Result.md)
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =

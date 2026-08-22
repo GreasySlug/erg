@@ -290,13 +290,8 @@ pub fn ref_mut(before: Type, after: Option<Type>) -> Type {
     }
 }
 
-/*pub fn option(t: Type) -> Type {
-    builtin_poly("Option", vec![TyParam::t(t)])
-}
-
-pub fn option_mut(t: Type) -> Type {
-    builtin_poly("Option!", vec![TyParam::t(t)])
-}*/
+// `Option T` is the alias `T or NoneType`, built by `option_func` in
+// context/initialize/const_func.rs, so there is no `Option` type constructor here.
 
 pub fn subr_t(
     kind: SubrKind,

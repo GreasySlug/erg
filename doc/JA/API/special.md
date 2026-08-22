@@ -64,6 +64,7 @@ objの属性を読み込む。
 
 後置演算子。`x`の成功値に評価される。`x`がエラー`E`だった場合は、囲んでいるサブルーチンがその場で`return`する。
 `E`は`NoneType`、[`Error`](./types/classes/Error.md)、または`BaseException`の部分型でなければならない。
+つまり`x`は[`Option`](./types/classes/Option.md)か[`Result`](./types/classes/Result.md)である必要がある。
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =

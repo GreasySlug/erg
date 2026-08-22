@@ -4,7 +4,7 @@ use erg_common::levenshtein::get_similar_name;
 #[allow(unused)]
 use erg_common::log;
 use erg_common::traits::{Locational, Stream};
-use erg_common::{assume_unreachable, dict, failable_map_mut, fn_name, set, Str};
+use erg_common::{assume_unreachable, dict, failable_map_mut, fn_name, set, switch_lang, Str};
 
 use ast::{
     NonDefaultParamSignature, ParamTySpec, PreDeclTypeSpec, TypeBoundSpec, TypeBoundSpecs, TypeSpec,
@@ -810,14 +810,27 @@ impl Context {
                 {
                     Ok(decl_t.typ().clone())
                 } else {
-                    Err(TyCheckErrors::from(TyCheckError::no_type_error(
+                    let mut err = TyCheckError::no_type_error(
                         self.cfg.input.clone(),
                         line!() as usize,
                         ident.loc(),
                         self.caused_by(),
                         other,
                         self.get_similar_name(other),
-                    )))
+                    );
+                    // a compile-time function returning `Type` (e.g. `Option`) is a
+                    // type only once applied, so say that rather than "not defined"
+                    if matches!(self.rec_get_const_obj(other), Some(ValueObj::Subr(_))) {
+                        if let Some(sub) = err.core.sub_messages.first_mut() {
+                            sub.set_hint(switch_lang!(
+                                "japanese" => format!("{other}は型引数を取ります (例: `{other} Int`)"),
+                                "simplified_chinese" => format!("{other}需要类型参数(例如`{other} Int`)"),
+                                "traditional_chinese" => format!("{other}需要類型參數(例如`{other} Int`)"),
+                                "english" => format!("{other} takes a type argument (e.g. `{other} Int`)"),
+                            ));
+                        }
+                    }
+                    Err(TyCheckErrors::from(err))
                 }
             }
         }

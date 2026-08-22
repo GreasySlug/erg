@@ -1,0 +1,67 @@
+# `Option T` and `Result T` are aliases, evaluated at compile time:
+#   Option T    == T or NoneType
+#   Result T    == T or Error
+#   Result(T,E) == T or E
+
+a: Option Int = 1
+assert a == 1
+b: Option Int = None
+assert b == None
+
+# parenthesized application works the same
+c: Option(Str) = "hi"
+assert c == "hi"
+
+# the alias and the union it stands for are interchangeable in both directions
+u: Int or NoneType = 1
+o: Option Int = u
+u2: Int or NoneType = o
+assert u2 == 1
+
+# return type position
+opt(x: Int): Option Int = if x > 0, do x, do None
+
+assert opt(3) == 3
+assert opt(-3) == None
+
+# `Result` defaults to `Error` and takes another error type as its 2nd argument
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+
+halved = half(8)
+assert halved in Int
+assert halved == 4
+
+failed = half(3)
+assert failed in Error
+assert failed.msg == "not even"
+
+exc(x: Result(Int, ValueError)): Result(Int, ValueError) = x
+excd = exc(1)
+assert excd in Int
+assert excd == 1
+
+# `?` reads an alias exactly as it reads the union
+quarter(x: Int): Result Int =
+    y = half(x)?
+    half(y)?
+
+quartered = quarter(8)
+assert quartered in Int
+assert quartered == 2
+assert quarter(6) in Error
+
+sum_two(l: List(Int, 3)): Option Int =
+    a2 = l.get(0)?
+    b2 = l.get(1)?
+    a2 + b2
+
+assert sum_two([1, 2, 3]) == 3
+
+# an alias can be bound to a name and used as a type
+MyOpt = Option Str
+m: MyOpt = "bound"
+assert m == "bound"
+
+# nesting collapses, because a union of unions is flat
+n: Option(Option Int) = 1
+assert n == 1

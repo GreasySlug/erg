@@ -65,6 +65,7 @@ if True, do:
 
 後綴運算符。求值為`x`的成功值；如果`x`是錯誤`E`，則外圍子程序立即將其`return`
 `E`必須是`NoneType`、[`Error`](./types/classes/Error.md)或`BaseException`的子類型
+也就是說，`x`必須是[`Option`](./types/classes/Option.md)或[`Result`](./types/classes/Result.md)
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =

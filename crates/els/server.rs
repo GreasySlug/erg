@@ -253,6 +253,9 @@ pub struct Server<Checker: BuildRunnable = PackageBuilder, Parser: Parsable = Si
     pub(crate) erg_path: PathBuf,
     pub(crate) init_params: InitializeParams,
     pub(crate) client_answers: Shared<Dict<i64, Value>>,
+    /// IDs of server->client requests whose reply is actually read back;
+    /// see [`Server::await_answer`].
+    pub(crate) awaited_answers: Shared<Set<i64>>,
     pub(crate) disabled_features: Shared<Vec<DefaultFeatures>>,
     pub(crate) opt_features: Shared<Vec<OptionalFeatures>>,
     pub(crate) file_cache: FileCache,
@@ -305,6 +308,7 @@ impl<C: BuildRunnable, P: Parsable> Clone for Server<C, P> {
             erg_path: self.erg_path.clone(),
             init_params: self.init_params.clone(),
             client_answers: self.client_answers.clone(),
+            awaited_answers: self.awaited_answers.clone(),
             disabled_features: self.disabled_features.clone(),
             opt_features: self.opt_features.clone(),
             file_cache: self.file_cache.clone(),
@@ -360,6 +364,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             erg_path: erg_path().clone(), // already normalized
             init_params: InitializeParams::default(),
             client_answers: Shared::new(Dict::new()),
+            awaited_answers: Shared::new(Set::new()),
             disabled_features: Shared::new(disabled_features),
             opt_features: Shared::new(opt_features),
             file_cache: FileCache::new(stdout_redirect.clone()),
@@ -736,7 +741,19 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         capabilities
     }
 
+    /// Declares that the reply to the server->client request `id` will be read
+    /// back out of `client_answers`.
+    ///
+    /// Replies to anything not declared here are dropped. Most server->client
+    /// requests (`workspace/applyEdit`, `client/registerCapability`) are
+    /// fire-and-forget, and keeping their replies would leave an entry in
+    /// `client_answers` for the rest of the session.
+    fn await_answer(&self, id: i64) {
+        self.awaited_answers.borrow_mut().insert(id);
+    }
+
     pub(crate) fn ask_auto_save(&self) -> ELSResult<()> {
+        self.await_answer(ASK_AUTO_SAVE_ID);
         let params = ConfigurationParams {
             items: vec![ConfigurationItem {
                 scope_uri: None,
@@ -1411,7 +1428,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             _ => {
                 _log!(self, "msg: {msg}");
-                if msg.get("error").is_none() {
+                if msg.get("error").is_none() && self.awaited_answers.borrow().contains(&id) {
                     self.client_answers.borrow_mut().insert(id, msg.clone());
                 }
             }

@@ -70,8 +70,22 @@ fn span_contains(span: Range, pos: Position) -> bool {
     key(span.start) <= key(pos) && key(pos) < key(span.end)
 }
 
-/// The regions `#` comments, `#[ ... ]#` blocks and `'''` doc comments occupy.
+/// The UTF-16 column `char_col` chars into `line`.
+///
+/// The lexer counts `Token::col_begin` in `char`s, while LSP positions count
+/// UTF-16 code units. They agree until a line contains a character outside the
+/// BMP -- `x = "𝒳" # hi` puts the `#` at char column 8 but UTF-16 column 9.
+fn utf16_col(line: &str, char_col: u32) -> u32 {
+    line.chars()
+        .take(char_col as usize)
+        .map(|c| c.len_utf16() as u32)
+        .sum()
+}
+
+/// The regions `#` comments, `#[ ... ]#` blocks and `'''` doc comments occupy,
+/// in LSP coordinates.
 fn comment_spans_of(code: &str) -> Vec<Range> {
+    let lines: Vec<&str> = code.split('\n').collect();
     let tokens = match Lexer::from_str(code.to_string()).keep_comments().lex() {
         Ok(ts) => ts,
         Err((ts, _)) => ts,
@@ -80,17 +94,22 @@ fn comment_spans_of(code: &str) -> Vec<Range> {
         .iter()
         .filter(|tk| matches!(tk.kind, TokenKind::Comment | TokenKind::DocComment))
         .map(|tk| {
-            // `Token` only stores the starting line, so the end of a block or
-            // doc comment has to come from its content.
-            let start = Position::new(tk.lineno.saturating_sub(1), tk.col_begin);
+            let line = tk.lineno.saturating_sub(1);
+            let start_col = lines
+                .get(line as usize)
+                .map_or(tk.col_begin, |src| utf16_col(src, tk.col_begin));
+            let start = Position::new(line, start_col);
+            // `Token` only stores the starting line, so the extent comes from
+            // its own text -- which is the verbatim source of the comment,
+            // delimiters included (`# hi`, `#[ a\nb ]#`, `'''doc'''`).
             let extra = tk.content.matches('\n').count() as u32;
             let end = if extra == 0 {
-                Position::new(start.line, tk.col_end)
+                Position::new(line, start_col + tk.content.encode_utf16().count() as u32)
             } else {
-                // `chars`, not `encode_utf16`: the same unit the lexer counts
-                // `col_begin`/`col_end` in, which this range is compared against.
+                // A continuation line of the comment starts at column 0, so its
+                // own width is the column just past the comment's close.
                 let last = tk.content.split('\n').next_back().unwrap_or("");
-                Position::new(start.line + extra, last.chars().count() as u32)
+                Position::new(line + extra, last.encode_utf16().count() as u32)
             };
             Range::new(start, end)
         })
@@ -509,5 +528,67 @@ impl FileCache {
 
     pub fn get_ver(&self, uri: &NormalizedUrl) -> Option<i32> {
         self.files.borrow().get(uri).map(|x| x.ver)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn in_comment(code: &str, line: u32, character: u32) -> bool {
+        comment_spans_of(code)
+            .iter()
+            .any(|span| span_contains(*span, Position::new(line, character)))
+    }
+
+    #[test]
+    fn a_trailing_comment_covers_only_itself() {
+        let code = "x = 1 # hi\ny = 2\n";
+        assert!(
+            !in_comment(code, 0, 5),
+            "the code before `#` still completes"
+        );
+        assert!(in_comment(code, 0, 6), "`#` itself");
+        assert!(in_comment(code, 0, 9));
+        assert!(!in_comment(code, 0, 10), "past the end of the comment");
+        assert!(!in_comment(code, 1, 0), "the next line is code");
+    }
+
+    #[test]
+    fn a_block_comment_covers_its_interior_but_not_the_code_around_it() {
+        let code = "x = 1 #[ a\nb\nc ]# + 2\n";
+        assert!(!in_comment(code, 0, 5));
+        assert!(in_comment(code, 0, 6));
+        assert!(in_comment(code, 1, 0), "an interior line is all comment");
+        assert!(in_comment(code, 2, 3), "up to `]#`");
+        assert!(!in_comment(code, 2, 4), "` + 2` is code again");
+    }
+
+    #[test]
+    fn a_doc_comment_covers_its_lines() {
+        let code = "'''\ndoc\n'''\nx = 1\n";
+        assert!(in_comment(code, 0, 0));
+        assert!(in_comment(code, 1, 1));
+        assert!(!in_comment(code, 3, 0));
+    }
+
+    #[test]
+    fn a_hash_inside_a_string_is_not_a_comment() {
+        let code = "x = \"# not a comment\"\n";
+        assert!(!in_comment(code, 0, 5));
+    }
+
+    #[test]
+    fn columns_are_utf16_units_not_chars() {
+        // `𝒳` is one `char` but two UTF-16 code units, so the lexer's char
+        // column 8 for `#` is column 9 to the client.
+        let code = "x = \"\u{1D4B3}\" # hi\n";
+        assert!(!in_comment(code, 0, 8), "still inside the string literal");
+        assert!(in_comment(code, 0, 9), "`#` in the client's coordinates");
+    }
+
+    #[test]
+    fn a_file_without_comments_has_no_spans() {
+        assert!(comment_spans_of("x = 1\ny = 2\n").is_empty());
     }
 }

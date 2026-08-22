@@ -29,14 +29,15 @@ a.x # AttributeError: x is private
 
 The above example may seem strange to someone familiar with JavaScript. Simply declaring `x` makes it inaccessible from the outside, and adding `.` makes it accessible from the outside.
 
-You can also explicitly specify the type of an attribute.
+An attribute holding an [`Option!`](../API/types/classes/Option!.md) can be replaced later.
 
 ```python
 anonymous = {
-    .name: Option! Str = "Jane Doe"
+    .name = Option!("Jane Doe");
     .age = 20
 }
 anonymous.name.set! "John Doe"
+assert anonymous.name.get() == "John Doe"
 ```
 
 A record can also have the method.

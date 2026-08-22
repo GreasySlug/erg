@@ -1,0 +1,12 @@
+# misuses of `Option!`
+
+o: Option! Str = Option!("a")
+
+# ERR: the cell only takes a `Str` or `None`
+o.set! 1
+
+# ERR: `.get()` may be `None`; unwrap it first
+_a = o.get().upper()
+
+# ERR: `.update!` is not defined; write `o.set!(f(o.get()))`
+o.update!((old) -> old)

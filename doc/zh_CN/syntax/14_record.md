@@ -31,14 +31,15 @@ a.x # AttributeError: x is private
 
 对于熟悉 JavaScript 的人来说，上面的示例可能看起来很奇怪，但简单地声明 `x` 会使其无法从外部访问
 
-您还可以显式指定属性的类型
+持有[`Option!`](../API/types/classes/Option!.md)的属性可以在之后替换其内容
 
 ```python
 anonymous = {
-    .name: Option! Str = "Jane Doe"
+    .name = Option!("Jane Doe");
     .age = 20
 }
 anonymous.name.set! "John Doe"
+assert anonymous.name.get() == "John Doe"
 ```
 
 一个记录也可以有方法

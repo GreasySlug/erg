@@ -15,6 +15,7 @@ from _erg_result import (
     Error,
     ErrorFrame,
     Option,
+    OptionMut,
     Result,
     is_err,
     is_ok,

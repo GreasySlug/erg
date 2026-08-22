@@ -31,14 +31,15 @@ a.x # AttributeError: x is private
 
 上の例はJavaScriptに習熟している人間からすると奇妙かもしれませんが、単に`x`と宣言すると外部からアクセスできず、`.`をつけると`.`でアクセスできるというわけです。
 
-属性に対する明示的な型指定もできます。
+[`Option!`](../API/types/classes/Option!.md)を持つ属性は、後から中身を入れ替えられます。
 
 ```python
 anonymous = {
-    .name: Option! Str = "Jane Doe"
+    .name = Option!("Jane Doe");
     .age = 20
 }
 anonymous.name.set! "John Doe"
+assert anonymous.name.get() == "John Doe"
 ```
 
 レコードはメソッドも持てます。

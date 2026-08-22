@@ -11,6 +11,8 @@ y: Option Int = None
 first(l: List(Int, 3)): Option Int = l.get(0)
 ```
 
+中身を入れ替えられるセルについては[`Option!`](./Option!.md)を参照。
+
 [`?`](../../special.md)演算子は`NoneType`をエラー側として扱うため、`Option T`に`?`を適用すると`T`が得られ、そうでなければ囲むサブルーチンから`None`が返る。
 
 ```python

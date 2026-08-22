@@ -375,6 +375,11 @@ fn exec_either() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_option_mut() -> Result<(), ()> {
+    expect_success("tests/should_ok/option_mut.er", 0)
+}
+
+#[test]
 fn exec_option_result() -> Result<(), ()> {
     expect_success("tests/should_ok/option_result.er", 0)
 }
@@ -655,6 +660,11 @@ fn exec_advanced_type_spec_err() -> Result<(), ()> {
 #[test]
 fn exec_either_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/either.er", 0, 5)
+}
+
+#[test]
+fn exec_option_mut_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/option_mut.er", 0, 3)
 }
 
 #[test]

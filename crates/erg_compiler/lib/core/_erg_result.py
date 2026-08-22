@@ -1,3 +1,6 @@
+from _erg_type import MutType
+
+
 class ErrorFrame:
     """A subroutine an `Error` was propagated out of by the `?` operator.
 
@@ -87,6 +90,40 @@ def _either(l, r):
 Option = _TypeAlias("Option", _option)
 Result = _TypeAlias("Result", _result)
 Either = _TypeAlias("Either", _either)
+
+
+class OptionMut(MutType):
+    """`Option! T`: a cell holding a `T or NoneType` that can be refilled.
+
+    `Option T` is only an alias for `T or NoneType`, so a mutable option cannot be
+    the `MutType!` of anything; this is a class of its own.
+    """
+
+    value: object
+
+    def __init__(self, value=None):
+        self.value = value
+
+    def __repr__(self):
+        return "Option!({})".format(repr(self.value))
+
+    def __eq__(self, other):
+        if isinstance(other, MutType):
+            return self.value == other.value
+        else:
+            return self.value == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+    def clear(self):
+        self.value = None
 
 
 def is_ok(obj) -> bool:

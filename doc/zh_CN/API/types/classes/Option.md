@@ -11,6 +11,8 @@ y: Option Int = None
 first(l: List(Int, 3)): Option Int = l.get(0)
 ```
 
+关于可以替换内容的单元格，请参见[`Option!`](./Option!.md)
+
 [`?`](../../special.md)运算符将`NoneType`视为错误一侧，因此对`Option T`应用`?`会得到`T`，否则外围子例程返回`None`
 
 ```python

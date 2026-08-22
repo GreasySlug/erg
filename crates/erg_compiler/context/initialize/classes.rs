@@ -3441,6 +3441,57 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         obj_mut.register_trait_methods(mono(MUTABLE_OBJ), obj_mut_immutizable);
+        /* Option! */
+        // `Option T` is only an alias for `T or NoneType`, so a mutable option cannot be
+        // reached through `Mutizable`: a union is not a nominal type and has nowhere to
+        // hang the impl. `Option!` is a class of its own instead, a cell holding an
+        // `Option T` that `.set!` can refill.
+        let opt_mut_t = poly(MUT_OPTION, vec![ty_tp(T.clone())]);
+        let opt_t = crate::ty::constructors::or(T.clone(), NoneType);
+        let mut option_mut = Self::builtin_poly_class(MUT_OPTION, vec![PS::t_nd(TY_T)], 4);
+        option_mut.register_superclass(Obj, &obj);
+        // covariant, as `List!` is: without it an empty `Option!()` is an `Option! Never`
+        // and could not be given to anything, since its `T` is fixed before the
+        // expected type is known
+        option_mut
+            .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
+            .unwrap();
+        option_mut.register_builtin_py_impl(
+            FUNDAMENTAL_CALL,
+            no_var_func(vec![], vec![kw(KW_VALUE, T.clone())], opt_mut_t.clone()).quantify(),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNDAMENTAL_CALL),
+        );
+        let t_get = fn0_met(ref_(opt_mut_t.clone()), opt_t.clone()).quantify();
+        option_mut.register_builtin_py_impl(
+            FUNC_GET,
+            t_get,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_GET),
+        );
+        let t_set = pr1_met(ref_mut(opt_mut_t.clone(), None), opt_t.clone(), NoneType).quantify();
+        option_mut.register_builtin_py_impl(
+            PROC_SET,
+            t_set,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_SET),
+        );
+        let t_clear = pr0_met(ref_mut(opt_mut_t.clone(), None), NoneType).quantify();
+        option_mut.register_builtin_py_impl(
+            PROC_CLEAR,
+            t_clear,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_CLEAR),
+        );
+        // no `Immutizable` impl: its `update!` would take a
+        // `(T or NoneType) -> (T or NoneType)`, and a lambda whose parameter is a union
+        // holding a type variable cannot be inferred yet (the same is true of a plain
+        // `f|T|(g: (T or NoneType) -> (T or NoneType))`). Write `o.set!(f(o.get()))`.
+        self.register_builtin_type(opt_mut_t, option_mut, vis.clone(), Const, Some(OPTION_MUT));
         /* Float! */
         let mut float_mut = Self::builtin_mono_class(MUT_FLOAT, 2);
         float_mut.register_superclass(Float, &float);

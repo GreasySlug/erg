@@ -394,6 +394,7 @@ const MODULE_TYPE: &str = "ModuleType";
 const FRAME_TYPE: &str = "FrameType";
 const FUNC_LIST: &str = "list";
 const FUNC_SET: &str = "set";
+const PROC_SET: &str = "set!";
 const FUNC_DICT: &str = "dict";
 const FUNC_DIVMOD: &str = "divmod";
 const FUNC_TUPLE: &str = "tuple";
@@ -557,6 +558,10 @@ const DEL: &str = "Del";
 const PATCH: &str = "Patch";
 const STRUCTURAL: &str = "Structural";
 const OPTION: &str = "Option";
+/// `Option! T`: a mutable cell holding an `Option T`.
+/// Unlike `Option`, which is only an alias for `T or NoneType`, this is a class.
+const MUT_OPTION: &str = "Option!";
+const OPTION_MUT: &str = "OptionMut";
 const RESULT: &str = "Result";
 const EITHER: &str = "Either";
 const KEYS: &str = "keys";

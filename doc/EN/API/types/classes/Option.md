@@ -9,6 +9,8 @@ y: Option Int = None
 first(l: List(Int, 3)): Option Int = l.get(0)
 ```
 
+For a cell whose content can be replaced, see [`Option!`](./Option!.md).
+
 The [`?`](../../special.md) operator recognizes `NoneType` as the error alternative, so `?` on an `Option T` gives a `T` and returns `None` from the enclosing subroutine otherwise.
 
 ```python

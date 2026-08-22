@@ -1,0 +1,54 @@
+# `Option! T` is a cell holding an `Option T` (`T or NoneType`) that can be refilled.
+# Unlike `Option`, which is only an alias for a union, it is a class of its own:
+# a union is not a nominal type, so it cannot be the `MutType!` of anything.
+
+o = Option!("Jane Doe")
+print! o.get()
+
+o.set! "John Doe"
+print! o.get()
+
+# the cell can be emptied, and refilled afterwards
+o.set!(None)
+print! o.get()
+o.clear!()
+print! o.get()
+o.set! "Jane Roe"
+print! o.get()
+
+# an empty cell needs its type written down, since there is no value to read it from
+e: Option! Int = Option!()
+print! e.get()
+e.set! 1
+print! e.get()
+
+# there is no `.update!`; read, apply, write back
+u: Option! Int = Option!(1)
+u.set!(u.get().unwrap_or(0) + 1)
+print! u.get()
+u.clear!()
+u.set!(u.get().unwrap_or(0) + 1)
+print! u.get()
+
+# `.get()` is an ordinary `T or NoneType`, so everything defined on one works
+n: Option! Int = Option!(7)
+assert n.get().unwrap() == 7
+m: Option! Int = Option!(0)
+m.clear!()
+assert m.get().unwrap_or(-1) == -1
+
+incr(opt: Option! Int): Int or NoneType =
+    x = opt.get()?
+    x + 1
+
+print! incr(n)
+print! incr(m)
+
+# the cell is a value like any other: it can be stored in a record
+anonymous = {
+    .name = Option!("Jane Doe");
+    .age = 20
+}
+anonymous.name.set! "John Doe"
+print! anonymous.name.get()
+assert anonymous.age == 20

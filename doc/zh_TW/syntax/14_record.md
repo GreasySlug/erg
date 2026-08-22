@@ -32,14 +32,15 @@ assert a.y == 2
 對于熟悉 JavaScript 的人來說，上面的示例可能看起來很奇怪.
 Simply declaring `x` makes it inaccessible from the outside, and adding `.` makes it accessible from the outside.
 
-您還可以顯式指定屬性的類型
+持有[`Option!`](../API/types/classes/Option!.md)的屬性可以在之後替換其內容
 
 ```python
 anonymous = {
-    .name: Option! Str = "Jane Doe"
+    .name = Option!("Jane Doe");
     .age = 20
 }
 anonymous.name.set! "John Doe"
+assert anonymous.name.get() == "John Doe"
 ```
 
 一個記錄也可以有方法

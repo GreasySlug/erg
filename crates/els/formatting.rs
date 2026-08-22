@@ -74,40 +74,47 @@ fn range_contains(outer: Range, inner: Range) -> bool {
 /// Built from a common prefix/suffix of `split('\n')` lines, which keeps a
 /// trailing empty line when the file ends in a newline -- the same split
 /// [`whole_document`] uses.
+///
+/// The last element of that split is special: it is the text *after* the final
+/// newline, so it carries no terminator of its own. The prefix therefore stops
+/// one element short of the shorter side -- matching a real blank line against
+/// the virtual trailing one would put `start` past the first differing newline
+/// and leave a line behind. For the same reason a replacement terminates each
+/// of its lines, which makes a pure deletion (no replacement lines) empty.
 fn changed_region(original: &str, formatted: &str) -> Option<(Range, String)> {
     if original == formatted {
         return None;
     }
     let old: Vec<&str> = original.split('\n').collect();
     let new: Vec<&str> = formatted.split('\n').collect();
+    let max_prefix = old.len().min(new.len()).saturating_sub(1);
     let mut prefix = 0;
-    while prefix < old.len() && prefix < new.len() && old[prefix] == new[prefix] {
+    while prefix < max_prefix && old[prefix] == new[prefix] {
         prefix += 1;
     }
-    let mut old_suffix = 0;
-    let mut new_suffix = 0;
-    while prefix + old_suffix < old.len()
-        && prefix + new_suffix < new.len()
-        && old[old.len() - 1 - old_suffix] == new[new.len() - 1 - new_suffix]
+    let mut suffix = 0;
+    while prefix + suffix < old.len()
+        && prefix + suffix < new.len()
+        && old[old.len() - 1 - suffix] == new[new.len() - 1 - suffix]
     {
-        old_suffix += 1;
-        new_suffix += 1;
+        suffix += 1;
     }
     let start = Position::new(prefix as u32, 0);
-    let end = if old_suffix == 0 {
+    if suffix == 0 {
+        // The change runs to the end of the file, whose last line has no
+        // newline to sit behind: end at the last character instead.
         let last = old.last().copied().unwrap_or("");
-        Position::new(
+        let end = Position::new(
             (old.len().saturating_sub(1)) as u32,
             last.encode_utf16().count() as u32,
-        )
-    } else {
-        Position::new((old.len() - old_suffix) as u32, 0)
-    };
-    let mid = &new[prefix..new.len() - new_suffix];
-    let mut replacement = mid.join("\n");
-    if old_suffix > 0 {
-        replacement.push('\n');
+        );
+        return Some((Range { start, end }, new[prefix..].join("\n")));
     }
+    let end = Position::new((old.len() - suffix) as u32, 0);
+    let replacement = new[prefix..new.len() - suffix]
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
     Some((Range { start, end }, replacement))
 }
 
@@ -248,6 +255,51 @@ mod tests {
             FmtConfig::default().max_width,
             "the rest still comes from the server's config"
         );
+    }
+
+    /// Apply a single edit the way an LSP client would, so a test can assert on
+    /// the resulting buffer rather than on the range/text pair alone.
+    fn apply(code: &str, range: Range, new_text: &str) -> String {
+        let lines: Vec<&str> = code.split('\n').collect();
+        let offset = |pos: Position| {
+            lines
+                .iter()
+                .take(pos.line as usize)
+                .map(|line| line.len() + 1)
+                .sum::<usize>()
+                + pos.character as usize
+        };
+        format!(
+            "{}{new_text}{}",
+            &code[..offset(range.start)],
+            &code[offset(range.end)..]
+        )
+    }
+
+    #[test]
+    fn changed_region_edits_reproduce_the_formatted_buffer() {
+        for (original, formatted) in [
+            ("x =   1\n_ = x + 1\n", "x = 1\n_ = x + 1\n"),
+            // pure deletions: `erg_fmt` caps runs of blank lines and drops
+            // leading/trailing ones, so these are not hypothetical
+            ("a\n\n\n\nb\n", "a\n\nb\n"),
+            ("a\nb\nc\n", "a\nc\n"),
+            ("\n\na\n", "a\n"),
+            ("a\n\n\n", "a\n"),
+            ("a\nb\nc\n", "a\n"),
+            // insertion, reflow, and a file without a trailing newline
+            ("a\n", "a\nb\n"),
+            ("f(\n  a,\n  b,\n)\n", "f(a, b)\n"),
+            ("a\nb", "a\nc"),
+            ("abc", "abd"),
+        ] {
+            let (range, text) = changed_region(original, formatted).expect("a change");
+            assert_eq!(
+                apply(original, range, &text),
+                formatted,
+                "{original:?} -> {formatted:?} via {range:?} {text:?}"
+            );
+        }
     }
 
     #[test]

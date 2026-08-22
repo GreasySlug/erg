@@ -49,7 +49,13 @@
 - [x] `textDocument/declaration`
   → **完了**: 名前の束縛位置を返す。`definition` が import/alias を辿るのに対し、
     宣言は辿らない。test_goto_declaration。
-- [ ] 型階層: `prepareTypeHierarchy` / supertypes / subtypes
+- [x] 型階層: `prepareTypeHierarchy` / supertypes / subtypes
+  → **完了**: カーソル位置の型(クラス/トレイト定義、または値の型)を `prepare` し、
+    直近のスーパークラスと自身が実装するトレイトを `supertypes`、
+    `get_class_impls` によるサブクラス/実装クラスを `subtypes` として返す。
+    builtin で定義位置が無い型は省略。test_type_hierarchy。
+    (`lsp-types` 0.93 に型が無いため ELS 側で定義し、capabilities は
+    initialize 結果へ `typeHierarchyProvider: true` を足して宣言)
 - [ ] `workspace/didChangeWatchedFiles`, `workspace/didChangeConfiguration`
 - [ ] Pull diagnostics, `linkedEditingRange`, `moniker`
 - [ ] `onTypeFormatting`

@@ -16,6 +16,7 @@ ELS is a language server for the [Erg](https://github.com/erg-lang/erg) programm
 - [x] Go to declaration
 - [x] Go to type definition
 - [x] Go to implementation
+- [x] Type hierarchy
 - [x] Find references
 - [x] Renaming
 - [x] Inlay hint

@@ -70,6 +70,7 @@ use crate::file_cache::FileCache;
 use crate::hir_visitor::{ExprKind, HIRVisitor};
 use crate::message::{ErrorMessage, LSPResult};
 use crate::scheduler::Scheduler;
+use crate::type_hierarchy::{TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes};
 use crate::util::{self, loc_to_pos, NormalizedUrl};
 
 pub const HEALTH_CHECKER_ID: i64 = 10000;
@@ -494,8 +495,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             self.init_params = InitializeParams::deserialize(&msg["params"])?;
             // self.send_log(format!("set client capabilities: {:?}", self.client_capas))?;
         }
-        let mut result = InitializeResult::default();
-        result.capabilities = self.init_capabilities();
+        let mut result = serde_json::to_value(InitializeResult {
+            capabilities: self.init_capabilities(),
+            ..Default::default()
+        })?;
+        // lsp-types 0.93 has no `typeHierarchyProvider`; advertise it by hand.
+        if let Some(caps) = result.get_mut("capabilities") {
+            caps["typeHierarchyProvider"] = json!(true);
+        }
         self.init_services();
         self.send_stdout(&json!({
             "jsonrpc": "2.0",
@@ -745,6 +752,18 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.start_service::<CallHierarchyOutgoingCalls>(
             receivers.call_hierarchy_outgoing,
             Self::handle_call_hierarchy_outgoing,
+        );
+        self.start_service::<TypeHierarchyPrepare>(
+            receivers.type_hierarchy_prepare,
+            Self::handle_type_hierarchy_prepare,
+        );
+        self.start_service::<TypeHierarchySupertypes>(
+            receivers.type_hierarchy_supertypes,
+            Self::handle_type_hierarchy_supertypes,
+        );
+        self.start_service::<TypeHierarchySubtypes>(
+            receivers.type_hierarchy_subtypes,
+            Self::handle_type_hierarchy_subtypes,
         );
         self.start_service::<FoldingRangeRequest>(
             receivers.folding_range,
@@ -1039,6 +1058,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 self.parse_send::<CallHierarchyOutgoingCalls>(id, msg)
             }
             CallHierarchyPrepare::METHOD => self.parse_send::<CallHierarchyPrepare>(id, msg),
+            TypeHierarchyPrepare::METHOD => self.parse_send::<TypeHierarchyPrepare>(id, msg),
+            TypeHierarchySupertypes::METHOD => self.parse_send::<TypeHierarchySupertypes>(id, msg),
+            TypeHierarchySubtypes::METHOD => self.parse_send::<TypeHierarchySubtypes>(id, msg),
             FoldingRangeRequest::METHOD => self.parse_send::<FoldingRangeRequest>(id, msg),
             SelectionRangeRequest::METHOD => self.parse_send::<SelectionRangeRequest>(id, msg),
             DocumentHighlightRequest::METHOD => {

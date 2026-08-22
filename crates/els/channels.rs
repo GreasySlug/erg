@@ -24,6 +24,10 @@ use lsp_types::{
 };
 
 use crate::server::Server;
+use crate::type_hierarchy::{
+    TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypes, TypeHierarchySupertypesParams,
+};
 
 #[derive(Debug, Clone)]
 pub enum WorkerMessage<P> {
@@ -61,6 +65,9 @@ pub struct SendChannels {
     call_hierarchy_prepare: mpsc::Sender<WorkerMessage<CallHierarchyPrepareParams>>,
     call_hierarchy_incoming: mpsc::Sender<WorkerMessage<CallHierarchyIncomingCallsParams>>,
     call_hierarchy_outgoing: mpsc::Sender<WorkerMessage<CallHierarchyOutgoingCallsParams>>,
+    type_hierarchy_prepare: mpsc::Sender<WorkerMessage<TypeHierarchyPrepareParams>>,
+    type_hierarchy_supertypes: mpsc::Sender<WorkerMessage<TypeHierarchySupertypesParams>>,
+    type_hierarchy_subtypes: mpsc::Sender<WorkerMessage<TypeHierarchySubtypesParams>>,
     folding_range: mpsc::Sender<WorkerMessage<FoldingRangeParams>>,
     selection_range: mpsc::Sender<WorkerMessage<SelectionRangeParams>>,
     document_highlight: mpsc::Sender<WorkerMessage<DocumentHighlightParams>>,
@@ -94,6 +101,9 @@ impl SendChannels {
         let (tx_call_hierarchy_prepare, rx_call_hierarchy_prepare) = mpsc::channel();
         let (tx_call_hierarchy_incoming, rx_call_hierarchy_incoming) = mpsc::channel();
         let (tx_call_hierarchy_outgoing, rx_call_hierarchy_outgoing) = mpsc::channel();
+        let (tx_type_hierarchy_prepare, rx_type_hierarchy_prepare) = mpsc::channel();
+        let (tx_type_hierarchy_supertypes, rx_type_hierarchy_supertypes) = mpsc::channel();
+        let (tx_type_hierarchy_subtypes, rx_type_hierarchy_subtypes) = mpsc::channel();
         let (tx_folding_range, rx_folding_range) = mpsc::channel();
         let (tx_selection_range, rx_selection_range) = mpsc::channel();
         let (tx_document_highlight, rx_document_highlight) = mpsc::channel();
@@ -125,6 +135,9 @@ impl SendChannels {
                 call_hierarchy_prepare: tx_call_hierarchy_prepare,
                 call_hierarchy_incoming: tx_call_hierarchy_incoming,
                 call_hierarchy_outgoing: tx_call_hierarchy_outgoing,
+                type_hierarchy_prepare: tx_type_hierarchy_prepare,
+                type_hierarchy_supertypes: tx_type_hierarchy_supertypes,
+                type_hierarchy_subtypes: tx_type_hierarchy_subtypes,
                 folding_range: tx_folding_range,
                 selection_range: tx_selection_range,
                 document_highlight: tx_document_highlight,
@@ -156,6 +169,9 @@ impl SendChannels {
                 call_hierarchy_prepare: rx_call_hierarchy_prepare,
                 call_hierarchy_incoming: rx_call_hierarchy_incoming,
                 call_hierarchy_outgoing: rx_call_hierarchy_outgoing,
+                type_hierarchy_prepare: rx_type_hierarchy_prepare,
+                type_hierarchy_supertypes: rx_type_hierarchy_supertypes,
+                type_hierarchy_subtypes: rx_type_hierarchy_subtypes,
                 folding_range: rx_folding_range,
                 selection_range: rx_selection_range,
                 document_highlight: rx_document_highlight,
@@ -190,6 +206,9 @@ impl SendChannels {
         let _ = self.call_hierarchy_prepare.send(WorkerMessage::Kill);
         let _ = self.call_hierarchy_incoming.send(WorkerMessage::Kill);
         let _ = self.call_hierarchy_outgoing.send(WorkerMessage::Kill);
+        let _ = self.type_hierarchy_prepare.send(WorkerMessage::Kill);
+        let _ = self.type_hierarchy_supertypes.send(WorkerMessage::Kill);
+        let _ = self.type_hierarchy_subtypes.send(WorkerMessage::Kill);
         let _ = self.folding_range.send(WorkerMessage::Kill);
         let _ = self.selection_range.send(WorkerMessage::Kill);
         let _ = self.document_highlight.send(WorkerMessage::Kill);
@@ -226,6 +245,10 @@ pub struct ReceiveChannels {
         mpsc::Receiver<WorkerMessage<CallHierarchyIncomingCallsParams>>,
     pub(crate) call_hierarchy_outgoing:
         mpsc::Receiver<WorkerMessage<CallHierarchyOutgoingCallsParams>>,
+    pub(crate) type_hierarchy_prepare: mpsc::Receiver<WorkerMessage<TypeHierarchyPrepareParams>>,
+    pub(crate) type_hierarchy_supertypes:
+        mpsc::Receiver<WorkerMessage<TypeHierarchySupertypesParams>>,
+    pub(crate) type_hierarchy_subtypes: mpsc::Receiver<WorkerMessage<TypeHierarchySubtypesParams>>,
     pub(crate) folding_range: mpsc::Receiver<WorkerMessage<FoldingRangeParams>>,
     pub(crate) selection_range: mpsc::Receiver<WorkerMessage<SelectionRangeParams>>,
     pub(crate) document_highlight: mpsc::Receiver<WorkerMessage<DocumentHighlightParams>>,
@@ -311,6 +334,21 @@ impl_sendable!(
     CallHierarchyOutgoingCalls,
     CallHierarchyOutgoingCallsParams,
     call_hierarchy_outgoing
+);
+impl_sendable!(
+    TypeHierarchyPrepare,
+    TypeHierarchyPrepareParams,
+    type_hierarchy_prepare
+);
+impl_sendable!(
+    TypeHierarchySupertypes,
+    TypeHierarchySupertypesParams,
+    type_hierarchy_supertypes
+);
+impl_sendable!(
+    TypeHierarchySubtypes,
+    TypeHierarchySubtypesParams,
+    type_hierarchy_subtypes
 );
 impl_sendable!(FoldingRangeRequest, FoldingRangeParams, folding_range);
 impl_sendable!(SelectionRangeRequest, SelectionRangeParams, selection_range);

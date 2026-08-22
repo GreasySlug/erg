@@ -25,7 +25,10 @@ const FILE_INHERIT_LENS: &str = "tests/inherit_lens.er";
 const FILE_CALL_HIERARCHY: &str = "tests/call_hierarchy.er";
 const FILE_FOLD: &str = "tests/fold.er";
 
-use els::{NormalizedUrl, Server};
+use els::{
+    NormalizedUrl, Server, TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypes, TypeHierarchySupertypesParams,
+};
 use erg_proc_macros::exec_new_thread;
 use molc::{add_char, delete_line, oneline_range};
 
@@ -513,6 +516,70 @@ fn test_goto_implementation() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("expected Array of implementations, got {resp:?}").into());
     };
     assert_eq!(locations.len(), 1, "{locations:?}");
+    Ok(())
+}
+
+/// Type hierarchy: `D = Inherit C` → C's subtypes include D, D's supertypes include C.
+#[test]
+#[exec_new_thread]
+fn test_type_hierarchy() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INHERIT_LENS).canonicalize()?)?;
+    client.notify_open(FILE_INHERIT_LENS)?;
+
+    let c = client
+        .request::<TypeHierarchyPrepare>(TypeHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+                position: Position::new(1, 0),
+            },
+            work_done_progress_params: Default::default(),
+        })?
+        .ok_or("prepareTypeHierarchy for C returned None")?
+        .into_iter()
+        .next()
+        .ok_or("prepareTypeHierarchy for C returned no items")?;
+    assert_eq!(c.name, "C", "{c:?}");
+
+    let d = client
+        .request::<TypeHierarchyPrepare>(TypeHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+                position: Position::new(5, 0),
+            },
+            work_done_progress_params: Default::default(),
+        })?
+        .ok_or("prepareTypeHierarchy for D returned None")?
+        .into_iter()
+        .next()
+        .ok_or("prepareTypeHierarchy for D returned no items")?;
+    assert_eq!(d.name, "D", "{d:?}");
+
+    let subtypes = client
+        .request::<TypeHierarchySubtypes>(TypeHierarchySubtypesParams {
+            item: c,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })?
+        .unwrap_or_default();
+    assert!(
+        subtypes.iter().any(|item| item.name == "D"),
+        "C's subtypes should include D: {subtypes:?}"
+    );
+
+    let supertypes = client
+        .request::<TypeHierarchySupertypes>(TypeHierarchySupertypesParams {
+            item: d,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })?
+        .unwrap_or_default();
+    assert!(
+        supertypes.iter().any(|item| item.name == "C"),
+        "D's supertypes should include C: {supertypes:?}"
+    );
     Ok(())
 }
 

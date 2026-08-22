@@ -26,6 +26,11 @@ mod server;
 mod sig_help;
 mod symbol;
 mod type_definition;
+mod type_hierarchy;
 mod util;
 pub use server::*;
+pub use type_hierarchy::{
+    TypeHierarchyItem, TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypes, TypeHierarchySupertypesParams,
+};
 pub use util::*;

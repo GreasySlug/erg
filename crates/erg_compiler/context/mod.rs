@@ -775,6 +775,16 @@ impl Context {
         ctx.get_var_info(&typ.local_name())
     }
 
+    /// Superclasses of this type context, nearest first. Does not include `self`.
+    pub fn super_class_types(&self) -> &[Type] {
+        &self.super_classes
+    }
+
+    /// Super-traits / implemented traits of this type context, nearest first.
+    pub fn super_trait_types(&self) -> &[Type] {
+        &self.super_traits
+    }
+
     pub fn unregister(&mut self, name: &str) -> Option<VarInfo> {
         self.mono_types.remove(name);
         self.poly_types.remove(name);

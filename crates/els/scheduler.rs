@@ -9,6 +9,8 @@ use lsp_types::request::{
     Request, ResolveCompletionItem, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 
+use crate::type_hierarchy::{TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes};
+
 use erg_common::{shared::Shared, spawn::safe_yield};
 
 type TaskID = i64;
@@ -57,6 +59,9 @@ impl From<&str> for RequestKind {
             CallHierarchyPrepare::METHOD
             | CallHierarchyIncomingCalls::METHOD
             | CallHierarchyOutgoingCalls::METHOD => Self::CallHierarchy,
+            TypeHierarchyPrepare::METHOD
+            | TypeHierarchySupertypes::METHOD
+            | TypeHierarchySubtypes::METHOD => Self::CallHierarchy,
             References::METHOD => Self::References,
             InlayHintRequest::METHOD => Self::InlayHint,
             CodeActionRequest::METHOD => Self::CodeAction,

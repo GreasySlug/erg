@@ -3823,7 +3823,7 @@ impl Context {
     /// get_nominal_type_ctx(T or U) == Some(<Or>)
     /// get_nominal_type_ctx(T and U) == None
     /// ```
-    pub(crate) fn get_nominal_type_ctx<'a>(&'a self, typ: &Type) -> Option<&'a TypeContext> {
+    pub fn get_nominal_type_ctx<'a>(&'a self, typ: &Type) -> Option<&'a TypeContext> {
         match typ {
             Type::FreeVar(fv) if fv.is_linked() => {
                 if let Some(res) = self.get_nominal_type_ctx(&fv.unwrap_linked()) {
@@ -4373,7 +4373,7 @@ impl Context {
         }
     }
 
-    pub(crate) fn get_type_ctx(&self, name: &str) -> Option<&TypeContext> {
+    pub fn get_type_ctx(&self, name: &str) -> Option<&TypeContext> {
         if let Some(ctx) = self.rec_local_get_type(name) {
             return Some(ctx);
         }

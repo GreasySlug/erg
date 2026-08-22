@@ -114,8 +114,11 @@ pub struct Task {
 pub struct Scheduler {
     pending: Shared<VecDeque<Task>>,
     executing: Shared<Vec<Task>>,
-    /// IDs cancelled via `$/cancelRequest`, including tasks already executing.
+    /// IDs cancelled via `$/cancelRequest` while pending or executing.
+    /// Cleared by [`Scheduler::finish`], so this only ever holds in-flight tasks.
     cancelled: Shared<HashSet<TaskID>>,
+    /// IDs cancelled before any task claimed them; see [`MAX_EARLY_CANCELLED`].
+    early_cancelled: Shared<VecDeque<TaskID>>,
 }
 
 impl fmt::Display for Scheduler {
@@ -132,6 +135,17 @@ impl fmt::Display for Scheduler {
 }
 
 pub const MAX_WORKERS: usize = 10;
+
+/// How many cancellations of unknown IDs to remember.
+///
+/// A `$/cancelRequest` can arrive before the worker thread has [`Scheduler::register`]ed
+/// the task (the request is still in the worker's channel), so the mark has to
+/// stick for an ID the scheduler has not seen yet. Nothing will ever
+/// [`Scheduler::finish`] an ID that no task claims, though, and clients routinely
+/// cancel requests that have already been answered -- keeping those in the main
+/// set would grow it for the whole session. The window only has to outlive one
+/// dispatch, so a small ring is plenty.
+pub const MAX_EARLY_CANCELLED: usize = 256;
 
 /// RAII guard returned by [`Scheduler::finish_on_drop`]; removes the task from
 /// the executing set on drop (including during a panic unwind).
@@ -152,6 +166,7 @@ impl Scheduler {
             pending: Shared::new(VecDeque::with_capacity(10)),
             executing: Shared::new(Vec::with_capacity(10)),
             cancelled: Shared::new(HashSet::new()),
+            early_cancelled: Shared::new(VecDeque::with_capacity(MAX_EARLY_CANCELLED)),
         }
     }
 
@@ -211,29 +226,52 @@ impl Scheduler {
         Some(task)
     }
 
-    /// Marks `id` as cancelled. Pending tasks are removed so [`acquire`] returns
-    /// `None`; executing tasks keep running but [`is_cancelled`] is true so the
-    /// worker can send `-32800` instead of the result.
+    /// Marks `id` as cancelled. Pending tasks are removed so [`Scheduler::acquire`]
+    /// returns `None`; executing tasks keep running but [`Scheduler::is_cancelled`]
+    /// is true so the worker can send `-32800` instead of the result. An id that
+    /// belongs to no task is remembered too, but only within
+    /// [`MAX_EARLY_CANCELLED`]. Returns the task the cancellation applied to, if any.
     pub fn cancel(&self, id: TaskID) -> Option<Task> {
-        self.cancelled.borrow_mut().insert(id);
-        let mut pending = self.pending.borrow_mut();
-        if let Some(idx) = pending.iter().position(|task| task.id == id) {
-            return pending.remove(idx);
+        let pending = {
+            let mut pending = self.pending.borrow_mut();
+            pending
+                .iter()
+                .position(|task| task.id == id)
+                .and_then(|idx| pending.remove(idx))
+        };
+        let task = pending.or_else(|| {
+            self.executing
+                .borrow()
+                .iter()
+                .find(|task| task.id == id)
+                .copied()
+        });
+        if task.is_some() {
+            self.cancelled.borrow_mut().insert(id);
+            return task;
         }
-        drop(pending);
-        self.executing
-            .borrow()
-            .iter()
-            .find(|task| task.id == id)
-            .copied()
+        // Either the worker has not registered this id yet, or the request was
+        // already answered. Remember it either way, but bounded -- the latter
+        // case is never cleared by `finish`.
+        let mut early = self.early_cancelled.borrow_mut();
+        if !early.contains(&id) {
+            if early.len() >= MAX_EARLY_CANCELLED {
+                early.pop_front();
+            }
+            early.push_back(id);
+        }
+        None
     }
 
     pub fn is_cancelled(&self, id: TaskID) -> bool {
-        self.cancelled.borrow().contains(&id)
+        self.cancelled.borrow().contains(&id) || self.early_cancelled.borrow().contains(&id)
     }
 
     pub fn finish(&self, id: TaskID) -> Option<Task> {
         self.cancelled.borrow_mut().remove(&id);
+        self.early_cancelled
+            .borrow_mut()
+            .retain(|other| *other != id);
         let mut lock = self.executing.borrow_mut();
         let idx = lock.iter().position(|task| task.id == id)?;
         Some(lock.remove(idx))
@@ -313,5 +351,32 @@ mod tests {
         s.register(pending_id, HoverRequest::METHOD);
         assert!(s.acquire(pending_id).is_some());
         assert!(!s.is_cancelled(pending_id));
+    }
+
+    #[test]
+    fn cancel_before_register_still_marks_the_id() {
+        // `$/cancelRequest` can beat the worker to `register`.
+        let s = Scheduler::new();
+        assert!(s.cancel(7).is_none(), "no task claims this id yet");
+        assert!(s.is_cancelled(7));
+        s.register(7, HoverRequest::METHOD);
+        assert!(s.acquire(7).is_some(), "the task still runs to completion");
+        assert!(s.is_cancelled(7), "but the worker must answer -32800");
+        s.finish(7);
+        assert!(!s.is_cancelled(7));
+    }
+
+    #[test]
+    fn cancels_of_unclaimed_ids_stay_bounded() {
+        // Clients routinely cancel requests that already answered; nothing will
+        // ever `finish` those ids, so they must not accumulate for the session.
+        let s = Scheduler::new();
+        for id in 0..(MAX_EARLY_CANCELLED as i64 * 3) {
+            assert!(s.cancel(id).is_none());
+        }
+        assert_eq!(s.early_cancelled.borrow().len(), MAX_EARLY_CANCELLED);
+        assert!(!s.is_cancelled(0), "the oldest marks are dropped");
+        assert!(s.is_cancelled(MAX_EARLY_CANCELLED as i64 * 3 - 1));
+        assert!(s.cancelled.borrow().is_empty());
     }
 }

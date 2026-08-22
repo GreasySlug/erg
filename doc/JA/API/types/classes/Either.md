@@ -4,7 +4,23 @@
 
 「LかRかどちらか」を表す型。Or型の2つ限定形と考えて良い。
 
+独立した型ではなく別名であり、`Either(Int, Str)`は`Int or Str`**そのもの**である。型が期待される場所ではどちらを書いても同じである。[`Option`](./Option.md)と[`Result`](./Result.md)は片側を固定した同じ仕組みである。
+
+```python
+pick(x: Int): Either(Int, Str) = if x > 0, do x, do "negative"
+```
+
+素のOr型であるため対称である。`Either`は値がどちら側から来たかのタグを持たないので、両者は narrowing で区別する。また`Either(Int, Int)`は単に`Int`である。
+
+```python,checker_ignore
+picked = pick(-1)
+assert picked in Str
+picked.upper()
+```
+
 ## methods
+
+未実装。以下は予定。
 
 * orl
 * orr
@@ -12,3 +28,5 @@
 * andr
 * mapl
 * mapr
+
+これらは値がどちら側かを実行時に知る必要があるが、`L`と`R`が重なる場合、タグを持たないOr型はそれに答えられない。

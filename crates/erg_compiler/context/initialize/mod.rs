@@ -558,6 +558,7 @@ const PATCH: &str = "Patch";
 const STRUCTURAL: &str = "Structural";
 const OPTION: &str = "Option";
 const RESULT: &str = "Result";
+const EITHER: &str = "Either";
 const KEYS: &str = "keys";
 const VALUES: &str = "values";
 const ITEMS: &str = "items";

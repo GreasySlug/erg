@@ -23,4 +23,4 @@ quarter(x: Int): Result Int =
     half(y)?
 ```
 
-`Either T, E`, which `Result` was once specified in terms of, is not implemented.
+`Result(T, E)` and [`Either(T, E)`](./Either.md) are the same union; `Result` is the spelling that says which side is the error.

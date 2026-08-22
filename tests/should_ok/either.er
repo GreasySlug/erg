@@ -1,0 +1,51 @@
+# `Either(L, R)` is the alias `L or R`, evaluated at compile time.
+# Like `Option` and `Result` it is not a type of its own, so it is
+# interchangeable with the union it stands for.
+
+a: Either(Int, Str) = 1
+assert a in Int
+assert a == 1
+b: Either(Int, Str) = "hi"
+assert b in Str
+assert b == "hi"
+
+# application without parentheses works the same
+c: Either Int, Str = 2
+assert c in Int
+assert c == 2
+
+# the alias and the union are interchangeable in both directions
+u: Int or Str = 1
+e: Either(Int, Str) = u
+u2: Int or Str = e
+assert u2 in Int
+assert u2 == 1
+
+# return type position
+pick(x: Int): Either(Int, Str) = if x > 0, do x, do "negative"
+
+# a union of unrelated types has no `Eq`, so the side is narrowed first,
+# exactly as it would be for a plain `Int or Str`
+positive = pick(1)
+assert positive in Int
+assert positive == 1
+
+negative = pick(-1)
+assert negative in Str
+assert negative.upper() == "NEGATIVE"
+
+# `Result(T, E)` is the same union, with the error side named
+r: Either(Int, Error) = 1
+r2: Result(Int, Error) = r
+assert r2 in Int
+assert r2 == 1
+
+# an alias can be bound to a name and used as a type
+MyEither = Either(Int, Str)
+m: MyEither = "bound"
+assert m in Str
+assert m == "bound"
+
+# a union of a type with itself is that type
+n: Either(Int, Int) = 1
+assert n == 1

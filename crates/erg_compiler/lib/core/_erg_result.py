@@ -77,9 +77,16 @@ def _result(t, e=Error):
     return UnionType(t, e)
 
 
-# `Option T == T or NoneType`, `Result T == T or Error`
+def _either(l, r):
+    from _erg_type import UnionType
+
+    return UnionType(l, r)
+
+
+# `Option T == T or NoneType`, `Result T == T or Error`, `Either(L, R) == L or R`
 Option = _TypeAlias("Option", _option)
 Result = _TypeAlias("Result", _result)
+Either = _TypeAlias("Either", _either)
 
 
 def is_ok(obj) -> bool:

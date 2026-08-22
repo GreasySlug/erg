@@ -930,6 +930,19 @@ impl Context {
             ValueObj::Subr(result),
             Some(RESULT.into()),
         );
+        let either = ConstSubr::Builtin(BuiltinConstSubr::new(
+            EITHER,
+            either_func,
+            nd_func(vec![kw(TY_L, Type), kw(TY_R, Type)], None, Type),
+            None,
+        ));
+        self._register_builtin_const(
+            EITHER,
+            vis.clone(),
+            None,
+            ValueObj::Subr(either),
+            Some(EITHER.into()),
+        );
         // decorators
         let inheritable_t = func1(ClassType, ClassType);
         let inheritable = ConstSubr::Builtin(BuiltinConstSubr::new(

@@ -1,0 +1,16 @@
+# misuses of the `Either` alias
+
+# ERR: `Either` needs two type arguments
+a: Either = 1
+
+# ERR: only one is passed
+b: Either(Int) = 1
+
+# ERR: more than two are passed
+c: Either(Int, Str, Bool) = 1
+
+# ERR: `Float` is neither side of `Int or Str`
+d: Either(Int, Str) = 1.5
+
+# ERR: the same check applies to the other aliases
+e: Option(Int, Str) = 1

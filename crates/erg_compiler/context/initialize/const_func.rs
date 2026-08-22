@@ -60,6 +60,28 @@ fn type_mismatch(expected: impl Display, got: impl Display, param: &str) -> Eval
     .into()
 }
 
+fn too_many_args(name: &str, expected: usize) -> EvalValueError {
+    let name = StyledStr::new(name, Some(WARN), None);
+    ErrorCore::new(
+        vec![SubMessage::only_loc(Location::Unknown)],
+        format!("{name} takes {expected} type argument(s), but more are passed"),
+        line!() as usize,
+        ErrorKind::TypeError,
+        Location::Unknown,
+    )
+    .into()
+}
+
+/// The type aliases take a fixed number of arguments; anything left over would
+/// otherwise be dropped without a word.
+fn reject_extra_args(args: &ValueArgs, name: &str, expected: usize) -> Result<(), EvalValueError> {
+    if args.pos_args.is_empty() && args.kw_args.is_empty() {
+        Ok(())
+    } else {
+        Err(too_many_args(name, expected))
+    }
+}
+
 fn todo(msg: &str) -> EvalValueError {
     ErrorCore::new(
         vec![SubMessage::only_loc(Location::Unknown)],
@@ -222,6 +244,7 @@ pub(crate) fn option_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult
     let Some(t) = t.as_type(ctx) else {
         return Err(type_mismatch("type", t, "T"));
     };
+    reject_extra_args(&args, "Option", 1)?;
     Ok(ValueObj::builtin_type(ctx.union(t.typ(), &Type::NoneType)).into())
 }
 
@@ -242,7 +265,29 @@ pub(crate) fn result_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult
         },
         None => Type::Error,
     };
+    reject_extra_args(&args, "Result", 2)?;
     Ok(ValueObj::builtin_type(ctx.union(t.typ(), &err_t)).into())
+}
+
+/// `Either(L, R) == L or R`
+///
+/// An alias, like [`option_func`]. Note that the union is symmetric: unlike a
+/// tagged sum, `Either` cannot tell the two sides apart when they overlap.
+pub(crate) fn either_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let l = args
+        .remove_left_or_key("L")
+        .ok_or_else(|| not_passed("L"))?;
+    let Some(l) = l.as_type(ctx) else {
+        return Err(type_mismatch("type", l, "L"));
+    };
+    let r = args
+        .remove_left_or_key("R")
+        .ok_or_else(|| not_passed("R"))?;
+    let Some(r) = r.as_type(ctx) else {
+        return Err(type_mismatch("type", r, "R"));
+    };
+    reject_extra_args(&args, "Either", 2)?;
+    Ok(ValueObj::builtin_type(ctx.union(l.typ(), r.typ())).into())
 }
 
 pub(crate) fn structural_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {

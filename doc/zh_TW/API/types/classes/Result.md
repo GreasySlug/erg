@@ -25,4 +25,4 @@ quarter(x: Int): Result Int =
     half(y)?
 ```
 
-曾用於定義`Result`的`Either T, E`尚未實現
+`Result(T, E)`與[`Either(T, E)`](./Either.md)是同一個 Or 類型；`Result`是標明哪一側是錯誤的寫法

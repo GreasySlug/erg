@@ -11,6 +11,7 @@ from _erg_nat import Nat, NatMut
 from _erg_range import (ClosedRange, LeftOpenRange, OpenRange, Range,
                         RangeIterator, RightOpenRange)
 from _erg_result import (
+    Either,
     Error,
     ErrorFrame,
     Option,

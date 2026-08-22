@@ -14,7 +14,16 @@ assert halved in Int
 assert halved == 4
 assert half(3) in Error
 
-# bound to a name, the alias is built at runtime
+# `Either(L, R)` is the same alias machinery
+pick(x: Int): Either(Int, Str) = if x > 0, do x, do "negative"
+picked = pick(-1)
+assert picked in Str
+assert picked.upper() == "NEGATIVE"
+
+# bound to a name, an alias is built at runtime
 MyOpt = Option Str
 m: MyOpt = "bound"
 assert m == "bound"
+MyEither = Either(Int, Str)
+n: MyEither = 1
+assert n == 1

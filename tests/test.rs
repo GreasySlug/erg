@@ -380,6 +380,11 @@ fn exec_or() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_panic_type() -> Result<(), ()> {
+    expect_success("tests/should_ok/panic_type.er", 0)
+}
+
+#[test]
 fn exec_patch() -> Result<(), ()> {
     expect_success("examples/patch.er", 0)
 }
@@ -635,6 +640,11 @@ fn exec_advanced_type_spec_err() -> Result<(), ()> {
 #[test]
 fn exec_option_result_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/option_result.er", 0, 4)
+}
+
+#[test]
+fn exec_panic_type_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/panic_type.er", 0, 3)
 }
 
 #[test]

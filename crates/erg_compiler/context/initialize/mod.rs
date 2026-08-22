@@ -140,6 +140,7 @@ const FLOOR_DIV: &str = "FloorDiv";
 const POS: &str = "Pos";
 const NEG: &str = "Neg";
 const NEVER: &str = "Never";
+const PANIC: &str = "Panic";
 const OBJ: &str = "Obj";
 const MUTABLE_OBJ: &str = "Obj!";
 const BYTES: &str = "Bytes";

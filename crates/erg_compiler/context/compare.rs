@@ -911,14 +911,22 @@ impl Context {
             // Int or Str :> Str or Int == (Int :> Str && Str :> Int) || (Int :> Int && Str :> Str) == true
             // Int or Str or NoneType :> Str or Int
             // Int or Str or NoneType :> Str or NoneType or Nat
-            (Or(l), Or(r)) => r.iter().all(|r| l.iter().any(|l| self.supertype_of(l, r))),
+            (Or(l), Or(r)) => r
+                .iter()
+                .filter(|r| !r.is_panic())
+                .all(|r| l.iter().any(|l| self.supertype_of(l, r))),
             // not Nat :> not Int == true
             (Not(l), Not(r)) => self.subtype_of(l, r),
             // (Int or Str) :> Nat == Int :> Nat || Str :> Nat == true
             // (Num or Show) :> Show == Num :> Show || Show :> Num == true
             (Or(ors), rhs) => ors.iter().any(|or| self.supertype_of(or, rhs)),
             // Int :> (Nat or Str) == Int :> Nat && Int :> Str == false
-            (lhs, Or(ors)) => ors.iter().all(|or| self.supertype_of(lhs, or)),
+            // `Panic` is dropped first: `Int :> (Int or Panic)`, because a value of
+            // that type can only ever be the `Int` (see `Type::is_panic`)
+            (lhs, Or(ors)) => ors
+                .iter()
+                .filter(|or| !or.is_panic())
+                .all(|or| self.supertype_of(lhs, or)),
             // Hash and Eq :> HashEq and ... == true
             // Add(T) and Eq :> Add(Int) and Eq == true
             (And(l, _), And(r, _)) => {

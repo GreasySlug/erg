@@ -1245,7 +1245,8 @@ impl Context {
             // TODO: And
             Type::Or(tys) => {
                 let mut info = Triple::<VarInfo, _>::None;
-                for ty in tys {
+                // `Panic` is uninhabited, so it cannot withhold an attribute
+                for ty in tys.iter().filter(|t| !t.is_panic()) {
                     match (
                         self.get_attr_info_from_attributive(ty, ident, namespace),
                         &info,
@@ -3716,8 +3717,10 @@ impl Context {
                 }
             }
             Type::Or(tys) => {
+                // `Panic` is uninhabited, so `T or Panic` has whatever `T` has
                 let union = tys
                     .iter()
+                    .filter(|t| !t.is_panic())
                     .fold(Never, |l, r| self.union(&l, &r.upper_bounded()));
                 if union.is_union_type() {
                     self.get_nominal_super_type_ctxs(&Obj)

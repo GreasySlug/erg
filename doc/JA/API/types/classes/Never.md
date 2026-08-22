@@ -5,11 +5,16 @@
 全ての型の下位型である。全てのメソッドを持っており、当然`.new`も持っているため`Class`である。しかしインスタンスは持たず、生成されそうになった瞬間にErgは停止する。
 `Panic`という同じくインスタンスを持たない型が存在するが、正常に終了する際や意図的な無限ループの際は`Never`、異常終了する際には`Panic`を使う。
 
-```python
+```python,checker_ignore
 # Never <: Panic
 f(): Panic = exit 0 # OK
-g(): Never = panic() # TypeError
+g(): Panic = panic "..." # OK
+
+may_fail(): Int or Panic = ...
+h(): Never = may_fail() # TypeError: `Panic`は`Never`ではない
 ```
 
-`Never`/`Panic`のOr型、例えば`T or Never`は`T`に変換することができる。これは、`Never`は意味論上起こり得ない(起こった場合プログラムは即時停止する)選択肢であるためである。
-しかし、関数の戻り値型などで使用する場合、プログラムの終了が起こりうることを示すため`or Never`を省略することはできない。
+`panic`・`todo`・`unreachable`は`Panic`ではなく`Never`を返す。これは`f(): Int = todo()`のようなスタブが型検査を通るようにするためである。
+
+`T or Never`は`T`である。`Never`は意味論上起こり得ない(起こった場合プログラムは即時停止する)選択肢であるため、Or型を作った時点で吸収される。
+`T or Panic`は吸収されない。プログラムの終了が起こりうることを読み手に伝えるためシグネチャに残る。ただし同じ理由により、その型の値は`T`として使用できる。[Panic](./Panic.md)を参照。

@@ -2564,6 +2564,18 @@ impl Type {
         }
     }
 
+    /// `Panic` has no instance: reaching it means the program has already
+    /// terminated. A union that offers it is therefore usable as the union
+    /// without it, which is what lets `T or Panic` stand in for `T`.
+    pub fn is_panic(&self) -> bool {
+        match self {
+            Self::FreeVar(fv) if fv.is_linked() => fv.crack().is_panic(),
+            Self::Refinement(refine) => refine.t.is_panic(),
+            Self::Mono(name) => &name[..] == "Panic",
+            _ => false,
+        }
+    }
+
     pub fn is_nonelike(&self) -> bool {
         match self {
             Self::Never | Self::Failure => true,

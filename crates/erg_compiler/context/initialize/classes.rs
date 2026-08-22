@@ -33,6 +33,11 @@ impl Context {
         let M = mono_q_tp(TY_M, instanceof(Nat));
         let never = Self::builtin_mono_class(NEVER, 1);
         self.register_builtin_type(Never, never, vis.clone(), Const, Some(NEVER));
+        // `Panic` has no instance either, but it means abnormal termination, where
+        // `Never` means normal termination or a deliberate infinite loop.
+        // `Never <: Panic` falls out of `Never` being a subtype of everything.
+        let panic = Self::builtin_mono_class(PANIC, 1);
+        self.register_builtin_type(mono(PANIC), panic, vis.clone(), Const, Some(PANIC));
         /* Obj */
         let mut obj = Self::builtin_mono_class(OBJ, 2);
         obj.register_py_builtin(

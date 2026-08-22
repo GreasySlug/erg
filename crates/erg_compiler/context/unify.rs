@@ -1788,8 +1788,9 @@ impl<L: Locational> Unifier<'_, '_, '_, L> {
                 }
             }
             // (X or Y) <: Z is valid when X <: Z and Y <: Z
+            // `Panic` is uninhabited, so it never has to satisfy `Z`
             (Or(tys), _) => {
-                for ty in tys {
+                for ty in tys.iter().filter(|t| !t.is_panic()) {
                     self.sub_unify(ty, maybe_super)?;
                 }
             }

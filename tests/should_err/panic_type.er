@@ -1,0 +1,14 @@
+# misuses of `Panic`
+
+may_fail(): Int or Panic = 1
+always_fails(): Panic = panic "boom"
+
+# ERR: `Panic` has no instance, so nothing can be one
+a: Panic = 1
+
+# ERR: `Panic` is not `Never`; `Never` promises the subroutine never returns
+b(): Never = may_fail()
+
+# ERR: a bare `Panic` never returns normally, so it is not an `Int`
+# (write `Int or Panic` for a subroutine that may return)
+c(): Int = always_fails()

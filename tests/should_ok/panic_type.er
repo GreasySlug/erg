@@ -1,0 +1,30 @@
+# `Panic` means abnormal termination, `Never` means normal termination or a
+# deliberate infinite loop. Neither has an instance, and `Never <: Panic`.
+
+always_fails(): Panic = panic "boom"
+always_exits(): Panic = exit 0
+discard always_fails
+discard always_exits
+
+# `T or Panic` says "may terminate" without making the value harder to use:
+# `Panic` has no instance, so a value of that type can only ever be the `T`
+one(): Int or Panic = 1
+
+assert one() + 1 == 2
+assert one().abs() == 1
+
+greet(): Str or Panic = "hi"
+assert greet().upper() == "HI"
+
+# it passes where the plain type is expected
+takes_int(a: Int): Int = a
+assert takes_int(one()) == 1
+
+# and it survives in the declared signature
+positive(x: Int): Int or Panic = if x > 0, do x, do panic "must be positive"
+
+assert positive(3) * 2 == 6
+
+# `Never` is still a subtype of everything, so a stub keeps type-checking
+stub(): Int = todo()
+discard stub

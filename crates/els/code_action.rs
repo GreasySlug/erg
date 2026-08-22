@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use erg_common::consts::{ERG_MODE, PYTHON_MODE};
 use erg_common::deepen_indent;
+use erg_common::error::ErrorKind;
 use erg_common::traits::{Locational, Stream};
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::parse::Parsable;
@@ -33,9 +34,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             self.send_log("artifact not found")?;
             return Ok(None);
         };
+        // By kind, not by message text: the message is localized, so matching
+        // on English wording silently finds nothing under `japanese` and the
+        // other localized builds.
         let warns = warns
             .iter()
-            .filter(|warn| warn.core.main_message.ends_with("is not used"))
+            .filter(|warn| warn.core.kind == ErrorKind::UnusedWarning)
             .collect::<Vec<_>>();
         for warn in warns {
             let uri = NormalizedUrl::new(Url::from_file_path(warn.input.full_path()).unwrap());

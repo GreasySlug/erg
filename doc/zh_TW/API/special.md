@@ -76,6 +76,8 @@ double_head(l: List(Int, 3)): Int or NoneType =
 每當`Error`被`?`返回時，返回它的子程序都會被壓入`.stack`，從而使錯誤帶有來源軌跡
 頂層沒有可返回的子程序，因此`?`會列印該軌跡並終止程序
 
+若要在當場解決失敗而不是交給呼叫者，請使用[`.unwrap`](./types/classes/Option.md#methods)及其回退方法
+
 ## `:`(x, T)
 
 聲明物件`x`的類型為`T`。 如果`x`不是`T`的子類型，則會引發錯誤

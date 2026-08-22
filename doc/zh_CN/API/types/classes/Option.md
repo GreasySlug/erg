@@ -22,20 +22,60 @@ sum_two(l: List(Int, 3)): Option Int =
 
 ## methods
 
-尚未实现。以下为计划
+下面的方法在当场解决失败，与把失败交给调用者的`?`相对。它们是为带有错误一侧的`T or E`定义的，因此[`Result`](./Result.md)也有同样的四个
 
-* unwrap(self, msg = "unwrapped a None value") -> T or Panic
+* unwrap(self, msg := Str) -> T or [Panic](./Panic.md)
 
 期望内容为`T`类型并将其取出。如果是`None`，则输出`msg`并panic
 
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap() == 1
+```
+
 ```python,checker_ignore
-x = "...".parse(Int).into(Option Int)
+x: Option Int = None
 x.unwrap() # UnwrappingError: unwrapped a None value
 x.unwrap("failed to convert from string to number") # UnwrappingError: failed to convert from string to number
 ```
 
+值一路收集的提示和`?`的帧也会一并输出，因此取出后仍能看到踪迹
+
 * unwrap_or(self, else: T) -> T
+
+取出它，如果是`None`则返回`else`。无论哪种情况`else`都会被求值
+
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap_or(0) == 1
+```
 
 * unwrap_or_exec(self, f: () -> T) -> T
 
+相同，只是`f`仅在没有可取出的值时才被调用
+
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap_or_exec(() -> 0) == 1
+```
+
 * unwrap_or_exec!(self, p!: () => T) -> T
+
+用于有副作用的回退的`unwrap_or_exec`。它是过程，因此只能从过程中调用
+
+```python
+log! = !0
+recompute!() =
+    log!.inc!()
+    0
+
+main!() =
+    first(l: List(Int, 3)): Option Int = l.get(0)
+    assert first([1, 2, 3]).unwrap_or_exec!(recompute!) == 1
+    assert log! == 0
+
+main!()
+```

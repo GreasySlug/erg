@@ -1,0 +1,20 @@
+# misuses of `.unwrap` and its fallbacks
+
+opt(x: Int): Option Int = if x > 0, do x, do None
+
+# ERR: an `Int` cannot fail, so there is nothing to unwrap
+i = 1
+_a = i.unwrap()
+
+# ERR: `Int or Str` is a union, but `Str` is not an error alternative
+u: Int or Str = 1
+_b = u.unwrap()
+
+# ERR: the fallback must have the success type
+_c = opt(1).unwrap_or("str")
+
+# ERR: the message must be a `Str`
+_d = opt(1).unwrap(1)
+
+# ERR: `.unwrap_or_exec` takes a function, not a procedure
+_e = opt(1).unwrap_or_exec(() => 1)

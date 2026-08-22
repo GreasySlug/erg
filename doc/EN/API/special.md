@@ -77,6 +77,9 @@ Every time an `Error` is returned by `?`, the subroutine it was returned from is
 At the top level there is no subroutine to return from, so `?` prints that trace and aborts
 the program instead.
 
+To resolve the failure here instead of handing it to the caller, use
+[`.unwrap`](./types/classes/Option.md#methods) and its fallbacks.
+
 ## `:`(x, T)
 
 Declares that object `x` is of type `T`. An error is raised if `x` is not a subtype of `T`.

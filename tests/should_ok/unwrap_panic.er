@@ -1,0 +1,25 @@
+# `.unwrap()` on an error value panics: it prints the error, the hints attached
+# to it and the `?` frames it travelled, then exits with 1.
+
+try_some(x: Int): Int or Error =
+    if x > 0:
+        do x
+        do:
+            e = Error("must be positive", kind := "ValueError")
+            e.context "pass a positive number"
+
+f(x: Int): Int or Error =
+    y = try_some(x)?
+    y + 1
+
+# succeeds, so nothing is printed and execution continues
+assert f(1).unwrap() == 2
+
+# fails: prints
+#   Traceback (most recent call first):
+#     f, line 12, file "tests/should_ok/unwrap_panic.er"
+#   hint: pass a positive number
+#   UnwrappingError: could not compute
+# and exits with 1
+i = f(-1).unwrap("could not compute")
+print! i

@@ -26,3 +26,18 @@ quarter(x: Int): Result Int =
 ```
 
 `Result(T, E)`与[`Either(T, E)`](./Either.md)是同一个 Or 类型；`Result`是标明哪一侧是错误的写法
+
+
+## methods
+
+[`Option`的方法](./Option.md#methods)也就是`Result`的方法。它们不是为某一个别名定义的，而是为带有错误一侧的`T or E`定义的
+
+```python
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+
+assert half(8).unwrap() == 4
+assert half(3).unwrap_or(0) == 0
+assert half(3).unwrap_or_exec(() -> 0) == 0
+```
+
+`.unwrap`在panic之前会输出它找到的错误：种别、消息、用`.context`附加的提示，以及`?`经过的帧

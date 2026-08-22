@@ -19,7 +19,8 @@ use erg_parser::ast::{self, Identifier, VarName};
 use erg_parser::token::Token;
 
 use crate::ty::constructors::{
-    anon, closed_range, fn_met, free_var, func, mono, poly, proc, proj, ref_, refinement, subr_t,
+    anon, closed_range, fn1_met, fn_met, free_var, func, func0, kw, mono, no_var_fn_met, or, poly,
+    pr1_met, proc, proc0, proj, ref_, refinement, subr_t,
 };
 use crate::ty::free::{Constraint, FreeTyParam, FreeTyVar};
 use crate::ty::typaram::TyParam;
@@ -784,6 +785,102 @@ impl Context {
         None
     }
 
+    /// The alternative a value of type `t` will turn out to be at runtime, as far as
+    /// that is known now. A type variable stands for its lower bound, if it has one.
+    pub(crate) fn known_alternative(t: &Type) -> Type {
+        match t {
+            Type::FreeVar(fv) if fv.is_linked() => Self::known_alternative(&fv.crack()),
+            Type::FreeVar(fv) => match fv.get_sub() {
+                Some(sub) if sub != Type::Never => sub,
+                _ => t.clone(),
+            },
+            _ => t.clone(),
+        }
+    }
+
+    /// Is `t` an error alternative of a `Result`-like union?
+    ///
+    /// `NoneType` (the `Option` case), `Error` and any subtype of `BaseException`
+    /// (the `Result` case) qualify. All of them are distinguishable from every
+    /// other alternative at runtime by `is_err` (see `_erg_result.py`).
+    pub(crate) fn is_err_alternative(&self, t: &Type) -> bool {
+        let t = Self::known_alternative(t);
+        t.is_nonetype()
+            || self.subtype_of(&t, &Type::Error)
+            || self.subtype_of(&t, &mono("BaseException"))
+    }
+
+    /// Split a `T or E` union into its success type `T` and its error alternatives `E`.
+    pub(crate) fn split_err_alternatives(&self, t: &Type) -> (Type, Vec<Type>) {
+        let (err_ts, ok_ts): (Vec<Type>, Vec<Type>) = t
+            .ors()
+            .into_iter()
+            .partition(|t| self.is_err_alternative(t));
+        let ok_t = ok_ts
+            .into_iter()
+            .fold(Type::Never, |acc, t| self.union(&acc, &t));
+        (ok_t, err_ts)
+    }
+
+    /// A method that takes the success value out of a `T or E`: `.unwrap`,
+    /// `.unwrap_or`, `.unwrap_or_exec` and `.unwrap_or_exec!`.
+    ///
+    /// These are not registered as a patch, because a patch base such as
+    /// `T or NoneType` cannot keep `T` from swallowing the error alternative while
+    /// unifying: `Int or NoneType <: ?T or NoneType` leaves `?T == Int or NoneType`,
+    /// so `.unwrap()` would return the very union it is supposed to open.
+    /// Building the signature from the receiver type keeps `T` exact for any error
+    /// type instead, a user-supplied one (`Result(Int, ValueError)`) included.
+    fn get_unwrap_info(&self, obj_t: &Type, ident: &Identifier) -> Option<VarInfo> {
+        let name = &ident.inspect()[..];
+        if !matches!(
+            name,
+            "unwrap" | "unwrap_or" | "unwrap_or_exec" | "unwrap_or_exec!"
+        ) {
+            return None;
+        }
+        let self_t = self.squash_tyvar(obj_t.clone());
+        let (ok_t, err_ts) = self.split_err_alternatives(&self_t);
+        // neither a value that cannot fail nor one that can only fail is unwrappable
+        if err_ts.is_empty() || ok_t == Type::Never {
+            return None;
+        }
+        let (t, py_name) = match name {
+            "unwrap" => (
+                no_var_fn_met(
+                    self_t.clone(),
+                    vec![],
+                    vec![kw("msg", Type::Str)],
+                    or(ok_t, mono("Panic")),
+                ),
+                "Function::result_unwrap",
+            ),
+            "unwrap_or" => (
+                fn1_met(self_t.clone(), ok_t.clone(), ok_t),
+                "Function::result_unwrap_or",
+            ),
+            "unwrap_or_exec" => (
+                fn1_met(self_t.clone(), func0(ok_t.clone()), ok_t),
+                "Function::result_unwrap_or_exec",
+            ),
+            // `unwrap_or_exec!`: the same call, but the fallback is a procedure
+            _ => (
+                pr1_met(self_t.clone(), proc0(ok_t.clone()), ok_t),
+                "Function::result_unwrap_or_exec",
+            ),
+        };
+        Some(VarInfo::new(
+            t,
+            Mutability::Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            VarKind::Builtin,
+            None,
+            ContextKind::Patch(self_t),
+            Some(Str::ever(py_name)),
+            AbsLocation::unknown(),
+        ))
+    }
+
     pub(crate) fn get_attr_info(
         &self,
         obj: &hir::Expr,
@@ -919,6 +1016,10 @@ impl Context {
                     };
                 }
             }
+        }
+        // `.unwrap`/`.unwrap_or`/... of a `T or E` value
+        if let Some(vi) = self.get_unwrap_info(obj.ref_t(), ident) {
+            return Triple::Ok(vi);
         }
         // REVIEW: get by name > coercion?
         match self.get_attr_type_by_name(obj, ident, namespace) {
@@ -1553,7 +1654,8 @@ impl Context {
                 }
             }
         }
-        Ok(None)
+        // `.unwrap`/`.unwrap_or`/... of a `T or E` value
+        Ok(self.get_unwrap_info(t, attr_name))
     }
 
     fn search_method_info(

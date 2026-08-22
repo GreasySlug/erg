@@ -94,6 +94,8 @@ double_head(l: List(Int, 3)): Int or NoneType =
 每当`Error`被`?`返回时，返回它的子例程都会被压入`.stack`，从而使错误带有来源轨迹
 顶层没有可返回的子例程，因此`?`会打印该轨迹并终止程序
 
+若要在当场解决失败而不是交给调用者，请使用[`.unwrap`](./types/classes/Option.md#methods)及其回退方法
+
 ## match(obj, *lambdas: Lambda)
 
 对于 obj，执行与模式匹配的 lambda

@@ -1,0 +1,58 @@
+# `.unwrap`, `.unwrap_or` and `.unwrap_or_exec` take the success value out of a
+# `T or E`. `E` is the error alternative the `?` operator recognizes: `NoneType`,
+# `Error`, or a subtype of `BaseException`.
+
+opt(x: Int): Option Int = if x > 0, do x, do None
+
+# the success value passes through
+assert opt(3).unwrap() == 3
+
+# `.unwrap()` yields `T or Panic`, which is usable wherever a `T` is
+three: Int = opt(3).unwrap()
+assert three == 3
+assert opt(3).unwrap() + 1 == 4
+
+# the fallbacks never look at the error itself
+assert opt(-1).unwrap_or(0) == 0
+assert opt(5).unwrap_or(0) == 5
+assert opt(-1).unwrap_or_exec(() -> 42) == 42
+assert opt(5).unwrap_or_exec(() -> 42) == 5
+
+# `Result T` (`T or Error`) unwraps the same way
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+
+assert half(8).unwrap() == 4
+assert half(3).unwrap_or(-1) == -1
+assert half(3).unwrap_or_exec(() -> -1) == -1
+
+# so does a union with a custom error type, and `T` stays exact
+exc(x: Result(Int, ValueError)): Int = x.unwrap()
+assert exc(2) == 2
+
+# `.unwrap_or_exec!` is the same call with a procedure as the fallback
+count! = !0
+recover!() =
+    count!.inc!()
+    7
+
+main!() =
+    assert opt(-1).unwrap_or_exec!(recover!) == 7
+    assert count! == 1
+    # the fallback is not run when there is nothing to recover from
+    assert opt(9).unwrap_or_exec!(recover!) == 9
+    assert count! == 1
+
+main!()
+
+# any `T or E` works, not just the ones spelled with an alias
+l = [1, 2, 3]
+assert l.get(0).unwrap() == 1
+assert l.get(9).unwrap_or(0) == 0
+
+# `?` and `.unwrap` compose
+chain(x: Int): Option Int =
+    y = opt(x)?
+    opt(y + 1)
+
+assert chain(1).unwrap() == 2
+assert chain(-1).unwrap_or(-1) == -1

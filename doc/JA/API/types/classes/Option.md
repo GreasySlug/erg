@@ -22,20 +22,60 @@ sum_two(l: List(Int, 3)): Option Int =
 
 ## methods
 
-未実装。以下は予定。
+以下のメソッドは失敗をその場で解決する。`?`が呼び出し元に委ねるのとは対照的である。エラー側を持つ`T or E`全般に対して定義されているため、[`Result`](./Result.md)にも同じ4つがある。
 
-* unwrap(self, msg = "unwrapped a None value") -> T or Panic
+* unwrap(self, msg := Str) -> T or [Panic](./Panic.md)
 
 中身が`T`型であると期待して取り出す。`None`であった場合`msg`を出力してパニックする。
 
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap() == 1
+```
+
 ```python,checker_ignore
-x = "...".parse(Int).into(Option Int)
+x: Option Int = None
 x.unwrap() # UnwrappingError: unwrapped a None value
 x.unwrap("failed to convert from string to number") # UnwrappingError: failed to convert from string to number
 ```
 
+値が拾ってきたヒントと`?`のフレームも併せて出力されるため、取り出してもトレースは失われない。
+
 * unwrap_or(self, else: T) -> T
+
+取り出す。`None`であれば`else`を返す。`else`はどちらの場合も評価される。
+
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap_or(0) == 1
+```
 
 * unwrap_or_exec(self, f: () -> T) -> T
 
+同じだが、`f`は取り出すものがないときにのみ呼ばれる。
+
+```python
+first(l: List(Int, 3)): Option Int = l.get(0)
+
+assert first([1, 2, 3]).unwrap_or_exec(() -> 0) == 1
+```
+
 * unwrap_or_exec!(self, p!: () => T) -> T
+
+副作用のあるフォールバックのための`unwrap_or_exec`。プロシージャなのでプロシージャからしか呼べない。
+
+```python
+log! = !0
+recompute!() =
+    log!.inc!()
+    0
+
+main!() =
+    first(l: List(Int, 3)): Option Int = l.get(0)
+    assert first([1, 2, 3]).unwrap_or_exec!(recompute!) == 1
+    assert log! == 0
+
+main!()
+```

@@ -155,3 +155,37 @@ def panic_err(err, name, line, file):
     stack = getattr(err, "stack", None) or [ErrorFrame(name, line, file)]
     print(format_traceback(err, stack), file=sys.stderr)
     sys.exit(1)
+
+
+def result_unwrap(obj, msg=None):
+    """`x.unwrap()`: the success value of `x`, or a panic carrying its trace."""
+    import sys
+
+    if not is_err(obj):
+        return obj
+    if msg is None:
+        if obj is None:
+            msg = "unwrapped a None value"
+        elif isinstance(obj, Error):
+            msg = "unwrapped an error value ({}: {})".format(obj.kind, obj.msg)
+        else:
+            msg = "unwrapped an error value ({}: {})".format(type(obj).__name__, obj)
+    err = Error(msg, "UnwrappingError")
+    # the `?` frames and hints the unwrapped error collected still apply
+    err.stack = list(getattr(obj, "stack", []))
+    err.contexts = list(getattr(obj, "contexts", []))
+    print(format_traceback(err), file=sys.stderr)
+    sys.exit(1)
+
+
+def result_unwrap_or(obj, default):
+    """`x.unwrap_or(default)`: the success value of `x`, or `default`."""
+    return default if is_err(obj) else obj
+
+
+def result_unwrap_or_exec(obj, f):
+    """`x.unwrap_or_exec(f)`: the success value of `x`, or the result of `f()`.
+
+    Also backs `unwrap_or_exec!`, which differs only in taking a procedure.
+    """
+    return f() if is_err(obj) else obj

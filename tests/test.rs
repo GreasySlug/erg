@@ -588,6 +588,16 @@ fn exec_try_op_panic() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_unwrap() -> Result<(), ()> {
+    expect_success("tests/should_ok/unwrap.er", 0)
+}
+
+#[test]
+fn exec_unwrap_panic() -> Result<(), ()> {
+    expect_end_with("tests/should_ok/unwrap_panic.er", 0, 1)
+}
+
+#[test]
 fn exec_use_unit() -> Result<(), ()> {
     expect_success("examples/use_unit.er", 0)
 }
@@ -897,6 +907,11 @@ fn exec_trait_err() -> Result<(), ()> {
 #[test]
 fn exec_try_op_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/try_op.er", 0, 4)
+}
+
+#[test]
+fn exec_unwrap_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/unwrap.er", 0, 5)
 }
 
 #[test]

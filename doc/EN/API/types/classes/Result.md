@@ -24,3 +24,19 @@ quarter(x: Int): Result Int =
 ```
 
 `Result(T, E)` and [`Either(T, E)`](./Either.md) are the same union; `Result` is the spelling that says which side is the error.
+
+## methods
+
+The [methods of `Option`](./Option.md#methods) are the methods of `Result` too — they are
+defined for any `T or E` with an error alternative, not for one alias or the other.
+
+```python
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+
+assert half(8).unwrap() == 4
+assert half(3).unwrap_or(0) == 0
+assert half(3).unwrap_or_exec(() -> 0) == 0
+```
+
+`.unwrap` prints the error it found — its kind, its message, the hints added with
+`.context` and the `?` frames it travelled — before it panics.

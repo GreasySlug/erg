@@ -26,3 +26,18 @@ quarter(x: Int): Result Int =
 ```
 
 `Result(T, E)`と[`Either(T, E)`](./Either.md)は同じOr型である。どちら側がエラーかを示す書き方が`Result`である。
+
+
+## methods
+
+[`Option`のメソッド](./Option.md#methods)はそのまま`Result`のメソッドでもある。どちらかの別名に対してではなく、エラー側を持つ`T or E`全般に対して定義されているためである。
+
+```python
+half(x: Int): Result Int = if x % 2 == 0, do x // 2, do Error "not even"
+
+assert half(8).unwrap() == 4
+assert half(3).unwrap_or(0) == 0
+assert half(3).unwrap_or_exec(() -> 0) == 0
+```
+
+`.unwrap`はパニックする前に、見つけたエラーの種別・メッセージ・`.context`で付けたヒント・`?`が通ってきたフレームを出力する。

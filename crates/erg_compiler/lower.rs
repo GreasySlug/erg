@@ -1592,29 +1592,6 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
     /// `?T(:> Nat) or ?U(:> NoneType)` can still be split into success and error
     /// parts. Variables that are not constrained yet (sub bound `Never`) are left
     /// alone: `Never` is a subtype of every error type and would classify as one.
-    fn known_alternative(t: &Type) -> Type {
-        match t {
-            Type::FreeVar(fv) if fv.is_linked() => Self::known_alternative(&fv.crack()),
-            Type::FreeVar(fv) => match fv.get_sub() {
-                Some(sub) if sub != Type::Never => sub,
-                _ => t.clone(),
-            },
-            _ => t.clone(),
-        }
-    }
-
-    /// Is `t` an error alternative of a `Result`-like union?
-    ///
-    /// `NoneType` (the `Option` case), `Error` and any subtype of `BaseException`
-    /// (the `Result` case) qualify. All of them are distinguishable from every
-    /// other alternative at runtime by `is_err` (see `_erg_result.py`).
-    fn is_err_alternative(&self, t: &Type) -> bool {
-        let t = Self::known_alternative(t);
-        t.is_nonetype()
-            || self.module.context.subtype_of(&t, &Type::Error)
-            || self.module.context.subtype_of(&t, &mono("BaseException"))
-    }
-
     /// Lower the error propagation operator `x?`.
     ///
     /// `x: T or E` evaluates to `T`; if `x` turns out to be `E`, the innermost
@@ -1628,10 +1605,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             expr.unwrap_or(hir::Expr::Dummy(hir::Dummy::new(vec![])))
         });
         let operand_t = self.module.context.squash_tyvar(expr.t());
-        let (err_ts, ok_ts): (Vec<Type>, Vec<Type>) = operand_t
-            .ors()
-            .into_iter()
-            .partition(|t| self.is_err_alternative(t));
+        let (ok_t, err_ts) = self.module.context.split_err_alternatives(&operand_t);
         let loc = Location::concat(&expr, &op);
         if err_ts.is_empty() {
             errors.push(LowerError::invalid_try_operand_error(
@@ -1646,9 +1620,6 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
         // else: there is no subroutine to return from, so codegen makes this `?`
         // panic with a traceback instead of propagating
-        let ok_t = ok_ts
-            .into_iter()
-            .fold(Type::Never, |acc, t| self.module.context.union(&acc, &t));
         let vi = VarInfo {
             t: func1(operand_t, ok_t),
             ..VarInfo::default()

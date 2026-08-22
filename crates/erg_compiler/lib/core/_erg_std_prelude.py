@@ -20,6 +20,9 @@ from _erg_result import (
     is_ok,
     panic_err,
     push_err_frame,
+    result_unwrap,
+    result_unwrap_or,
+    result_unwrap_or_exec,
 )
 from _erg_set import Set
 from _erg_str import Str, StrMut

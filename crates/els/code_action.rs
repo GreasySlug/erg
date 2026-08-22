@@ -18,21 +18,18 @@ use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::util::{self, NormalizedUrl};
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
-    fn gen_eliminate_unused_vars_action(
+    /// Workspace edits that drop unused bindings and rename unused parameters to `_`.
+    /// Shared by the quickfix code action and `workspace/executeCommand`.
+    pub(crate) fn unused_var_edits(
         &self,
-        params: &CodeActionParams,
-    ) -> ELSResult<Option<CodeAction>> {
-        let uri = NormalizedUrl::new(params.text_document.uri.clone());
-        let diags = &params.context.diagnostics;
-        let Some(diag) = diags.first().cloned() else {
-            return Ok(None);
-        };
+        uri: &NormalizedUrl,
+    ) -> ELSResult<Option<HashMap<Url, Vec<TextEdit>>>> {
         let mut map = HashMap::new();
-        let Some(visitor) = self.get_visitor(&uri) else {
+        let Some(visitor) = self.get_visitor(uri) else {
             self.send_log("visitor not found")?;
             return Ok(None);
         };
-        let Some(warns) = self.get_warns(&uri) else {
+        let Some(warns) = self.get_warns(uri) else {
             self.send_log("artifact not found")?;
             return Ok(None);
         };
@@ -76,21 +73,42 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     let edit = TextEdit::new(range, "".to_string());
                     map.entry(uri.clone().raw()).or_insert(vec![]).push(edit);
                 }
-                Some(_) => {}
-                None => {
-                    let Some(token) = self.file_cache.get_token(&uri, diag.range.start) else {
+                _ => {
+                    let Some(range) = util::loc_to_range(warn.core.loc) else {
+                        continue;
+                    };
+                    let Some(token) = self
+                        .file_cache
+                        .get_token(&uri, range.start)
+                        .or_else(|| self.file_cache.get_token(&uri, pos))
+                    else {
                         continue;
                     };
                     let Some(vi) = visitor.get_info(&token) else {
                         continue;
                     };
                     if vi.kind.is_parameter() {
-                        let edit = TextEdit::new(diag.range, "_".to_string());
+                        let edit = TextEdit::new(range, "_".to_string());
                         map.entry(uri.clone().raw()).or_insert(vec![]).push(edit);
                     }
                 }
             }
         }
+        Ok(Some(map))
+    }
+
+    fn gen_eliminate_unused_vars_action(
+        &self,
+        params: &CodeActionParams,
+    ) -> ELSResult<Option<CodeAction>> {
+        let uri = NormalizedUrl::new(params.text_document.uri.clone());
+        let diags = &params.context.diagnostics;
+        let Some(diag) = diags.first().cloned() else {
+            return Ok(None);
+        };
+        let Some(map) = self.unused_var_edits(&uri)? else {
+            return Ok(None);
+        };
         let edit = WorkspaceEdit::new(map);
         let action = CodeAction {
             title: "Eliminate unused variables".to_string(),

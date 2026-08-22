@@ -6,7 +6,7 @@ use serde_json::Value;
 use erg_common::config::ErgConfig;
 use erg_common::consts::{ERG_MODE, PYTHON_MODE};
 use erg_common::dict::Dict;
-use erg_common::env::erg_pystd_path;
+use erg_common::env::{erg_pystd_path, python_site_packages};
 use erg_common::impl_u8_enum;
 use erg_common::io::Input;
 use erg_common::python_util::{BUILTIN_PYTHON_MODS, EXT_COMMON_ALIAS, EXT_PYTHON_MODS};
@@ -352,6 +352,109 @@ fn module_completions() -> Vec<CompletionItem> {
     comps
 }
 
+fn is_exportable_mod_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['_', '.'])
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Top-level importable names under Python `site-packages` directories.
+pub(crate) fn collect_site_package_mod_names<'a>(
+    dirs: impl IntoIterator<Item = &'a Path>,
+) -> Vec<String> {
+    let mut names = Set::new();
+    for dir in dirs {
+        let Ok(entries) = dir.read_dir() else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let fname = ent.file_name();
+            let fname = fname.to_string_lossy();
+            if fname.ends_with(".dist-info")
+                || fname.ends_with(".egg-info")
+                || fname == "__pycache__"
+            {
+                continue;
+            }
+            let name = if let Some(stem) = fname.strip_suffix(".py") {
+                stem
+            } else if ent.path().is_dir() {
+                &fname
+            } else {
+                continue;
+            };
+            if !is_exportable_mod_name(name) {
+                continue;
+            }
+            if BUILTIN_PYTHON_MODS.contains(&name) || EXT_PYTHON_MODS.contains(&name) {
+                continue;
+            }
+            names.insert(name.to_string());
+        }
+    }
+    let mut names = names.into_iter().collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn site_package_mod_names() -> Vec<String> {
+    collect_site_package_mod_names(python_site_packages().iter().map(|p| p.as_path()))
+}
+
+fn site_package_stub_mod_names() -> Vec<String> {
+    let mut names = Set::new();
+    for site in python_site_packages() {
+        if site.join("__pycache__").is_dir() {
+            if let Ok(entries) = site.join("__pycache__").read_dir() {
+                for ent in entries.flatten() {
+                    let fname = ent.file_name();
+                    let fname = fname.to_string_lossy();
+                    if let Some(stem) = fname.strip_suffix(".d.er") {
+                        if is_exportable_mod_name(stem) {
+                            names.insert(stem.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let Ok(entries) = site.read_dir() else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let init_stub = ent.path().join("__pycache__").join("__init__.d.er");
+            if init_stub.is_file() {
+                let name = ent.file_name();
+                let name = name.to_string_lossy();
+                if is_exportable_mod_name(&name) {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn site_package_module_item(name: &str) -> CompletionItem {
+    let mut item = CompletionItem::new_simple(
+        format!("{name} (import from site-packages)"),
+        "PyModule".to_string(),
+    );
+    item.sort_text = Some(format!("{}_{}", CompletionOrder::STD_ITEM, item.label));
+    item.kind = Some(CompletionItemKind::MODULE);
+    let import = if PYTHON_MODE {
+        format!("import {name}\n")
+    } else {
+        format!("{name} = pyimport \"{name}\"\n")
+    };
+    item.additional_text_edits = Some(vec![TextEdit {
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        new_text: import,
+    }]);
+    item.insert_text = Some(name.to_string());
+    item.filter_text = Some(name.to_string());
+    item
+}
+
 fn load_modules<'a>(
     cfg: ErgConfig,
     cache: Cache,
@@ -449,9 +552,24 @@ impl CompletionCache {
                         clone.clone(),
                         erg_pystd_path(),
                         major_mods.into_iter().chain(py_specific_mods),
-                        shared,
+                        shared.clone(),
                     );
-                    // TODO: load modules from site-packages
+                    let site_mods = site_package_mod_names();
+                    if !site_mods.is_empty() {
+                        if let Some(comps) = clone.borrow_mut().get_mut("<module>") {
+                            comps.extend(site_mods.iter().map(|n| site_package_module_item(n)));
+                        }
+                    }
+                    let stub_mods = site_package_stub_mod_names();
+                    if !stub_mods.is_empty() {
+                        load_modules(
+                            cfg,
+                            clone,
+                            Path::new(""),
+                            stub_mods.iter().map(|s| s.as_str()),
+                            shared,
+                        );
+                    }
                     flags
                         .builtin_modules_loaded
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -569,13 +687,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let uri = NormalizedUrl::new(params.text_document_position.text_document.uri);
         let path = util::uri_to_path(&uri);
         let mut pos = params.text_document_position.position;
-        // ignore comments
-        // TODO: multiline comments
-        if self
-            .file_cache
-            .get_line(&uri, pos.line)
-            .is_some_and(|line| line.starts_with('#'))
-        {
+        if self.file_cache.cursor_in_comment(&uri, pos) {
             return Ok(None);
         }
         let trigger = params
@@ -894,5 +1006,29 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }));
         }
         Ok(item)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn collects_top_level_package_names() {
+        let dir = std::env::temp_dir().join(format!("els_site_pkgs_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("mypkg")).unwrap();
+        fs::write(dir.join("mypkg").join("__init__.py"), "").unwrap();
+        fs::write(dir.join("standalone.py"), "").unwrap();
+        fs::create_dir_all(dir.join("foo-1.0.dist-info")).unwrap();
+        fs::create_dir_all(dir.join("__pycache__")).unwrap();
+        let names = collect_site_package_mod_names(std::iter::once(dir.as_path()));
+        let _ = fs::remove_dir_all(&dir);
+        assert!(names.contains(&"mypkg".to_string()), "{names:?}");
+        assert!(names.contains(&"standalone".to_string()), "{names:?}");
+        assert!(!names
+            .iter()
+            .any(|n| n.contains("dist-info") || n == "__pycache__"));
     }
 }

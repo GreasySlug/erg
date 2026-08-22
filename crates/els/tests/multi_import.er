@@ -1,0 +1,2 @@
+m = import "sub/mod"
+_ = m.x

@@ -2,15 +2,18 @@ use std::path::Path;
 
 use erg_common::spawn::safe_yield;
 use lsp_types::request::{
-    CallHierarchyOutgoingCalls, CallHierarchyPrepare, Formatting, GotoDeclaration,
+    CallHierarchyOutgoingCalls, CallHierarchyPrepare, ExecuteCommand, Formatting, GotoDeclaration,
     GotoImplementation, GotoImplementationParams, PrepareRenameRequest, RangeFormatting,
+    WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
-    CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams, CompletionResponse,
-    DiagnosticSeverity, DocumentFormattingParams, DocumentRangeFormattingParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeKind, FormattingOptions,
-    GotoDefinitionParams, GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString,
-    Position, PrepareRenameResponse, Range, TextDocumentIdentifier, TextDocumentPositionParams,
+    ApplyWorkspaceEditParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CompletionResponse, DiagnosticSeverity, DocumentChanges, DocumentFormattingParams,
+    DocumentRangeFormattingParams, DocumentSymbolResponse, ExecuteCommandParams, FileRename,
+    FoldingRange, FoldingRangeKind, FormattingOptions, GotoDefinitionParams,
+    GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
+    PrepareRenameResponse, Range, RenameFilesParams, TextDocumentIdentifier,
+    TextDocumentPositionParams, WorkspaceSymbolParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -24,6 +27,11 @@ const FILE_PREPARE_RENAME: &str = "tests/prepare_rename.er";
 const FILE_INHERIT_LENS: &str = "tests/inherit_lens.er";
 const FILE_CALL_HIERARCHY: &str = "tests/call_hierarchy.er";
 const FILE_FOLD: &str = "tests/fold.er";
+const FILE_UNUSED_VARS: &str = "tests/unused_vars.er";
+const FILE_COMMENTS: &str = "tests/comments.er";
+const FILE_QUANTIFIED: &str = "tests/quantified.er";
+const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
+const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 
 use els::{
     NormalizedUrl, Server, TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
@@ -854,4 +862,178 @@ fn test_folding_range_blocks() -> Result<(), Box<dyn std::error::Error>> {
         "methods of `C` should fold: {ranges:?}"
     );
     Ok(())
+}
+
+/// `erg.eliminate_unused_vars` sends `workspace/applyEdit`: drop unused defs
+/// and rename unused parameters to `_`.
+#[test]
+#[exec_new_thread]
+fn test_eliminate_unused_vars() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_UNUSED_VARS).canonicalize()?)?;
+    client.notify_open(FILE_UNUSED_VARS)?;
+    client.request::<ExecuteCommand>(ExecuteCommandParams {
+        command: "erg.eliminate_unused_vars".to_string(),
+        arguments: vec![serde_json::to_value(uri.clone().raw())?],
+        work_done_progress_params: Default::default(),
+    })?;
+    let apply = client
+        .responses
+        .iter()
+        .find(|msg| msg.get("method").and_then(|m| m.as_str()) == Some("workspace/applyEdit"))
+        .ok_or("server did not send workspace/applyEdit")?;
+    let params: ApplyWorkspaceEditParams = serde_json::from_value(apply["params"].clone())?;
+    let edits = params
+        .edit
+        .changes
+        .as_ref()
+        .and_then(|c| c.get(&uri.raw()))
+        .ok_or("no text edits for unused_vars.er")?;
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.new_text.is_empty() && e.range.start.line == 0),
+        "unused `foo` should be deleted: {edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.new_text == "_" && e.range.start.line == 1),
+        "unused parameter `i` should become `_`: {edits:?}"
+    );
+    Ok(())
+}
+
+/// Completion is suppressed inside `#[ ]#` block comments and `'''` doc comments.
+#[test]
+fn test_completion_in_multiline_comment() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_COMMENTS).canonicalize()?)?;
+    client.notify_open(FILE_COMMENTS)?;
+    let inside_block = client.request_completion(uri.clone().raw(), 2, 0, "h")?;
+    assert!(
+        inside_block.is_none()
+            || inside_block
+                .as_ref()
+                .is_some_and(|r| matches!(r, CompletionResponse::Array(a) if a.is_empty())),
+        "completion inside #[ ]# must be suppressed: {inside_block:?}"
+    );
+    let inside_doc = client.request_completion(uri.raw(), 5, 0, "d")?;
+    assert!(
+        inside_doc.is_none()
+            || inside_doc
+                .as_ref()
+                .is_some_and(|r| matches!(r, CompletionResponse::Array(a) if a.is_empty())),
+        "completion inside ''' must be suppressed: {inside_doc:?}"
+    );
+    Ok(())
+}
+
+/// `id|` (type application) shows quantified type parameters.
+#[test]
+#[exec_new_thread]
+fn test_signature_help_vbar() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_QUANTIFIED).canonicalize()?)?;
+    client.notify_open(FILE_QUANTIFIED)?;
+    client.notify_change(uri.clone().raw(), add_char(1, 6, "|"))?;
+    let help = client
+        .request_signature_help(uri.raw(), 1, 7, "|")?
+        .ok_or("no signature help for type application")?;
+    assert_eq!(help.signatures.len(), 1);
+    let sig = &help.signatures[0];
+    assert!(
+        sig.label.contains('|') && sig.label.contains('T'),
+        "expected type-parameter signature, got {}",
+        sig.label
+    );
+    assert_eq!(sig.active_parameter, Some(0));
+    Ok(())
+}
+
+/// Workspace symbols report the containing module or class.
+#[test]
+#[exec_new_thread]
+fn test_workspace_symbol_container_name() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify_open(FILE_INHERIT_LENS)?;
+    let symbols = client
+        .request::<WorkspaceSymbol>(WorkspaceSymbolParams {
+            query: String::new(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })?
+        .ok_or("no workspace symbols")?;
+    let class = symbols
+        .iter()
+        .find(|s| s.name == "C")
+        .ok_or_else(|| format!("C not found: {symbols:?}"))?;
+    assert!(
+        class
+            .container_name
+            .as_deref()
+            .is_some_and(|n| n.contains("inherit_lens")),
+        "class C should be contained by the module, got {:?}",
+        class.container_name
+    );
+    if let Some(method) = symbols.iter().find(|s| s.name == "new") {
+        assert_eq!(method.container_name.as_deref(), Some("C"));
+    }
+    Ok(())
+}
+
+/// Renaming `sub/mod.er` rewrites `import "sub/mod"`, not a same-named sibling.
+#[test]
+#[exec_new_thread]
+fn test_will_rename_multipath_import() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify_open(FILE_MULTI_IMPORT)?;
+    client.notify_open(FILE_SUB_MOD)?;
+    let old = NormalizedUrl::from_file_path(Path::new(FILE_SUB_MOD).canonicalize()?)?;
+    let mut new_path = Path::new(FILE_SUB_MOD).canonicalize()?;
+    new_path.set_file_name("renamed.er");
+    let new = NormalizedUrl::from_file_path(&new_path)?;
+    let importer = NormalizedUrl::from_file_path(Path::new(FILE_MULTI_IMPORT).canonicalize()?)?;
+    let importer_uri = importer.raw();
+    let edit = client
+        .request::<WillRenameFiles>(RenameFilesParams {
+            files: vec![FileRename {
+                old_uri: old.raw().to_string(),
+                new_uri: new.raw().to_string(),
+            }],
+        })?
+        .ok_or("willRenameFiles returned null")?;
+    let rewritten = match &edit.document_changes {
+        Some(DocumentChanges::Operations(ops)) => ops.iter().any(|op| match op {
+            lsp_types::DocumentChangeOperation::Edit(td) => edit_rewrites_import(td, &importer_uri),
+            _ => false,
+        }),
+        Some(DocumentChanges::Edits(edits)) => edits
+            .iter()
+            .any(|td| edit_rewrites_import(td, &importer_uri)),
+        None => false,
+    };
+    assert!(
+        rewritten,
+        "import \"sub/mod\" should become \"sub/renamed\": {edit:?}"
+    );
+    Ok(())
+}
+
+fn edit_rewrites_import(td: &lsp_types::TextDocumentEdit, importer: &lsp_types::Url) -> bool {
+    td.text_document.uri == *importer
+        && td.edits.iter().any(|e| match e {
+            lsp_types::OneOf::Left(te) => te.new_text.contains("sub/renamed"),
+            lsp_types::OneOf::Right(ann) => ann.text_edit.new_text.contains("sub/renamed"),
+        })
 }

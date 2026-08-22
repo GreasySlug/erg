@@ -32,10 +32,11 @@
 - [x] **Call Hierarchy `from_ranges` 常に空** — `call_hierarchy.rs:66,124,134`。
   → **完了**: incoming は referrer の呼び出し箇所、outgoing は呼び出し対象(attr/acc)の
     ロケーションを `from_ranges` に格納。test_call_hierarchy_outgoing。
-- [ ] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
-  → **保留**: 機能自体はコードアクション(quickfix)で動作済み。コマンド経由実装には
-    `workspace/applyEdit`(server→client)基盤の新規追加が必要(ELS に未実装)。費用対効果から後回し。
-    あるいは形骸化した登録を capabilities から外すのも選択肢。
+- [x] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
+  → **完了**: コードアクションと同じ `unused_var_edits` で編集を組み立て、
+    `workspace/applyEdit` でクライアントに適用。引数に URI があればそのファイル、
+    無ければ開いているバッファ全部。未使用パラメータは warn 位置で `_` に置換
+    (従来は先頭 diagnostic の range を誤用していた)。test_eliminate_unused_vars。
 - [x] **Code Lens 継承数 `send_class_inherits_lens` 空実装** — `code_lens.rs`。
   → **完了**: `gen_show_class_refs_command(loc, noun, hide_when_empty)` に共通化し、各 `ClassDef`
     の上に「N subclasses」レンズ(サブクラス0件は非表示)。test_code_lens_inherits。
@@ -65,12 +66,23 @@
 - [x] Folding: import のみ → 関数/クラス/ブロック対応 (`folding_range.rs`)
   → **完了**: 複数行の Def/Methods/ClassDef/Lambda/Call/Record 等を Region として
     折りたたむ。import は従来どおり Imports kind。test_folding_range_blocks。
-- [ ] 補完: site-packages モジュール非対応 (`completion.rs:454`)、複数行コメント抑制(573)
-- [ ] Rename: multi-path import 非対応 (`rename.rs:231`)
+- [x] 補完: site-packages モジュール非対応 (`completion.rs:454`)、複数行コメント抑制(573)
+  → **完了**: `python_site_packages()` 直下のトップレベル名をモジュール補完に載せ、
+    `.d.er` スタブがあるものだけ `pyimport` してメンバも載せる。コメントは
+    `keep_comments` で再レキシングし、`#[ ]#` / `'''` / `#` 内では補完しない。
+    test_completion_in_multiline_comment, `collects_top_level_package_names`。
+- [x] Rename: multi-path import 非対応 (`rename.rs:231`)
+  → **完了**: 依存ファイルから見た相対パス(`sub/mod`)でマッチし、同名の別モジュール
+    (`mod`) は書き換えない。`import "sub/mod"` → `"sub/renamed"`。
+    test_will_rename_multipath_import。
 - [x] Hover: `StrInterpMid` 非対応 (`hover.rs:98`)
   → **完了**: Mid の直前(閉じた補間)を優先し、なければ直後の式を hover。
-- [ ] Workspace Symbol: `container_name` 常に None
-- [ ] Signature Help: `VBar`(型適用)トリガーで None
+- [x] Workspace Symbol: `container_name` 常に None
+  → **完了**: トップレベルはモジュール名、入れ子は直近の親(`C.new` なら `C`)。
+    test_workspace_symbol_container_name。
+- [x] Signature Help: `VBar`(型適用)トリガーで None
+  → **完了**: `|` の直前の式の量化型変数 `qvars` を `id|T: Type|` 形式で返す。
+    test_signature_help_vbar。
 
 ## P4: 内部品質・性能
 

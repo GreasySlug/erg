@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
@@ -238,27 +238,29 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         new_uri: &NormalizedUrl,
     ) -> HashMap<Url, Vec<TextEdit>> {
         let mut changes = HashMap::new();
-        let old_path = util::uri_to_path(old_uri)
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let old_path = old_path.trim_end_matches(".d");
-        let new_path = util::uri_to_path(new_uri)
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if old_path.is_empty() || new_path.is_empty() {
+        let old_file = util::uri_to_path(old_uri);
+        let new_file = util::uri_to_path(new_uri);
+        if strip_module_ext(&old_file).as_os_str().is_empty()
+            || strip_module_ext(&new_file).as_os_str().is_empty()
+        {
             return changes;
         }
-        let new_path = new_path.trim_end_matches(".d");
         for dep in self.dependents_of(old_uri) {
-            let imports = self.search_imports(&dep, old_path);
+            let dep_path = util::uri_to_path(&dep);
+            let Some(old_import) = import_path_from(&dep_path, &old_file) else {
+                continue;
+            };
+            let Some(new_import) = import_path_from(&dep_path, &new_file) else {
+                continue;
+            };
+            if old_import == new_import {
+                continue;
+            }
+            let imports = self.search_imports(&dep, &old_import);
             let edits = imports.iter().filter_map(|lit| {
                 Some(TextEdit::new(
                     util::loc_to_range(lit.loc())?,
-                    lit.token.content.replace(old_path, new_path),
+                    rewrite_import_literal(&lit.token.content, &new_import),
                 ))
             });
             changes.insert(dep.raw(), edits.collect());
@@ -266,8 +268,6 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         changes
     }
 
-    /// TODO: multi-path imports
-    /// returning exprs: import symbol (string literal)
     fn search_imports(&self, target: &NormalizedUrl, needle_module_name: &str) -> Vec<Literal> {
         let mut imports = vec![];
         if let Some(hir) = self.get_hir(target) {
@@ -289,19 +289,27 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 };
                 match module_name {
                     Expr::Literal(lit)
-                        if lit
-                            .token
-                            .content
-                            .trim_start_matches('\"')
-                            .trim_end_matches('\"')
-                            .ends_with(needle_module_name) =>
-                    // FIXME: Possibly a submodule of the same name of another module
+                        if import_literal_matches(&lit.token.content, needle_module_name) =>
                     {
                         vec![lit.clone()]
                     }
                     _ => vec![],
                 }
             }
+            Expr::Def(def) => def
+                .body
+                .block
+                .iter()
+                .flat_map(|e| Self::extract_import_symbols(e, needle_module_name))
+                .collect(),
+            Expr::Compound(block) | Expr::Code(block) => block
+                .iter()
+                .flat_map(|e| Self::extract_import_symbols(e, needle_module_name))
+                .collect(),
+            Expr::Dummy(dummy) => dummy
+                .iter()
+                .flat_map(|e| Self::extract_import_symbols(e, needle_module_name))
+                .collect(),
             _ => vec![],
         }
     }
@@ -398,4 +406,60 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         Ok(Some(edit))
     }
+}
+
+fn strip_module_ext(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let fname = p
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    if matches!(
+        fname.as_str(),
+        "__init__.er" | "__init__.d.er" | "__init__.py"
+    ) {
+        p.pop();
+        return p;
+    }
+    if let Some(stem) = fname.strip_suffix(".d.er") {
+        p.set_file_name(stem);
+        return p;
+    }
+    p.set_extension("");
+    p
+}
+
+fn import_path_from(importer: &Path, imported: &Path) -> Option<String> {
+    let from_dir = importer.parent()?;
+    let imported = strip_module_ext(imported);
+    imported
+        .strip_prefix(from_dir)
+        .ok()
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .filter(|s| !s.is_empty())
+}
+
+fn unquote_import(lit: &str) -> &str {
+    lit.trim()
+        .trim_start_matches(['"', '\''])
+        .trim_end_matches(['"', '\''])
+}
+
+fn import_literal_matches(lit: &str, needle: &str) -> bool {
+    let imported = unquote_import(lit).trim_start_matches("./");
+    let needle = needle.trim_start_matches("./");
+    imported == needle
+}
+
+fn rewrite_import_literal(lit: &str, new: &str) -> String {
+    let trimmed = lit.trim();
+    let quote = trimmed
+        .chars()
+        .next()
+        .filter(|c| *c == '"' || *c == '\'')
+        .unwrap_or('"');
+    let inner = unquote_import(trimmed);
+    let prefix = if inner.starts_with("./") { "./" } else { "" };
+    format!("{quote}{prefix}{new}{quote}")
 }

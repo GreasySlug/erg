@@ -158,6 +158,32 @@ impl FileCache {
         self.files.borrow_mut().get(uri)?.token_stream.clone()
     }
 
+    /// True when `pos` sits in a `#` comment, `#[ ... ]#` block, or `'''` doc comment.
+    pub fn cursor_in_comment(&self, uri: &NormalizedUrl, pos: Position) -> bool {
+        let Ok(code) = self.get_entire_code(uri) else {
+            return false;
+        };
+        let tokens = match Lexer::from_str(code).keep_comments().lex() {
+            Ok(ts) => ts,
+            Err((ts, _)) => ts,
+        };
+        tokens.iter().any(|tk| {
+            if !matches!(tk.kind, TokenKind::Comment | TokenKind::DocComment) {
+                return false;
+            }
+            if util::pos_in_loc(tk, pos) {
+                return true;
+            }
+            // Token only stores the starting line; block/doc comments span further.
+            let extra = tk.content.matches('\n').count() as u32;
+            if extra == 0 {
+                return false;
+            }
+            let start = tk.lineno.saturating_sub(1);
+            (start..=start + extra).contains(&pos.line)
+        })
+    }
+
     pub fn get_token(&self, uri: &NormalizedUrl, pos: Position) -> Option<Token> {
         let _ = self.load_once(uri);
         let ent = self.files.borrow_mut();

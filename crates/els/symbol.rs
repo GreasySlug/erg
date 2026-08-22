@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use erg_common::traits::Locational;
 
 use erg_compiler::artifact::BuildRunnable;
@@ -57,7 +59,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     name: name.to_string(),
                     location,
                     kind: symbol_kind(vi),
-                    container_name: None,
+                    container_name: symbol_container_name(vi),
                     tags: None,
                     deprecated: None,
                 };
@@ -179,5 +181,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             _ => vec![],
         }
+    }
+}
+
+fn symbol_container_name(vi: &VarInfo) -> Option<String> {
+    let ns = vi.def_namespace().trim_start_matches("./");
+    if ns.is_empty() || ns == "<builtins>" || ns == "<dummy>" {
+        return None;
+    }
+    if vi.is_toplevel() {
+        Path::new(ns)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+    } else {
+        ns.rsplit(['.', ':'])
+            .find(|s| !s.is_empty())
+            .map(|s| s.to_string())
     }
 }

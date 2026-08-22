@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use erg_compiler::erg_parser::parse::Parsable;
 use erg_compiler::varinfo::AbsLocation;
 use serde_json::Value;
@@ -6,7 +8,10 @@ use erg_common::lsp_log;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::hir::Expr;
 
-use lsp_types::{Command, ExecuteCommandParams, Location, Url};
+use lsp_types::request::{ApplyWorkspaceEdit, Request};
+use lsp_types::{
+    ApplyWorkspaceEditParams, Command, ExecuteCommandParams, Location, TextEdit, Url, WorkspaceEdit,
+};
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
@@ -20,6 +25,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         _log!(self, "command requested: {}", params.command);
         let force_shutdown_cmd = format!("{}.forceShutdown", self.mode());
         let restart_server_cmd = format!("{}.restartServer", self.mode());
+        let eliminate_unused_cmd = format!("{}.eliminate_unused_vars", self.mode());
         match &params.command[..] {
             cmd if cmd == force_shutdown_cmd => {
                 lsp_log!("Force shutdown requested via workspace/executeCommand");
@@ -30,11 +36,52 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 self.restart();
                 Ok(None)
             }
+            cmd if cmd == eliminate_unused_cmd => self.execute_eliminate_unused_vars(&params),
             other => {
                 _log!(self, "unknown command {other}: {params:?}");
                 Ok(None)
             }
         }
+    }
+
+    fn execute_eliminate_unused_vars(
+        &self,
+        params: &ExecuteCommandParams,
+    ) -> ELSResult<Option<Value>> {
+        let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        for uri in self.command_target_uris(&params.arguments) {
+            let Some(map) = self.unused_var_edits(&uri)? else {
+                continue;
+            };
+            for (url, edits) in map {
+                if !edits.is_empty() {
+                    changes.entry(url).or_default().extend(edits);
+                }
+            }
+        }
+        if changes.is_empty() {
+            _log!(self, "eliminate_unused_vars: no edits");
+            return Ok(None);
+        }
+        self.send_client_request(
+            ApplyWorkspaceEdit::METHOD,
+            ApplyWorkspaceEditParams {
+                label: Some("Eliminate unused variables".to_string()),
+                edit: WorkspaceEdit::new(changes),
+            },
+        )?;
+        Ok(None)
+    }
+
+    /// `arguments[0]` may be a document URI (string or `{uri}`) from the current
+    /// editor; otherwise every open buffer is rewritten.
+    fn command_target_uris(&self, args: &[Value]) -> Vec<NormalizedUrl> {
+        if let Some(arg) = args.first() {
+            if let Some(uri) = uri_from_command_arg(arg) {
+                return vec![uri];
+            }
+        }
+        self.file_cache.entries()
     }
 
     pub(crate) fn gen_show_trait_impls_command(
@@ -94,4 +141,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             arguments: Some(vec![uri, position, locations]),
         }))
     }
+}
+
+fn uri_from_command_arg(arg: &Value) -> Option<NormalizedUrl> {
+    if let Some(s) = arg.as_str() {
+        return Url::parse(s).ok().map(NormalizedUrl::new);
+    }
+    arg.get("uri")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Url::parse(s).ok())
+        .map(NormalizedUrl::new)
 }

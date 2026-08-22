@@ -5,7 +5,7 @@ use std::ops::Not;
 use std::panic;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -75,6 +75,9 @@ use crate::util::{self, loc_to_pos, NormalizedUrl};
 
 pub const HEALTH_CHECKER_ID: i64 = 10000;
 pub const ASK_AUTO_SAVE_ID: i64 = 10001;
+/// IDs for server-initiated LSP requests (`workspace/applyEdit`, etc.).
+/// Starts well above the reserved health-check / auto-save IDs.
+static NEXT_CLIENT_REQ_ID: AtomicI64 = AtomicI64::new(20000);
 
 pub type ELSResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -678,6 +681,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "method": "workspace/configuration",
             "params": params,
         }))
+    }
+
+    /// Send a request from the server to the client (e.g. `workspace/applyEdit`).
+    pub(crate) fn send_client_request<P: Serialize>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> ELSResult<i64> {
+        let id = NEXT_CLIENT_REQ_ID.fetch_add(1, Ordering::Relaxed);
+        self.send_stdout(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))?;
+        Ok(id)
     }
 
     fn start_language_services(&mut self) {

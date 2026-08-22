@@ -3,6 +3,8 @@
 ## `eliminate_unused_vars`
 
 This code action will eliminate unused variables in code.
+The same rewrite is available as the `erg.eliminate_unused_vars` command
+(`workspace/executeCommand`), which applies the edit via `workspace/applyEdit`.
 
 ```erg
 foo = 1

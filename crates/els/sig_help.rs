@@ -72,7 +72,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let result = match trigger {
             Some(Trigger::Paren) => self.get_first_help(&uri, pos),
             Some(Trigger::Comma) => self.get_continuous_help(&uri, pos),
-            Some(Trigger::VBar) | None => None,
+            Some(Trigger::VBar) => self.get_type_app_help(&uri, pos),
+            None => None,
         };
         Ok(result)
     }
@@ -175,6 +176,59 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             crate::_log!(self, "failed to get continuous help");
         }
         None
+    }
+
+    fn get_type_app_help(&mut self, uri: &NormalizedUrl, pos: Position) -> Option<SignatureHelp> {
+        if let Some((_token, expr)) = self.get_min_expr(uri, pos, -2) {
+            return self.make_type_app_help(&expr, 0);
+        }
+        crate::_log!(self, "failed to get type application help");
+        None
+    }
+
+    fn make_type_app_help<S: HasType + NoTypeDisplay>(
+        &self,
+        sig: &S,
+        nth: u32,
+    ) -> Option<SignatureHelp> {
+        let qvars = sig.ref_t().qvars();
+        if qvars.is_empty() {
+            return None;
+        }
+        let mut qvars = qvars.into_iter().collect::<Vec<_>>();
+        qvars.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let sig_name = sig.to_string_notype();
+        let mut parameters = vec![];
+        let mut param_labels = vec![];
+        for (name, constraint) in &qvars {
+            let mut label = String::new();
+            let _ = constraint.named_fmt(&mut label, name, 8);
+            param_labels.push(label);
+        }
+        let args = param_labels.join(", ");
+        let label = format!("{sig_name}|{args}|");
+        let mut end = sig_name.len() + 1; // +1: |
+        for param_label in &param_labels {
+            let start = end;
+            end = start + param_label.len();
+            parameters.push(ParameterInformation {
+                label: ParameterLabel::LabelOffsets([start as u32, end as u32]),
+                documentation: None,
+            });
+            end += 2; // ", "
+        }
+        let nth = (parameters.len().saturating_sub(1) as u32).min(nth);
+        let info = SignatureInformation {
+            label,
+            documentation: None,
+            parameters: Some(parameters),
+            active_parameter: Some(nth),
+        };
+        Some(SignatureHelp {
+            signatures: vec![info],
+            active_parameter: None,
+            active_signature: None,
+        })
     }
 
     fn make_sig_help<S: HasType + NoTypeDisplay>(

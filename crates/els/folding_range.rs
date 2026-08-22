@@ -76,9 +76,20 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             for chunk in module.iter() {
                 fold_expr(chunk, &mut res);
             }
+            dedup_by_lines(&mut res);
         }
         Ok(Some(res))
     }
+}
+
+/// Keeps the first range for each line span.
+///
+/// Nesting routinely produces coincident regions -- `f = x -> ...` folds as a
+/// `Def` and again as the `Call` that is its whole body -- and a client shows
+/// one fold marker per range, so the duplicates are visible.
+fn dedup_by_lines(ranges: &mut Vec<FoldingRange>) {
+    let mut seen = std::collections::HashSet::new();
+    ranges.retain(|range| seen.insert((range.start_line, range.end_line)));
 }
 
 fn fold_imports(module: &Module) -> Vec<FoldingRange> {

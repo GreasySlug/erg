@@ -5,3 +5,7 @@ f x =
 C = Class { .x = Int }
 C.
     new x: Int = C { .x = x }
+
+g = f(
+    1,
+)

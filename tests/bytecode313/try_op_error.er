@@ -1,0 +1,25 @@
+# `?` with Erg's own `Error` type: each hop records a frame on `.stack`
+fails(x: Int): Int or Error = if x > 0, do x, do Error("must be positive", kind := "ValueError")
+
+one_hop(x: Int): Int or Error =
+    y = fails(x)?
+    y + 1
+
+two_hops(x: Int): Int or Error =
+    y = one_hop(x)?
+    y * 2
+
+ok = two_hops(1)
+assert ok in Int
+assert ok == 4
+
+failed = two_hops(-1)
+assert failed in Error
+assert failed.msg == "must be positive"
+assert failed.kind == "ValueError"
+assert failed.stack.__len__() == 2
+assert failed.stack[0].name == "one_hop"
+assert failed.stack[1].name == "two_hops"
+
+hinted = failed.context "pass a positive number"
+assert hinted.msg == failed.msg

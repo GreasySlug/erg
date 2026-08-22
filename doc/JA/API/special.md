@@ -63,13 +63,17 @@ objの属性を読み込む。
 ### |T: Type, E: Type|(x: T or E)`?` -> T
 
 後置演算子。`x`の成功値に評価される。`x`がエラー`E`だった場合は、囲んでいるサブルーチンがその場で`return`する。
-`E`は`NoneType`または`BaseException`の部分型でなければならない。また、`return`する先のサブルーチンがないため、トップレベルでは使用できない。
+`E`は`NoneType`、[`Error`](./types/classes/Error.md)、または`BaseException`の部分型でなければならない。
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =
     x = l.get(0)?  # リストが空ならその場でNoneを返す
     x * 2
 ```
+
+`Error`が`?`によって`return`されるたびに、`return`元のサブルーチンが`.stack`に積まれる。
+これによりエラーはどこから来たかの軌跡を持つ。
+トップレベルには`return`する先のサブルーチンがないため、`?`はその軌跡を表示してプログラムを終了する。
 
 ## `:`(x, T)
 

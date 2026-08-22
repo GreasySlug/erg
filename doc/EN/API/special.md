@@ -63,14 +63,18 @@ Execute `c(obj)`. `x + y |>.foo()` is the same as `(x + y).foo()`.
 
 Postfix operator. Evaluates to the success value of `x`; if `x` turns out to be the error `E`,
 the enclosing subroutine `return`s it immediately.
-`E` must be `NoneType` or a subtype of `BaseException`, and `?` cannot be used at the top level,
-where there is no subroutine to return from.
+`E` must be `NoneType`, [`Error`](./types/classes/Error.md) or a subtype of `BaseException`.
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =
     x = l.get(0)?  # returns None immediately if the list is empty
     x * 2
 ```
+
+Every time an `Error` is returned by `?`, the subroutine it was returned from is pushed onto
+`.stack`, which is what gives the error a trace of where it came from.
+At the top level there is no subroutine to return from, so `?` prints that trace and aborts
+the program instead.
 
 ## `:`(x, T)
 

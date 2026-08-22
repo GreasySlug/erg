@@ -66,7 +66,7 @@
     - [x] Set
     - [x] Tuple
   - [x] Pipeline operator
-  - [x] ? operator (error propagation; the error type must be `NoneType` or a subtype of `BaseException`, and stack traces are not recorded)
+  - [x] ? operator (error propagation; the error type must be `NoneType`, `Error` or a subtype of `BaseException`)
   - [x] Multi-line string
   - [x] String interpolation
   - [x] Multi-line comment

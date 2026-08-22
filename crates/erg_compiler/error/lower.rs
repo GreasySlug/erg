@@ -475,38 +475,6 @@ impl LowerError {
         )
     }
 
-    /// `x?` was used where there is no subroutine to return from.
-    pub fn try_outside_subroutine_error(
-        input: Input,
-        errno: usize,
-        loc: Location,
-        caused_by: String,
-    ) -> Self {
-        let question = StyledStr::new("?", Some(ERR), Some(ATTR));
-        let hint = Some(switch_lang!(
-            "japanese" => "エラーを取り出すには`match`を使用してください".to_string(),
-            "simplified_chinese" => "请使用`match`取出错误".to_string(),
-            "traditional_chinese" => "請使用`match`取出錯誤".to_string(),
-            "english" => "use `match` to handle the error here".to_string(),
-        ));
-        Self::new(
-            ErrorCore::new(
-                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
-                switch_lang!(
-                    "japanese" => format!("{question}はサブルーチンの外では使用できません"),
-                    "simplified_chinese" => format!("{question}不能在子例程外使用"),
-                    "traditional_chinese" => format!("{question}不能在子程序外使用"),
-                    "english" => format!("{question} cannot be used outside a subroutine"),
-                ),
-                errno,
-                SyntaxError,
-                loc,
-            ),
-            input,
-            caused_by,
-        )
-    }
-
     pub fn sealed_trait_error(
         input: Input,
         errno: usize,

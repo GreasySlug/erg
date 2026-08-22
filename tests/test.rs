@@ -568,6 +568,11 @@ fn exec_try_op() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_try_op_panic() -> Result<(), ()> {
+    expect_end_with("tests/should_ok/try_op_panic.er", 0, 1)
+}
+
+#[test]
 fn exec_use_unit() -> Result<(), ()> {
     expect_success("examples/use_unit.er", 0)
 }

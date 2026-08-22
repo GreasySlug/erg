@@ -4603,6 +4603,52 @@ impl Context {
             Immutable,
             Visibility::BUILTIN_PUBLIC,
         );
+        /* Error (Erg's own recoverable error, see lib/core/_erg_result.py) */
+        let mut error_frame = Self::builtin_mono_class(ERROR_FRAME, 3);
+        error_frame.register_superclass(Obj, &obj);
+        error_frame.register_builtin_erg_impl(
+            ATTR_NAME,
+            Str,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        error_frame.register_builtin_erg_impl(
+            ATTR_LINE,
+            Nat,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        error_frame.register_builtin_erg_impl(
+            ATTR_FILE,
+            Str,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        let mut error = Self::builtin_mono_class(ERROR, 5);
+        error.register_superclass(Obj, &obj);
+        error.register_builtin_erg_impl(ATTR_MSG, Str, Immutable, Visibility::BUILTIN_PUBLIC);
+        error.register_builtin_erg_impl(ATTR_KIND, Str, Immutable, Visibility::BUILTIN_PUBLIC);
+        // the subroutines `?` propagated this error out of, innermost call first
+        error.register_builtin_erg_impl(
+            ATTR_STACK,
+            unknown_len_list_t(mono(ERROR_FRAME)),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        // `.context` consumes the error and returns a new one carrying one more hint
+        error.register_builtin_erg_impl(
+            FUNC_CONTEXT,
+            fn1_met(mono(ERROR), Str, mono(ERROR)),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        error.register_builtin_py_impl(
+            FUNDAMENTAL_CALL,
+            no_var_func(vec![kw(KW_MSG, Str)], vec![kw(KW_KIND, Str)], mono(ERROR)),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNDAMENTAL_CALL),
+        );
         let mut exception = Self::builtin_mono_class(EXCEPTION, 2);
         exception.register_superclass(mono(BASE_EXCEPTION), &base_exception);
         let mut system_exit = Self::builtin_mono_class(SYSTEM_EXIT, 2);
@@ -4980,6 +5026,14 @@ impl Context {
             Const,
             Some(TRACEBACK),
         );
+        self.register_builtin_type(
+            mono(ERROR_FRAME),
+            error_frame,
+            vis.clone(),
+            Const,
+            Some(ERROR_FRAME),
+        );
+        self.register_builtin_type(mono(ERROR), error, vis.clone(), Const, Some(ERROR));
         self.register_builtin_type(
             mono(EXCEPTION),
             exception,

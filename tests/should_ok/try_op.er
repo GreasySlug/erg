@@ -94,3 +94,42 @@ assert proc!(-2) == None
 exc(x: Int or ValueError): Int or ValueError = x? + 1
 
 discard exc(1)
+
+# `Error` carries a message, a kind and the hints attached with `.context`
+e = Error "something went wrong"
+assert e.msg == "something went wrong"
+assert e.kind == "Error"
+assert e.stack.__len__() == 0
+
+kinded = Error("bad value", kind := "ValueError")
+assert kinded.kind == "ValueError"
+
+# `.context` does not overwrite `.msg` / `.kind`; it returns a new error
+hinted = e.context "try again later"
+assert hinted.msg == e.msg
+assert hinted.kind == e.kind
+
+# every `?` an `Error` passes through pushes its call site onto `.stack`
+fails(x: Int): Int or Error = if x > 0, do x, do Error "must be positive"
+
+one_hop(x: Int): Int or Error =
+    y = fails(x)?
+    y + 1
+
+two_hops(x: Int): Int or Error =
+    y = one_hop(x)?
+    y * 2
+
+succeeded = two_hops(1)
+assert succeeded in Int
+assert succeeded == 4
+
+failed = two_hops(-1)
+assert failed in Error
+assert failed.msg == "must be positive"
+# one frame per `?` the error was returned through, innermost call first
+assert failed.stack.__len__() == 2
+assert failed.stack[0].name == "one_hop"
+assert failed.stack[1].name == "two_hops"
+assert failed.stack[0].line > 0
+assert failed.stack[0].file != ""

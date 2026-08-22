@@ -64,13 +64,16 @@ if True, do:
 ### |T: Type, E: Type|(x: T or E)`?` -> T
 
 後綴運算符。求值為`x`的成功值；如果`x`是錯誤`E`，則外圍子程序立即將其`return`
-`E`必須是`NoneType`或`BaseException`的子類型。頂層沒有可返回的子程序，因此不能使用`?`
+`E`必須是`NoneType`、[`Error`](./types/classes/Error.md)或`BaseException`的子類型
 
 ```python
 double_head(l: List(Int, 3)): Int or NoneType =
     x = l.get(0)?  # 如果列表為空，則立即返回None
     x * 2
 ```
+
+每當`Error`被`?`返回時，返回它的子程序都會被壓入`.stack`，從而使錯誤帶有來源軌跡
+頂層沒有可返回的子程序，因此`?`會列印該軌跡並終止程序
 
 ## `:`(x, T)
 

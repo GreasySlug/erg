@@ -1605,12 +1605,14 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
 
     /// Is `t` an error alternative of a `Result`-like union?
     ///
-    /// `NoneType` (the `Option` case) and any subtype of `BaseException`
-    /// (the `Result` case) qualify. Both are distinguishable from every other
-    /// alternative at runtime by `is_err` (see `_erg_result.py`).
+    /// `NoneType` (the `Option` case), `Error` and any subtype of `BaseException`
+    /// (the `Result` case) qualify. All of them are distinguishable from every
+    /// other alternative at runtime by `is_err` (see `_erg_result.py`).
     fn is_err_alternative(&self, t: &Type) -> bool {
         let t = Self::known_alternative(t);
-        t.is_nonetype() || self.module.context.subtype_of(&t, &mono("BaseException"))
+        t.is_nonetype()
+            || self.module.context.subtype_of(&t, &mono("Error"))
+            || self.module.context.subtype_of(&t, &mono("BaseException"))
     }
 
     /// Lower the error propagation operator `x?`.
@@ -1641,14 +1643,9 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             ));
         } else if let Some(frame) = self.subr_frames.iter_mut().rev().find(|f| !f.inlined) {
             frame.propagated.extend(err_ts.iter().cloned());
-        } else {
-            errors.push(LowerError::try_outside_subroutine_error(
-                self.input().clone(),
-                line!() as usize,
-                loc,
-                self.module.context.caused_by(),
-            ));
         }
+        // else: there is no subroutine to return from, so codegen makes this `?`
+        // panic with a traceback instead of propagating
         let ok_t = ok_ts
             .into_iter()
             .fold(Type::Never, |acc, t| self.module.context.union(&acc, &t));

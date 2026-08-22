@@ -8,10 +8,12 @@ never_errs(x: Int): Int = x?
 # ERR: `Str` is not an error alternative either
 not_a_result(s: Str): Str = s?
 
-# ERR: there is no subroutine to return from
-top_level = opt(1)?
-
 # ERR: the error type does not fit the declared return type
 bad_return(x: Int): Int =
     y = opt(x)?
+    y
+
+# ERR: `Error` is propagated, but the signature only admits `NoneType`
+mixed(x: Int): Int or NoneType =
+    y = (if x > 0, do x, do Error "must be positive")?
     y

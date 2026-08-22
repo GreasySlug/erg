@@ -1,0 +1,31 @@
+# `?` at the top level has no subroutine to return from, so an error there
+# aborts the program after printing the trace it collected on the way up
+
+try_some(x: Int): Int or Error =
+    if x > 0:
+        do x
+        do:
+            e = Error("must be positive", kind := "ValueError")
+            e.context "pass a positive number"
+
+f(x: Int): Int or Error =
+    y = try_some(x)?
+    y + 1
+
+g(x: Int): Int or Error =
+    y = f(x)?
+    y * 2
+
+# succeeds: the value is unwrapped and execution continues
+ok = g(1)?
+assert ok == 4
+
+# fails: prints
+#   Traceback (most recent call first):
+#     f, line 12, file "tests/should_ok/try_op_panic.er"
+#     ...
+#   hint: pass a positive number
+#   ValueError: must be positive
+# and exits with 1
+i = g(-1)?
+print! i

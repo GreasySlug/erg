@@ -1,19 +1,21 @@
 use std::path::Path;
 
 use erg_common::spawn::safe_yield;
+use lsp_types::notification::{DidChangeConfiguration, DidChangeWatchedFiles};
 use lsp_types::request::{
     CallHierarchyOutgoingCalls, CallHierarchyPrepare, ExecuteCommand, Formatting, GotoDeclaration,
-    GotoImplementation, GotoImplementationParams, PrepareRenameRequest, RangeFormatting,
-    WillRenameFiles, WorkspaceSymbol,
+    GotoImplementation, GotoImplementationParams, LinkedEditingRange, MonikerRequest,
+    OnTypeFormatting, PrepareRenameRequest, RangeFormatting, WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    CompletionResponse, DiagnosticSeverity, DocumentChanges, DocumentFormattingParams,
-    DocumentRangeFormattingParams, DocumentSymbolResponse, ExecuteCommandParams, FileRename,
-    FoldingRange, FoldingRangeKind, FormattingOptions, GotoDefinitionParams,
-    GotoDefinitionResponse, HoverContents, InlayHintLabel, MarkedString, Position,
-    PrepareRenameResponse, Range, RenameFilesParams, TextDocumentIdentifier,
-    TextDocumentPositionParams, WorkspaceSymbolParams,
+    CompletionResponse, DiagnosticSeverity, DidChangeConfigurationParams,
+    DidChangeWatchedFilesParams, DocumentChanges, DocumentFormattingParams,
+    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbolResponse,
+    ExecuteCommandParams, FileChangeType, FileEvent, FileRename, FoldingRange, FoldingRangeKind,
+    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents, InlayHintLabel,
+    LinkedEditingRangeParams, MarkedString, MonikerParams, Position, PrepareRenameResponse, Range,
+    RenameFilesParams, TextDocumentIdentifier, TextDocumentPositionParams, WorkspaceSymbolParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -34,8 +36,10 @@ const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
 const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 
 use els::{
-    NormalizedUrl, Server, TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
+    DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, NormalizedUrl, Server,
+    TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
     TypeHierarchySubtypesParams, TypeHierarchySupertypes, TypeHierarchySupertypesParams,
+    WorkspaceDiagnostic, WorkspaceDiagnosticParams, WorkspaceDocumentDiagnosticReport,
 };
 use erg_proc_macros::exec_new_thread;
 use molc::{add_char, delete_line, oneline_range};
@@ -1081,4 +1085,169 @@ fn test_cancel_request() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Err("no response for cancelled hover".into())
+}
+
+fn pos_params(uri: lsp_types::Url, line: u32, col: u32) -> TextDocumentPositionParams {
+    TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier::new(uri),
+        position: Position::new(line, col),
+    }
+}
+
+/// `workspace/didChangeWatchedFiles` for a deleted file clears its diagnostics
+/// the same way `textDocument/didClose` does.
+#[test]
+#[exec_new_thread]
+fn test_did_change_watched_files_deleted() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.wait_messages(3)?;
+    client.notify_open(FILE_A)?;
+    client.wait_messages(6)?;
+    client.responses.clear();
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify::<DidChangeWatchedFiles>(DidChangeWatchedFilesParams {
+        changes: vec![FileEvent::new(uri.clone().raw(), FileChangeType::DELETED)],
+    })?;
+    let diags = client.wait_diagnostics()?;
+    assert_eq!(NormalizedUrl::new(diags.uri), uri);
+    assert!(diags.diagnostics.is_empty(), "{:?}", diags.diagnostics);
+    Ok(())
+}
+
+/// `workspace/didChangeConfiguration` is accepted (feature flags are applied
+/// on the server; see `settings_tests` for the parsed values).
+#[test]
+fn test_did_change_configuration() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify::<DidChangeConfiguration>(DidChangeConfigurationParams {
+        settings: json!({ "els": { "disable": ["hover"], "enable": ["lint"], "indent": 2 } }),
+    })?;
+    Ok(())
+}
+
+/// Pull diagnostics return the same stored errors as publishDiagnostics, and a
+/// matching `previousResultId` comes back as Unchanged.
+#[test]
+#[exec_new_thread]
+fn test_pull_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify_open(FILE_INVALID_SYNTAX)?;
+    let published = client.wait_diagnostics()?;
+    assert_eq!(published.diagnostics.len(), 1);
+
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INVALID_SYNTAX).canonicalize()?)?;
+    let report = client.request::<DocumentDiagnostic>(DocumentDiagnosticParams {
+        text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+        identifier: None,
+        previous_result_id: None,
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    })?;
+    let DocumentDiagnosticReport::Full(full) = report else {
+        return Err(format!("expected Full report, got {report:?}").into());
+    };
+    assert_eq!(full.items.len(), 1, "{:?}", full.items);
+    assert_eq!(full.items[0].severity, Some(DiagnosticSeverity::ERROR));
+
+    let report = client.request::<DocumentDiagnostic>(DocumentDiagnosticParams {
+        text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+        identifier: None,
+        previous_result_id: full.result_id.clone(),
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    })?;
+    assert!(
+        matches!(report, DocumentDiagnosticReport::Unchanged(_)),
+        "{report:?}"
+    );
+
+    let ws = client.request::<WorkspaceDiagnostic>(WorkspaceDiagnosticParams {
+        identifier: None,
+        previous_result_ids: vec![],
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    })?;
+    let found = ws.items.iter().any(|item| match item {
+        WorkspaceDocumentDiagnosticReport::Full(full) => {
+            NormalizedUrl::new(full.uri.clone()) == uri && !full.items.is_empty()
+        }
+        WorkspaceDocumentDiagnosticReport::Unchanged(_) => false,
+    });
+    assert!(found, "workspace diagnostic missing {uri}: {:?}", ws.items);
+    Ok(())
+}
+
+/// Linked editing ranges cover the definition and every in-file reference.
+#[test]
+#[exec_new_thread]
+fn test_linked_editing_range() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+    let ranges = client
+        .request::<LinkedEditingRange>(LinkedEditingRangeParams {
+            text_document_position_params: pos_params(uri.raw(), 1, 4),
+            work_done_progress_params: Default::default(),
+        })?
+        .ok_or("linkedEditingRange returned None")?
+        .ranges;
+    assert_eq!(ranges.len(), 2, "{ranges:?}");
+    assert!(ranges.contains(&oneline_range(0, 0, 1)), "{ranges:?}");
+    assert!(ranges.contains(&oneline_range(1, 4, 5)), "{ranges:?}");
+    Ok(())
+}
+
+/// `textDocument/moniker` returns an `erg` scheme identifier for the symbol.
+#[test]
+#[exec_new_thread]
+fn test_moniker() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+    let monikers = client
+        .request::<MonikerRequest>(MonikerParams {
+            text_document_position_params: pos_params(uri.raw(), 0, 0),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })?
+        .ok_or("moniker returned None")?;
+    assert_eq!(monikers.len(), 1, "{monikers:?}");
+    assert_eq!(monikers[0].scheme, "erg");
+    assert!(
+        monikers[0].identifier.contains("a.er"),
+        "{}",
+        monikers[0].identifier
+    );
+    Ok(())
+}
+
+/// `textDocument/onTypeFormatting` after a newline rewrites nearby dirty lines.
+#[test]
+fn test_on_type_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+    client.notify_change(uri.clone().raw(), add_char(0, 3, "  "))?;
+    let edits = client
+        .request::<OnTypeFormatting>(DocumentOnTypeFormattingParams {
+            text_document_position: pos_params(uri.raw(), 1, 0),
+            ch: "\n".to_string(),
+            options: formatting_options(),
+        })?
+        .unwrap();
+    assert_eq!(edits.len(), 1, "{edits:?}");
+    assert_eq!(edits[0].new_text, "x = 1\n");
+    Ok(())
 }

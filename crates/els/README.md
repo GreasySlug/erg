@@ -47,6 +47,11 @@ ELS is a language server for the [Erg](https://github.com/erg-lang/erg) programm
 - [x] Formatting (`erg_fmt`; no type checking, so it works on a file mid-edit)
   - [x] Document formatting
   - [x] Range formatting
+  - [x] On-type formatting (newline / `}`)
+- [x] Pull diagnostics (`textDocument/diagnostic`, `workspace/diagnostic`)
+- [x] Linked editing range
+- [x] Moniker
+- [x] `workspace/didChangeWatchedFiles` / `workspace/didChangeConfiguration`
 
 ## Installation
 

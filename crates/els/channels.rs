@@ -9,20 +9,23 @@ use lsp_types::request::{
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
     FoldingRangeRequest, Formatting, GotoDeclaration, GotoDefinition, GotoImplementation,
     GotoImplementationParams, GotoTypeDefinition, GotoTypeDefinitionParams, HoverRequest,
-    InlayHintRequest, InlayHintResolveRequest, RangeFormatting, References, ResolveCompletionItem,
-    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
-    WorkspaceSymbol,
+    InlayHintRequest, InlayHintResolveRequest, LinkedEditingRange, MonikerRequest,
+    OnTypeFormatting, RangeFormatting, References, ResolveCompletionItem, SelectionRangeRequest,
+    SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyIncomingCallsParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     CodeAction, CodeActionParams, CodeLensParams, CompletionItem, CompletionParams,
     DocumentFormattingParams, DocumentHighlightParams, DocumentLinkParams,
-    DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandParams, FoldingRangeParams,
-    GotoDefinitionParams, HoverParams, InlayHint, InlayHintParams, ReferenceParams,
-    RenameFilesParams, SelectionRangeParams, SemanticTokensParams, SignatureHelpParams,
-    WorkspaceSymbolParams,
+    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbolParams,
+    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, HoverParams, InlayHint,
+    InlayHintParams, LinkedEditingRangeParams, MonikerParams, ReferenceParams, RenameFilesParams,
+    SelectionRangeParams, SemanticTokensParams, SignatureHelpParams, WorkspaceSymbolParams,
 };
 
+use crate::pull_diagnostic::{
+    DocumentDiagnostic, DocumentDiagnosticParams, WorkspaceDiagnostic, WorkspaceDiagnosticParams,
+};
 use crate::server::Server;
 use crate::type_hierarchy::{
     TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,
@@ -74,6 +77,11 @@ pub struct SendChannels {
     document_link: mpsc::Sender<WorkerMessage<DocumentLinkParams>>,
     formatting: mpsc::Sender<WorkerMessage<DocumentFormattingParams>>,
     range_formatting: mpsc::Sender<WorkerMessage<DocumentRangeFormattingParams>>,
+    on_type_formatting: mpsc::Sender<WorkerMessage<DocumentOnTypeFormattingParams>>,
+    linked_editing_range: mpsc::Sender<WorkerMessage<LinkedEditingRangeParams>>,
+    moniker: mpsc::Sender<WorkerMessage<MonikerParams>>,
+    document_diagnostic: mpsc::Sender<WorkerMessage<DocumentDiagnosticParams>>,
+    workspace_diagnostic: mpsc::Sender<WorkerMessage<WorkspaceDiagnosticParams>>,
     pub(crate) health_check: mpsc::Sender<WorkerMessage<()>>,
 }
 
@@ -110,6 +118,11 @@ impl SendChannels {
         let (tx_document_link, rx_document_link) = mpsc::channel();
         let (tx_formatting, rx_formatting) = mpsc::channel();
         let (tx_range_formatting, rx_range_formatting) = mpsc::channel();
+        let (tx_on_type_formatting, rx_on_type_formatting) = mpsc::channel();
+        let (tx_linked_editing_range, rx_linked_editing_range) = mpsc::channel();
+        let (tx_moniker, rx_moniker) = mpsc::channel();
+        let (tx_document_diagnostic, rx_document_diagnostic) = mpsc::channel();
+        let (tx_workspace_diagnostic, rx_workspace_diagnostic) = mpsc::channel();
         let (tx_health_check, rx_health_check) = mpsc::channel();
         (
             Self {
@@ -144,6 +157,11 @@ impl SendChannels {
                 document_link: tx_document_link,
                 formatting: tx_formatting,
                 range_formatting: tx_range_formatting,
+                on_type_formatting: tx_on_type_formatting,
+                linked_editing_range: tx_linked_editing_range,
+                moniker: tx_moniker,
+                document_diagnostic: tx_document_diagnostic,
+                workspace_diagnostic: tx_workspace_diagnostic,
                 health_check: tx_health_check,
             },
             ReceiveChannels {
@@ -178,6 +196,11 @@ impl SendChannels {
                 document_link: rx_document_link,
                 formatting: rx_formatting,
                 range_formatting: rx_range_formatting,
+                on_type_formatting: rx_on_type_formatting,
+                linked_editing_range: rx_linked_editing_range,
+                moniker: rx_moniker,
+                document_diagnostic: rx_document_diagnostic,
+                workspace_diagnostic: rx_workspace_diagnostic,
                 health_check: rx_health_check,
             },
         )
@@ -215,6 +238,11 @@ impl SendChannels {
         let _ = self.document_link.send(WorkerMessage::Kill);
         let _ = self.formatting.send(WorkerMessage::Kill);
         let _ = self.range_formatting.send(WorkerMessage::Kill);
+        let _ = self.on_type_formatting.send(WorkerMessage::Kill);
+        let _ = self.linked_editing_range.send(WorkerMessage::Kill);
+        let _ = self.moniker.send(WorkerMessage::Kill);
+        let _ = self.document_diagnostic.send(WorkerMessage::Kill);
+        let _ = self.workspace_diagnostic.send(WorkerMessage::Kill);
         let _ = self.health_check.send(WorkerMessage::Kill);
     }
 }
@@ -255,6 +283,11 @@ pub struct ReceiveChannels {
     pub(crate) document_link: mpsc::Receiver<WorkerMessage<DocumentLinkParams>>,
     pub(crate) formatting: mpsc::Receiver<WorkerMessage<DocumentFormattingParams>>,
     pub(crate) range_formatting: mpsc::Receiver<WorkerMessage<DocumentRangeFormattingParams>>,
+    pub(crate) on_type_formatting: mpsc::Receiver<WorkerMessage<DocumentOnTypeFormattingParams>>,
+    pub(crate) linked_editing_range: mpsc::Receiver<WorkerMessage<LinkedEditingRangeParams>>,
+    pub(crate) moniker: mpsc::Receiver<WorkerMessage<MonikerParams>>,
+    pub(crate) document_diagnostic: mpsc::Receiver<WorkerMessage<DocumentDiagnosticParams>>,
+    pub(crate) workspace_diagnostic: mpsc::Receiver<WorkerMessage<WorkspaceDiagnosticParams>>,
     pub(crate) health_check: mpsc::Receiver<WorkerMessage<()>>,
 }
 
@@ -363,4 +396,25 @@ impl_sendable!(
     RangeFormatting,
     DocumentRangeFormattingParams,
     range_formatting
+);
+impl_sendable!(
+    OnTypeFormatting,
+    DocumentOnTypeFormattingParams,
+    on_type_formatting
+);
+impl_sendable!(
+    LinkedEditingRange,
+    LinkedEditingRangeParams,
+    linked_editing_range
+);
+impl_sendable!(MonikerRequest, MonikerParams, moniker);
+impl_sendable!(
+    DocumentDiagnostic,
+    DocumentDiagnosticParams,
+    document_diagnostic
+);
+impl_sendable!(
+    WorkspaceDiagnostic,
+    WorkspaceDiagnosticParams,
+    workspace_diagnostic
 );

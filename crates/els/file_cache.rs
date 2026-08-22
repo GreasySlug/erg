@@ -56,6 +56,9 @@ pub struct FileCache {
     stdout_redirect: Option<Sender<Value>>,
     pub files: Shared<Dict<NormalizedUrl, FileCacheEntry>>,
     pub editing: Shared<Set<NormalizedUrl>>,
+    /// Documents that received `textDocument/didOpen` and have not yet been closed.
+    /// Distinct from `files`, which also holds dependents loaded from disk.
+    opened: Shared<Set<NormalizedUrl>>,
 }
 
 impl RedirectableStdout for FileCache {
@@ -81,6 +84,7 @@ impl FileCache {
             stdout_redirect,
             files: Shared::new(Dict::new()),
             editing: Shared::new(Set::new()),
+            opened: Shared::new(Set::new()),
         }
     }
 
@@ -88,6 +92,7 @@ impl FileCache {
     pub fn clear(&self) {
         self.files.borrow_mut().clear();
         self.editing.borrow_mut().clear();
+        self.opened.borrow_mut().clear();
     }
 
     fn load_once(&self, uri: &NormalizedUrl) -> ELSResult<()> {
@@ -97,6 +102,21 @@ impl FileCache {
         let code = _get_code_from_uri(uri)?;
         self.update(uri, code, None);
         Ok(())
+    }
+
+    pub fn mark_open(&self, uri: &NormalizedUrl) {
+        self.opened.borrow_mut().insert(uri.clone());
+    }
+
+    pub fn is_open(&self, uri: &NormalizedUrl) -> bool {
+        self.opened.borrow().contains(uri)
+    }
+
+    /// Replace the cached contents with what is currently on disk.
+    pub fn reload_from_disk(&self, uri: &NormalizedUrl) -> ELSResult<String> {
+        let code = _get_code_from_uri(uri)?;
+        self.update(uri, code.clone(), None);
+        Ok(code)
     }
 
     pub(crate) fn set_capabilities(&mut self, capabilities: &mut ServerCapabilities) {
@@ -392,10 +412,10 @@ impl FileCache {
         entry.token_stream = token_stream;
     }
 
-    #[allow(unused)]
     pub fn remove(&mut self, uri: &NormalizedUrl) {
         VFS.remove(uri.to_file_path().unwrap());
         self.files.borrow_mut().remove(uri);
+        self.opened.borrow_mut().remove(uri);
     }
 
     pub fn rename_files(&mut self, params: &RenameFilesParams) -> ELSResult<()> {
@@ -416,6 +436,10 @@ impl FileCache {
                 old_uri.to_file_path().unwrap(),
                 new_uri.to_file_path().unwrap(),
             );
+            let was_open = self.opened.borrow_mut().remove(&old_uri);
+            if was_open {
+                self.opened.borrow_mut().insert(new_uri.clone());
+            }
             self.files.borrow_mut().insert(new_uri, entry);
         }
         Ok(())

@@ -3,7 +3,7 @@ use std::io;
 use std::io::{stdin, BufRead, Read};
 use std::ops::Not;
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
@@ -42,18 +42,20 @@ use lsp_types::request::{
     DocumentHighlightRequest, DocumentLinkRequest, DocumentSymbolRequest, ExecuteCommand,
     FoldingRangeRequest, Formatting, GotoDeclaration, GotoDefinition, GotoImplementation,
     GotoTypeDefinition, HoverRequest, InlayHintRequest, InlayHintResolveRequest,
-    PrepareRenameRequest, RangeFormatting, References, Rename, Request, ResolveCompletionItem,
-    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles,
-    WorkspaceSymbol,
+    LinkedEditingRange, MonikerRequest, OnTypeFormatting, PrepareRenameRequest, RangeFormatting,
+    References, Rename, Request, ResolveCompletionItem, SelectionRangeRequest,
+    SemanticTokensFullRequest, SignatureHelpRequest, WillRenameFiles, WorkspaceSymbol,
 };
 use lsp_types::{
     CallHierarchyServerCapability, CodeActionKind, CodeActionOptions, CodeActionProviderCapability,
     CodeLensOptions, CompletionOptions, ConfigurationItem, ConfigurationParams,
-    DeclarationCapability, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentLinkOptions, ExecuteCommandOptions,
+    DeclarationCapability, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidChangeWatchedFilesParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentLinkOptions, DocumentOnTypeFormattingOptions, ExecuteCommandOptions, FileChangeType,
     FoldingRangeProviderCapability, HoverProviderCapability, ImplementationProviderCapability,
     InitializeParams, InitializeResult, InlayHintOptions, InlayHintServerCapabilities,
-    NumberOrString, OneOf, Position, ProgressParams, ProgressParamsValue, RenameOptions,
+    LinkedEditingRangeServerCapabilities, NumberOrString, OneOf, Position, ProgressParams,
+    ProgressParamsValue, Registration, RegistrationParams, RenameOptions,
     SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
@@ -70,6 +72,7 @@ use crate::completion::CompletionCache;
 use crate::file_cache::FileCache;
 use crate::hir_visitor::{ExprKind, HIRVisitor};
 use crate::message::{ErrorMessage, LSPResult};
+use crate::pull_diagnostic::{DocumentDiagnostic, WorkspaceDiagnostic};
 use crate::scheduler::Scheduler;
 use crate::type_hierarchy::{TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes};
 use crate::util::{self, loc_to_pos, NormalizedUrl};
@@ -111,9 +114,9 @@ pub enum DefaultFeatures {
     DeepCompletion,
 }
 
-impl From<&str> for DefaultFeatures {
-    fn from(s: &str) -> Self {
-        match s {
+impl DefaultFeatures {
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
             "codeaction" | "codeAction" | "code-action" => DefaultFeatures::CodeAction,
             "codelens" | "codeLens" | "code-lens" => DefaultFeatures::CodeLens,
             "completion" => DefaultFeatures::Completion,
@@ -151,8 +154,14 @@ impl From<&str> for DefaultFeatures {
             "deepcompletion" | "deepCompletion" | "deep-completion" => {
                 DefaultFeatures::DeepCompletion
             }
-            _ => panic!("unknown feature: {s}"),
-        }
+            _ => return None,
+        })
+    }
+}
+
+impl From<&str> for DefaultFeatures {
+    fn from(s: &str) -> Self {
+        Self::from_name(s).unwrap_or_else(|| panic!("unknown feature: {s}"))
     }
 }
 
@@ -162,13 +171,19 @@ pub enum OptionalFeatures {
     Lint,
 }
 
-impl From<&str> for OptionalFeatures {
-    fn from(s: &str) -> Self {
-        match s {
+impl OptionalFeatures {
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
             "checkontype" | "checkOnType" | "check-on-type" => OptionalFeatures::CheckOnType,
             "lint" | "linting" => OptionalFeatures::Lint,
-            _ => panic!("unknown feature: {s}"),
-        }
+            _ => return None,
+        })
+    }
+}
+
+impl From<&str> for OptionalFeatures {
+    fn from(s: &str) -> Self {
+        Self::from_name(s).unwrap_or_else(|| panic!("unknown feature: {s}"))
     }
 }
 
@@ -181,6 +196,30 @@ macro_rules! _log {
 }
 
 pub const TRIGGER_CHARS: [&str; 4] = [".", ":", "(", " "];
+
+fn is_watched_source(path: &Path) -> bool {
+    let name = path.to_string_lossy();
+    name.ends_with(".er") || (PYTHON_MODE && name.ends_with(".py"))
+}
+
+fn string_list(obj: &Value, keys: &[&str]) -> Option<Vec<String>> {
+    for key in keys {
+        let Some(value) = obj.get(*key) else {
+            continue;
+        };
+        if let Some(arr) = value.as_array() {
+            return Some(
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+            );
+        }
+        if let Some(s) = value.as_str() {
+            return Some(vec![s.to_string()]);
+        }
+    }
+    None
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Flags {
@@ -505,9 +544,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             capabilities: self.init_capabilities(),
             ..Default::default()
         })?;
-        // lsp-types 0.93 has no `typeHierarchyProvider`; advertise it by hand.
+        // lsp-types 0.93 has no `typeHierarchyProvider` / `diagnosticProvider`;
+        // advertise them by hand.
         if let Some(caps) = result.get_mut("capabilities") {
             caps["typeHierarchyProvider"] = json!(true);
+            caps["diagnosticProvider"] = json!({
+                "interFileDependencies": true,
+                "workspaceDiagnostics": true,
+            });
         }
         self.init_services();
         self.send_stdout(&json!({
@@ -668,6 +712,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .not();
         capabilities.document_formatting_provider = Some(OneOf::Left(formatting));
         capabilities.document_range_formatting_provider = Some(OneOf::Left(formatting));
+        capabilities.document_on_type_formatting_provider =
+            formatting.then_some(DocumentOnTypeFormattingOptions {
+                first_trigger_character: "\n".to_string(),
+                more_trigger_character: Some(vec!["}".to_string()]),
+            });
+        capabilities.linked_editing_range_provider =
+            Some(LinkedEditingRangeServerCapabilities::Simple(true));
+        capabilities.moniker_provider = Some(OneOf::Left(true));
         capabilities
     }
 
@@ -710,6 +762,105 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "params": params,
         }))?;
         Ok(id)
+    }
+
+    fn register_watched_files(&self) -> ELSResult<()> {
+        let dynamic = self
+            .init_params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.did_change_watched_files.as_ref())
+            .and_then(|c| c.dynamic_registration)
+            .unwrap_or(false);
+        if !dynamic {
+            return Ok(());
+        }
+        let glob = if PYTHON_MODE {
+            "**/*.{er,py}"
+        } else {
+            "**/*.er"
+        };
+        let params = RegistrationParams {
+            registrations: vec![Registration {
+                id: "els/didChangeWatchedFiles".to_string(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: Some(json!({
+                    "watchers": [{ "globPattern": glob }]
+                })),
+            }],
+        };
+        self.send_client_request("client/registerCapability", params)?;
+        Ok(())
+    }
+
+    fn apply_client_settings(&mut self, settings: &Value) {
+        let els = settings
+            .get("els")
+            .or_else(|| settings.get("erg").and_then(|e| e.get("els")))
+            .or_else(|| settings.get("erg"))
+            .unwrap_or(settings);
+        if let Some(disable) = string_list(els, &["disable", "disabledFeatures"]) {
+            self.disabled_features = disable
+                .iter()
+                .filter_map(|s| DefaultFeatures::from_name(s))
+                .collect();
+        }
+        if let Some(enable) = string_list(els, &["enable", "enabledFeatures"]) {
+            self.opt_features = enable
+                .iter()
+                .filter_map(|s| OptionalFeatures::from_name(s))
+                .collect();
+        }
+        if let Some(n) = els.get("indent").and_then(|v| v.as_u64()) {
+            self.cfg.fmt.indent = (n as usize).max(1);
+        }
+    }
+
+    fn handle_did_change_watched_files(
+        &mut self,
+        params: DidChangeWatchedFilesParams,
+    ) -> ELSResult<()> {
+        for event in params.changes {
+            let uri = NormalizedUrl::new(event.uri);
+            let Ok(path) = uri.to_file_path() else {
+                continue;
+            };
+            if !is_watched_source(&path) {
+                continue;
+            }
+            if self.file_cache.editing.borrow().contains(&uri) {
+                continue;
+            }
+            if event.typ == FileChangeType::DELETED {
+                let dependents = self.dependents_of(&uri);
+                if !self.file_cache.is_open(&uri) {
+                    self.file_cache.remove(&uri);
+                }
+                self.shared.clear_path(&NormalizedPathBuf::from(path));
+                let mut gone = Set::new();
+                gone.insert(uri.clone());
+                self.send_empty_diagnostics(gone)?;
+                for dep in dependents {
+                    if let Ok(code) = self.file_cache.get_entire_code(&dep) {
+                        self.recheck_file(dep, code)?;
+                    }
+                }
+            } else if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
+                if self.file_cache.is_open(&uri) {
+                    continue;
+                }
+                let code = match self.file_cache.reload_from_disk(&uri) {
+                    Ok(code) => code,
+                    Err(err) => {
+                        _log!(self, "watched file unreadable: {uri}: {err}");
+                        continue;
+                    }
+                };
+                self.recheck_file(uri, code)?;
+            }
+        }
+        Ok(())
     }
 
     fn start_language_services(&mut self) {
@@ -817,6 +968,23 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.start_service::<RangeFormatting>(
             receivers.range_formatting,
             Self::handle_range_formatting,
+        );
+        self.start_service::<OnTypeFormatting>(
+            receivers.on_type_formatting,
+            Self::handle_on_type_formatting,
+        );
+        self.start_service::<LinkedEditingRange>(
+            receivers.linked_editing_range,
+            Self::handle_linked_editing_range,
+        );
+        self.start_service::<MonikerRequest>(receivers.moniker, Self::handle_moniker);
+        self.start_service::<DocumentDiagnostic>(
+            receivers.document_diagnostic,
+            Self::handle_document_diagnostic,
+        );
+        self.start_service::<WorkspaceDiagnostic>(
+            receivers.workspace_diagnostic,
+            Self::handle_workspace_diagnostic,
         );
         self.start_client_health_checker(receivers.health_check);
     }
@@ -1113,6 +1281,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             DocumentLinkRequest::METHOD => self.parse_send::<DocumentLinkRequest>(id, msg),
             Formatting::METHOD => self.parse_send::<Formatting>(id, msg),
             RangeFormatting::METHOD => self.parse_send::<RangeFormatting>(id, msg),
+            OnTypeFormatting::METHOD => self.parse_send::<OnTypeFormatting>(id, msg),
+            LinkedEditingRange::METHOD => self.parse_send::<LinkedEditingRange>(id, msg),
+            MonikerRequest::METHOD => self.parse_send::<MonikerRequest>(id, msg),
+            DocumentDiagnostic::METHOD => self.parse_send::<DocumentDiagnostic>(id, msg),
+            WorkspaceDiagnostic::METHOD => self.parse_send::<WorkspaceDiagnostic>(id, msg),
             other => self.send_error(Some(id), -32600, format!("{other} is not supported")),
         }
     }
@@ -1122,6 +1295,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             "initialized" => {
                 self.flags.client_initialized.store(true, Ordering::Relaxed);
                 self.ask_auto_save()?;
+                self.register_watched_files()?;
                 self.send_log("successfully bound")
             }
             "exit" => self.exit(),
@@ -1140,6 +1314,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let code = params.text_document.text;
                 let ver = params.text_document.version;
                 self.file_cache.update(&uri, code.clone(), Some(ver));
+                self.file_cache.mark_open(&uri);
                 let token = self.start_work_done_progress("checking files ...");
                 let mut checked = Set::new();
                 let res = self.check_file(uri.clone(), code, &mut checked);
@@ -1194,6 +1369,15 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     _log!(self, "cancellation approved: {id}");
                 }
                 Ok(())
+            }
+            "workspace/didChangeWatchedFiles" => {
+                let params = DidChangeWatchedFilesParams::deserialize(msg["params"].clone())?;
+                self.handle_did_change_watched_files(params)
+            }
+            "workspace/didChangeConfiguration" => {
+                let params = DidChangeConfigurationParams::deserialize(msg["params"].clone())?;
+                self.apply_client_settings(&params.settings);
+                self.send_log("updated configuration")
             }
             _ => self.send_log(format!("received notification: {method}")),
         }
@@ -1480,5 +1664,42 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let warns = self.shared.warns.raw_iter();
         let warns = warns.filter(|warn| NormalizedPathBuf::from(warn.input.path()) == path);
         Some(warns.collect())
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn apply_client_settings_reads_els_disable_enable_indent() {
+        let mut server: ErgLanguageServer = Server::new(ErgConfig::default(), None);
+        server.apply_client_settings(&json!({
+            "els": { "disable": ["hover"], "enable": ["lint"], "indent": 2 }
+        }));
+        assert!(server.disabled_features.contains(&DefaultFeatures::Hover));
+        assert!(server.opt_features.contains(&OptionalFeatures::Lint));
+        assert_eq!(server.cfg.fmt.indent, 2);
+    }
+
+    #[test]
+    fn apply_client_settings_accepts_erg_els_nesting_and_a_string() {
+        let mut server: ErgLanguageServer = Server::new(ErgConfig::default(), None);
+        server.apply_client_settings(&json!({
+            "erg": { "els": { "disable": "diagnostics" } }
+        }));
+        assert!(server
+            .disabled_features
+            .contains(&DefaultFeatures::Diagnostics));
+    }
+
+    #[test]
+    fn apply_client_settings_ignores_unknown_feature_names() {
+        let mut server: ErgLanguageServer = Server::new(ErgConfig::default(), None);
+        server.apply_client_settings(&json!({
+            "els": { "disable": ["not-a-feature", "hover"] }
+        }));
+        assert_eq!(server.disabled_features, vec![DefaultFeatures::Hover]);
     }
 }

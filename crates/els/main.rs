@@ -17,6 +17,8 @@ mod hover;
 mod implementation;
 mod inlay_hint;
 mod message;
+mod moniker;
+mod pull_diagnostic;
 mod references;
 mod rename;
 mod scheduler;

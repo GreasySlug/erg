@@ -43,7 +43,7 @@
 
 ## P2: 完全未実装の LSP 機能
 
-- [x] フォーマット系: `formatting` / `rangeFormatting` (`onTypeFormatting` は未)
+- [x] フォーマット系: `formatting` / `rangeFormatting` / `onTypeFormatting`
   → **完了 (formatting は既存)**: `rangeFormatting` はファイル全体を `erg_fmt` し、
     変更領域が選択範囲に収まるときだけその領域の TextEdit を返す(仕様上、edit は
     要求 range 内になければならない)。test_range_formatting。
@@ -57,9 +57,21 @@
     builtin で定義位置が無い型は省略。test_type_hierarchy。
     (`lsp-types` 0.93 に型が無いため ELS 側で定義し、capabilities は
     initialize 結果へ `typeHierarchyProvider: true` を足して宣言)
-- [ ] `workspace/didChangeWatchedFiles`, `workspace/didChangeConfiguration`
-- [ ] Pull diagnostics, `linkedEditingRange`, `moniker`
-- [ ] `onTypeFormatting`
+- [x] `workspace/didChangeWatchedFiles`, `workspace/didChangeConfiguration`
+  → **完了**: ディスク上の `.er` の作成/変更は開いていないバッファだけ再読込して再検査。
+    削除はモジュールキャッシュと診断を落とし、依存ファイルを再検査。`initialized` 後に
+    クライアントが dynamic registration 対応なら `**/*.er` を watch 登録。
+    設定は `els` / `erg.els` の `disable`/`enable`/`indent` を読む。
+    test_did_change_watched_files_deleted, `settings_tests`。
+- [x] Pull diagnostics, `linkedEditingRange`, `moniker`
+  → **完了**: `textDocument/diagnostic` / `workspace/diagnostic` は push と同じ格納済み
+    診断を Full / Unchanged で返す(`lsp-types` 0.93 に無いので ELS 側で定義、
+    `diagnosticProvider` は initialize JSON に足す)。linked editing は同一ファイルの
+    定義+参照 range。moniker は scheme `erg` と定義位置 id。
+    test_pull_diagnostics, test_linked_editing_range, test_moniker。
+- [x] `onTypeFormatting`
+  → **完了**: トリガー `\n` / `}`。変更領域が直前・現在行に重なるときだけ TextEdit。
+    test_on_type_formatting。
 
 ## P3: 部分実装の改善
 

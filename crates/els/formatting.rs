@@ -1,6 +1,7 @@
-//! `textDocument/formatting` and `textDocument/rangeFormatting`.
+//! `textDocument/formatting`, `textDocument/rangeFormatting`, and
+//! `textDocument/onTypeFormatting`.
 //!
-//! Both run `erg_fmt` over the buffer and do not type-check, so they answer
+//! All three run `erg_fmt` over the buffer and do not type-check, so they answer
 //! immediately even on a large workspace, and they keep working while the file
 //! is mid-edit: a source `erg_fmt` cannot format safely comes back unchanged,
 //! which reaches the client as an empty edit list rather than an error.
@@ -10,14 +11,19 @@
 //! the changed region when that region sits inside the requested range -- the
 //! LSP spec requires every edit to fall within it. A selection that does not
 //! contain the change is left alone.
+//!
+//! On-type formatting uses the same changed-region logic but only applies it
+//! when the change overlaps the line just typed (and, after a newline, the
+//! previous line). Unlike range formatting, the spec does not require the edit
+//! to stay inside a request range.
 
 use erg_common::config::FmtConfig;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::parse::Parsable;
 use erg_fmt::{format_str, FmtOptions};
 use lsp_types::{
-    DocumentFormattingParams, DocumentRangeFormattingParams, FormattingOptions, Position, Range,
-    TextEdit,
+    DocumentFormattingParams, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    FormattingOptions, Position, Range, TextEdit,
 };
 
 use crate::_log;
@@ -116,12 +122,42 @@ fn full_document_edits(code: &str, opts: FmtOptions) -> Vec<TextEdit> {
     }]
 }
 
+fn range_overlaps(a: Range, b: Range) -> bool {
+    pos_le(a.start, b.end) && pos_le(b.start, a.end)
+}
+
 fn range_edits(code: &str, range: Range, opts: FmtOptions) -> Vec<TextEdit> {
     let formatted = format_str(code, opts);
     let Some((change, new_text)) = changed_region(code, &formatted) else {
         return vec![];
     };
     if range_contains(range, change) {
+        vec![TextEdit {
+            range: change,
+            new_text,
+        }]
+    } else {
+        vec![]
+    }
+}
+
+fn on_type_edits(code: &str, pos: Position, ch: &str, opts: FmtOptions) -> Vec<TextEdit> {
+    let formatted = format_str(code, opts);
+    let Some((change, new_text)) = changed_region(code, &formatted) else {
+        return vec![];
+    };
+    let nearby = if ch == "\n" {
+        Range {
+            start: Position::new(pos.line.saturating_sub(1), 0),
+            end: Position::new(pos.line.saturating_add(1), 0),
+        }
+    } else {
+        Range {
+            start: Position::new(pos.line, 0),
+            end: Position::new(pos.line.saturating_add(1), 0),
+        }
+    };
+    if range_overlaps(nearby, change) {
         vec![TextEdit {
             range: change,
             new_text,
@@ -155,6 +191,21 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(Some(range_edits(
             &code,
             params.range,
+            options_for(&self.cfg.fmt, &params.options),
+        )))
+    }
+
+    pub(crate) fn handle_on_type_formatting(
+        &mut self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> ELSResult<Option<Vec<TextEdit>>> {
+        _log!(self, "on-type formatting requested: {params:?}");
+        let uri = NormalizedUrl::new(params.text_document_position.text_document.uri);
+        let code = self.file_cache.get_entire_code(&uri)?;
+        Ok(Some(on_type_edits(
+            &code,
+            params.text_document_position.position,
+            &params.ch,
             options_for(&self.cfg.fmt, &params.options),
         )))
     }
@@ -236,5 +287,14 @@ mod tests {
             range_edits(code, second_line, opts).is_empty(),
             "a selection that does not contain the change must not be rewritten"
         );
+    }
+
+    #[test]
+    fn on_type_edits_apply_a_change_on_the_typed_line() {
+        let opts = FmtOptions::default();
+        let code = "x =   1\n_ = x + 1\n";
+        let edits = on_type_edits(code, Position::new(1, 0), "\n", opts);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "x = 1\n");
     }
 }

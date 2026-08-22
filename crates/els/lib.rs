@@ -17,6 +17,8 @@ mod hover;
 mod implementation;
 mod inlay_hint;
 mod message;
+mod moniker;
+mod pull_diagnostic;
 mod references;
 mod rename;
 mod scheduler;
@@ -28,6 +30,13 @@ mod symbol;
 mod type_definition;
 mod type_hierarchy;
 mod util;
+pub use pull_diagnostic::{
+    DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport,
+    FullDocumentDiagnosticReport, PreviousResultId, UnchangedDocumentDiagnosticReport,
+    WorkspaceDiagnostic, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
+};
 pub use server::*;
 pub use type_hierarchy::{
     TypeHierarchyItem, TypeHierarchyPrepare, TypeHierarchyPrepareParams, TypeHierarchySubtypes,

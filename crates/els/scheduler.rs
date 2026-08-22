@@ -212,11 +212,7 @@ impl Scheduler {
     /// worker can send `-32800` instead of the result.
     pub fn cancel(&self, id: TaskID) -> Option<Task> {
         self.cancelled.borrow_mut().insert(id);
-        let pending_idx = self
-            .pending
-            .borrow()
-            .iter()
-            .position(|task| task.id == id);
+        let pending_idx = self.pending.borrow().iter().position(|task| task.id == id);
         if let Some(idx) = pending_idx {
             return self.pending.borrow_mut().remove(idx);
         }

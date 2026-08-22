@@ -25,7 +25,7 @@ use erg_compiler::build_package::CheckStatus;
 use erg_compiler::erg_parser::ast::Module;
 use erg_compiler::erg_parser::error::IncompleteArtifact;
 use erg_compiler::erg_parser::parse::Parsable;
-use erg_compiler::error::CompileErrors;
+use erg_compiler::error::{CompileError, CompileErrors};
 
 use crate::_log;
 use crate::channels::WorkerMessage;
@@ -308,10 +308,88 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(())
     }
 
+    fn error_to_diagnostic(err: &CompileError) -> Diagnostic {
+        let loc = err.core.get_loc_with_fallback();
+        let mut message = remove_style(&err.core.main_message);
+        for sub in err.core.sub_messages.iter() {
+            for msg in sub.get_msg() {
+                message.push('\n');
+                message.push_str(&remove_style(msg));
+            }
+            if let Some(hint) = sub.get_hint() {
+                message.push('\n');
+                message.push_str("hint: ");
+                message.push_str(&remove_style(hint));
+            }
+        }
+        let start = Position::new(
+            loc.ln_begin().unwrap_or(1) - 1,
+            loc.col_begin().unwrap_or(0),
+        );
+        let end = Position::new(loc.ln_end().unwrap_or(1) - 1, loc.col_end().unwrap_or(0));
+        let severity = if err.core.kind.is_warning() {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        };
+        let source = if PYTHON_MODE { "pylyzer" } else { "els" };
+        Diagnostic::new(
+            Range::new(start, end),
+            Some(severity),
+            Some(NumberOrString::String(format!("E{}", err.core.errno))),
+            Some(source.to_string()),
+            message,
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn diagnostics_for(&self, uri: &NormalizedUrl) -> Vec<Diagnostic> {
+        let path = NormalizedPathBuf::from(util::uri_to_path(uri));
+        let mut diags = Vec::new();
+        for err in self.shared.errors.get(&path).into_iter() {
+            diags.push(Self::error_to_diagnostic(&err));
+        }
+        for warn in self.shared.warns.get(&path).into_iter() {
+            diags.push(Self::error_to_diagnostic(&warn));
+        }
+        diags
+    }
+
+    pub(crate) fn diagnostic_result_id(&self, uri: &NormalizedUrl) -> String {
+        let path = NormalizedPathBuf::from(util::uri_to_path(uri));
+        let n_err = self.shared.errors.get(&path).len();
+        let n_warn = self.shared.warns.get(&path).len();
+        let ver = self.file_cache.get_ver(uri).unwrap_or(0);
+        format!("{ver}:{n_err}:{n_warn}")
+    }
+
+    pub(crate) fn diagnostic_uris(&self) -> Vec<NormalizedUrl> {
+        let mut uris = Set::new();
+        for err in self
+            .shared
+            .errors
+            .raw_iter()
+            .chain(self.shared.warns.raw_iter())
+        {
+            let path = err
+                .input
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| err.input.path().to_path_buf());
+            if let Ok(url) = Url::from_file_path(path) {
+                uris.insert(NormalizedUrl::new(url));
+            }
+        }
+        for uri in self.file_cache.entries() {
+            uris.insert(uri);
+        }
+        uris.into_iter().collect()
+    }
+
     fn make_uri_and_diags(&mut self, errors: CompileErrors) -> Vec<(Url, Vec<Diagnostic>)> {
         let mut uri_and_diags: Vec<(Url, Vec<Diagnostic>)> = vec![];
         for err in errors.into_iter() {
-            let loc = err.core.get_loc_with_fallback();
             let res_uri = Url::from_file_path(
                 err.input
                     .path()
@@ -322,38 +400,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 crate::_log!(self, "failed to get uri: {}", err.input.path().display());
                 continue;
             };
-            let mut message = remove_style(&err.core.main_message);
-            for sub in err.core.sub_messages {
-                for msg in sub.get_msg() {
-                    message.push('\n');
-                    message.push_str(&remove_style(msg));
-                }
-                if let Some(hint) = sub.get_hint() {
-                    message.push('\n');
-                    message.push_str("hint: ");
-                    message.push_str(&remove_style(hint));
-                }
-            }
-            let start = Position::new(
-                loc.ln_begin().unwrap_or(1) - 1,
-                loc.col_begin().unwrap_or(0),
-            );
-            let end = Position::new(loc.ln_end().unwrap_or(1) - 1, loc.col_end().unwrap_or(0));
-            let severity = if err.core.kind.is_warning() {
-                DiagnosticSeverity::WARNING
-            } else {
-                DiagnosticSeverity::ERROR
-            };
-            let source = if PYTHON_MODE { "pylyzer" } else { "els" };
-            let diag = Diagnostic::new(
-                Range::new(start, end),
-                Some(severity),
-                Some(NumberOrString::String(format!("E{}", err.core.errno))),
-                Some(source.to_string()),
-                message,
-                None,
-                None,
-            );
+            let diag = Self::error_to_diagnostic(&err);
             if let Some((_, diags)) = uri_and_diags.iter_mut().find(|x| x.0 == err_uri) {
                 diags.push(diag);
             } else {

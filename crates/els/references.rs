@@ -2,7 +2,9 @@ use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::parse::Parsable;
 use erg_compiler::varinfo::AbsLocation;
 
-use lsp_types::{Location, Position, ReferenceParams, Url};
+use lsp_types::{
+    LinkedEditingRangeParams, LinkedEditingRanges, Location, Position, Range, ReferenceParams, Url,
+};
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
@@ -49,5 +51,49 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
         }
         refs
+    }
+
+    pub(crate) fn handle_linked_editing_range(
+        &mut self,
+        params: LinkedEditingRangeParams,
+    ) -> ELSResult<Option<LinkedEditingRanges>> {
+        _log!(self, "linked editing range requested: {params:?}");
+        let uri = NormalizedUrl::new(params.text_document_position_params.text_document.uri);
+        let pos = params.text_document_position_params.position;
+        Ok(self.linked_editing_ranges(&uri, pos))
+    }
+
+    fn linked_editing_ranges(
+        &self,
+        uri: &NormalizedUrl,
+        pos: Position,
+    ) -> Option<LinkedEditingRanges> {
+        let tok = self.file_cache.get_symbol(uri, pos)?;
+        let visitor = self.get_visitor(uri)?;
+        let vi = visitor.get_info(&tok)?;
+        let mut ranges: Vec<Range> = Vec::new();
+        if let Some(path) = &vi.def_loc.module {
+            if let Ok(def_uri) = Url::from_file_path(path) {
+                if NormalizedUrl::new(def_uri) == *uri {
+                    if let Some(range) = util::loc_to_range(vi.def_loc.loc) {
+                        ranges.push(range);
+                    }
+                }
+            }
+        }
+        for loc in self.get_refs_from_abs_loc(&vi.def_loc) {
+            if NormalizedUrl::new(loc.uri) == *uri {
+                ranges.push(loc.range);
+            }
+        }
+        ranges.sort_by_key(|r| (r.start.line, r.start.character, r.end.line, r.end.character));
+        ranges.dedup();
+        if ranges.is_empty() {
+            return None;
+        }
+        Some(LinkedEditingRanges {
+            ranges,
+            word_pattern: Some(String::from(r"[A-Za-z_][A-Za-z0-9_]*!?")),
+        })
     }
 }

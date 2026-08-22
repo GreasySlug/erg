@@ -4638,13 +4638,13 @@ impl Context {
         // `.context` consumes the error and returns a new one carrying one more hint
         error.register_builtin_erg_impl(
             FUNC_CONTEXT,
-            fn1_met(mono(ERROR), Str, mono(ERROR)),
+            fn1_met(Type::Error, Str, Type::Error),
             Immutable,
             Visibility::BUILTIN_PUBLIC,
         );
         error.register_builtin_py_impl(
             FUNDAMENTAL_CALL,
-            no_var_func(vec![kw(KW_MSG, Str)], vec![kw(KW_KIND, Str)], mono(ERROR)),
+            no_var_func(vec![kw(KW_MSG, Str)], vec![kw(KW_KIND, Str)], Type::Error),
             Immutable,
             Visibility::BUILTIN_PUBLIC,
             Some(FUNDAMENTAL_CALL),
@@ -5033,7 +5033,7 @@ impl Context {
             Const,
             Some(ERROR_FRAME),
         );
-        self.register_builtin_type(mono(ERROR), error, vis.clone(), Const, Some(ERROR));
+        self.register_builtin_type(Type::Error, error, vis.clone(), Const, Some(ERROR));
         self.register_builtin_type(
             mono(EXCEPTION),
             exception,

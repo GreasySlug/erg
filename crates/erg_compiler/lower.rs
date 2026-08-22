@@ -1611,7 +1611,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
     fn is_err_alternative(&self, t: &Type) -> bool {
         let t = Self::known_alternative(t);
         t.is_nonetype()
-            || self.module.context.subtype_of(&t, &mono("Error"))
+            || self.module.context.subtype_of(&t, &Type::Error)
             || self.module.context.subtype_of(&t, &mono("BaseException"))
     }
 

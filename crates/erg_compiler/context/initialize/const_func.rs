@@ -240,7 +240,7 @@ pub(crate) fn result_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult
             Some(e) => e.typ().clone(),
             None => return Err(type_mismatch("type", e, "E")),
         },
-        None => mono("Error"),
+        None => Type::Error,
     };
     Ok(ValueObj::builtin_type(ctx.union(t.typ(), &err_t)).into())
 }

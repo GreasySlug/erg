@@ -346,6 +346,27 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         )
     }
 
+    /// Check `uri` unless something already has.
+    ///
+    /// Push diagnostics are the live path: `didOpen` / `didChange` check the
+    /// file and publish the result. A *pull* request can arrive for a file that
+    /// path never touched -- one the client has not opened -- and answering it
+    /// out of an empty cache would report "no problems" for a file nobody has
+    /// looked at.
+    pub(crate) fn check_unchecked_file(&mut self, uri: &NormalizedUrl) -> ELSResult<()> {
+        let Ok(path) = uri.to_file_path() else {
+            return Ok(());
+        };
+        if self.shared.get_module(&path).is_some() {
+            return Ok(());
+        }
+        let Ok(code) = self.file_cache.get_entire_code(uri) else {
+            return Ok(());
+        };
+        let mut checked = Set::new();
+        self.check_file(uri.clone(), code, &mut checked)
+    }
+
     pub(crate) fn diagnostics_for(&self, uri: &NormalizedUrl) -> Vec<Diagnostic> {
         let path = NormalizedPathBuf::from(util::uri_to_path(uri));
         let mut diags = Vec::new();
@@ -358,6 +379,13 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         diags
     }
 
+    /// Identifies the diagnostics this file currently has, so a pull request
+    /// carrying the same id back can be answered with `Unchanged`.
+    ///
+    /// Everything the client would render has to go into the hash: two errors
+    /// can share an errno and a span and still say different things (an
+    /// inferred type in the message, say), and reporting those as unchanged
+    /// leaves the old text on screen.
     pub(crate) fn diagnostic_result_id(&self, uri: &NormalizedUrl) -> String {
         let path = NormalizedPathBuf::from(util::uri_to_path(uri));
         let errs = self.shared.errors.get(&path);
@@ -367,6 +395,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         for e in errs.iter().chain(warns.iter()) {
             e.core.errno.hash(&mut h);
             e.core.get_loc_with_fallback().hash(&mut h);
+            e.core.kind.hash(&mut h);
+            e.core.main_message.hash(&mut h);
+            for sub in e.core.sub_messages.iter() {
+                sub.get_msg().hash(&mut h);
+                sub.get_hint().hash(&mut h);
+            }
         }
         format!("{ver}:{:x}", h.finish())
     }

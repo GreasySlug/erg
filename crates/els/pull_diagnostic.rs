@@ -3,6 +3,12 @@
 //! `lsp-types` 0.93 does not ship these LSP 3.17 types, so they are defined here.
 //! Push diagnostics (`textDocument/publishDiagnostics`) stay the live path;
 //! pull returns the same stored errors/warnings.
+//!
+//! `textDocument/diagnostic` checks the file first if nothing has checked it
+//! yet, since a client may pull for a document it never opened.
+//! `workspace/diagnostic` deliberately does not: it would build the whole
+//! workspace on demand, which is what the workspace-diagnostics thread already
+//! does in the background at startup. It reports what is known so far.
 
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::parse::Parsable;
@@ -126,17 +132,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     ) -> ELSResult<DocumentDiagnosticReport> {
         _log!(self, "document diagnostic requested: {params:?}");
         let uri = NormalizedUrl::new(params.text_document.uri);
+        let disabled = self
+            .disabled_features
+            .borrow()
+            .contains(&DefaultFeatures::Diagnostics);
+        if !disabled {
+            // A pull can name a file the push path never saw. Check it first,
+            // or the report would say "no problems" about an unchecked file.
+            self.check_unchecked_file(&uri)?;
+        }
         let result_id = self.diagnostic_result_id(&uri);
         if params.previous_result_id.as_ref() == Some(&result_id) {
             return Ok(DocumentDiagnosticReport::Unchanged(
                 UnchangedDocumentDiagnosticReport { result_id },
             ));
         }
-        let items = if self
-            .disabled_features
-            .borrow()
-            .contains(&DefaultFeatures::Diagnostics)
-        {
+        let items = if disabled {
             vec![]
         } else {
             self.diagnostics_for(&uri)

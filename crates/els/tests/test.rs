@@ -889,6 +889,16 @@ fn test_folding_range_blocks() -> Result<(), Box<dyn std::error::Error>> {
         }),
         "methods of `C` should fold: {ranges:?}"
     );
+    let mut spans: Vec<_> = ranges.iter().map(|r| (r.start_line, r.end_line)).collect();
+    let before = spans.len();
+    spans.sort_unstable();
+    spans.dedup();
+    assert_eq!(
+        spans.len(),
+        before,
+        "a client draws one fold marker per range, so coincident ones \
+         (a def and the call that is its whole body) must not both be sent: {ranges:?}"
+    );
     Ok(())
 }
 
@@ -1239,6 +1249,34 @@ fn test_pull_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
         WorkspaceDocumentDiagnosticReport::Unchanged(_) => false,
     });
     assert!(found, "workspace diagnostic missing {uri}: {:?}", ws.items);
+    Ok(())
+}
+
+/// A client that pulls diagnostics may ask about a document it never opened,
+/// which the push path has therefore never checked.
+#[test]
+#[exec_new_thread]
+fn test_pull_diagnostics_without_opening() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INVALID_SYNTAX).canonicalize()?)?;
+    let report = client.request::<DocumentDiagnostic>(DocumentDiagnosticParams {
+        text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+        identifier: None,
+        previous_result_id: None,
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    })?;
+    let DocumentDiagnosticReport::Full(full) = report else {
+        return Err(format!("expected Full report, got {report:?}").into());
+    };
+    assert_eq!(
+        full.items.len(),
+        1,
+        "an unopened file must still be checked: {:?}",
+        full.items
+    );
     Ok(())
 }
 

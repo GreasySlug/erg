@@ -455,7 +455,12 @@ fn collect_def_types(expr: &hir::Expr, out: &mut Vec<(Str, Type, AbsLocation)>) 
                 collect_def_types(chunk, out);
             }
         }
-        hir::Expr::Literal(_) | hir::Expr::Accessor(_) | hir::Expr::Import(_) => {}
+        // The object of an attribute access is an arbitrary expression, so a
+        // definition can hide there: `(x -> x)(1).attr`.
+        hir::Expr::Accessor(hir::Accessor::Attr(attr)) => collect_def_types(&attr.obj, out),
+        hir::Expr::Literal(_)
+        | hir::Expr::Accessor(hir::Accessor::Ident(_))
+        | hir::Expr::Import(_) => {}
     }
 }
 

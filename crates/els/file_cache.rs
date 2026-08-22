@@ -39,14 +39,62 @@ pub struct FileCacheEntry {
     pub code: String,
     pub ver: i32,
     pub token_stream: Option<TokenStream>,
+    /// Regions covered by comments, memoized by [`FileCache::cursor_in_comment`].
+    /// `None` means "not computed for this `code` yet" -- every write to `code`
+    /// must clear it. Deciding this needs the lexer's view of what is a comment
+    /// and what is a `#` inside a string, so it cannot be answered per-line.
+    comment_spans: Option<Vec<Range>>,
 }
 
 impl FileCacheEntry {
+    fn new(code: String, ver: i32, token_stream: Option<TokenStream>) -> Self {
+        Self {
+            code,
+            ver,
+            token_stream,
+            comment_spans: None,
+        }
+    }
+
     /// line: 0-based
     pub fn get_line(&self, line0: u32) -> Option<String> {
         let mut lines = self.code.lines();
         lines.nth(line0 as usize).map(|s| s.to_string())
     }
+}
+
+/// Half-open at both ends, so code before `#[` or after `]#` is not "in" the
+/// comment. Matches how a single-line `#` comment's `col_begin..col_end` reads.
+fn span_contains(span: Range, pos: Position) -> bool {
+    let key = |p: Position| (p.line, p.character);
+    key(span.start) <= key(pos) && key(pos) < key(span.end)
+}
+
+/// The regions `#` comments, `#[ ... ]#` blocks and `'''` doc comments occupy.
+fn comment_spans_of(code: &str) -> Vec<Range> {
+    let tokens = match Lexer::from_str(code.to_string()).keep_comments().lex() {
+        Ok(ts) => ts,
+        Err((ts, _)) => ts,
+    };
+    tokens
+        .iter()
+        .filter(|tk| matches!(tk.kind, TokenKind::Comment | TokenKind::DocComment))
+        .map(|tk| {
+            // `Token` only stores the starting line, so the end of a block or
+            // doc comment has to come from its content.
+            let start = Position::new(tk.lineno.saturating_sub(1), tk.col_begin);
+            let extra = tk.content.matches('\n').count() as u32;
+            let end = if extra == 0 {
+                Position::new(start.line, tk.col_end)
+            } else {
+                // `chars`, not `encode_utf16`: the same unit the lexer counts
+                // `col_begin`/`col_end` in, which this range is compared against.
+                let last = tk.content.split('\n').next_back().unwrap_or("");
+                Position::new(start.line + extra, last.chars().count() as u32)
+            };
+            Range::new(start, end)
+        })
+        .collect()
 }
 
 /// Stores the contents of the file on-memory.
@@ -179,44 +227,42 @@ impl FileCache {
     }
 
     /// True when `pos` sits in a `#` comment, `#[ ... ]#` block, or `'''` doc comment.
+    ///
+    /// Only the interior of a block or doc comment is whole-line: code before
+    /// `#[` or after `]#` / `'''` on the same line must still complete, so the
+    /// span is half-open at both ends.
+    ///
+    /// Completion asks this on every keystroke, so the spans are memoized per
+    /// revision instead of re-lexing the buffer each time, and a file with no
+    /// comment opener at all never lexes. The lexing itself happens with the
+    /// cache unlocked -- the other workers share this cache, and none of them
+    /// should wait behind a lex.
     pub fn cursor_in_comment(&self, uri: &NormalizedUrl, pos: Position) -> bool {
-        let Ok(code) = self.get_entire_code(uri) else {
-            return false;
+        let _ = self.load_once(uri);
+        let code = {
+            let lock = self.files.borrow();
+            let Some(entry) = lock.get(uri) else {
+                return false;
+            };
+            if let Some(spans) = entry.comment_spans.as_deref() {
+                return spans.iter().any(|span| span_contains(*span, pos));
+            }
+            entry.code.clone()
         };
-        let tokens = match Lexer::from_str(code).keep_comments().lex() {
-            Ok(ts) => ts,
-            Err((ts, _)) => ts,
+        let spans = if code.contains('#') || code.contains("'''") {
+            comment_spans_of(&code)
+        } else {
+            vec![]
         };
-        tokens.iter().any(|tk| {
-            if !matches!(tk.kind, TokenKind::Comment | TokenKind::DocComment) {
-                return false;
+        let found = spans.iter().any(|span| span_contains(*span, pos));
+        if let Some(entry) = self.files.borrow_mut().get_mut(uri) {
+            // The buffer may have been edited while this ran; a memo for text
+            // that is no longer there would answer later queries wrongly.
+            if entry.code == code {
+                entry.comment_spans = Some(spans);
             }
-            if util::pos_in_loc(tk, pos) {
-                return true;
-            }
-            // Token only stores the starting line; block/doc comments span further.
-            let extra = tk.content.matches('\n').count() as u32;
-            if extra == 0 {
-                return false;
-            }
-            let start = tk.lineno.saturating_sub(1);
-            let end = start + extra;
-            if !(start..=end).contains(&pos.line) {
-                return false;
-            }
-            // Only the interior lines are whole-line comments. Code before `#[`
-            // or after `]#` / `'''` on the same line must still complete.
-            if pos.line == start && pos.character < tk.col_begin {
-                return false;
-            }
-            if pos.line == end {
-                let last = tk.content.split('\n').next_back().unwrap_or("");
-                if pos.character >= last.chars().count() as u32 {
-                    return false;
-                }
-            }
-            true
-        })
+        }
+        found
     }
 
     pub fn get_token(&self, uri: &NormalizedUrl, pos: Position) -> Option<Token> {
@@ -357,14 +403,9 @@ impl FileCache {
         });
         drop(lock);
         VFS.update(uri.to_file_path().unwrap(), code.clone());
-        self.files.borrow_mut().insert(
-            uri.clone(),
-            FileCacheEntry {
-                code,
-                ver,
-                token_stream,
-            },
-        );
+        self.files
+            .borrow_mut()
+            .insert(uri.clone(), FileCacheEntry::new(code, ver, token_stream));
     }
 
     pub(crate) fn _ranged_update(&self, uri: &NormalizedUrl, old: Range, new_code: &str) {
@@ -387,6 +428,7 @@ impl FileCache {
         entry.code = code;
         // entry.ver += 1;
         entry.token_stream = token_stream;
+        entry.comment_spans = None;
     }
 
     pub(crate) fn incremental_update(&self, params: DidChangeTextDocumentParams) {
@@ -425,6 +467,7 @@ impl FileCache {
         entry.code = code;
         entry.ver = params.text_document.version;
         entry.token_stream = token_stream;
+        entry.comment_spans = None;
     }
 
     pub fn remove(&mut self, uri: &NormalizedUrl) {

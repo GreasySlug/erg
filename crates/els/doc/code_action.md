@@ -5,6 +5,10 @@
 This code action will eliminate unused variables in code.
 The same rewrite is available as the `erg.eliminate_unused_vars` command
 (`workspace/executeCommand`), which applies the edit via `workspace/applyEdit`.
+The command needs a target in `arguments[0]`: a document URI (a string, or an
+object with a `uri` field) for one file, or `"workspace"` (or
+`{"scope": "workspace"}`) for every open buffer. Without one it does nothing,
+so that rewriting the whole workspace is always something you asked for.
 
 ```erg
 foo = 1

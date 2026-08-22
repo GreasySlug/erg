@@ -47,8 +47,15 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         &self,
         params: &ExecuteCommandParams,
     ) -> ELSResult<Option<Value>> {
+        let Some(targets) = self.command_target_uris(&params.arguments) else {
+            self.send_error_info(
+                "eliminate_unused_vars: pass the document URI to rewrite, \
+                 or \"workspace\" to rewrite every open buffer",
+            )?;
+            return Ok(None);
+        };
         let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        for uri in self.command_target_uris(&params.arguments) {
+        for uri in targets {
             let Some(map) = self.unused_var_edits(&uri)? else {
                 continue;
             };
@@ -62,25 +69,36 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             _log!(self, "eliminate_unused_vars: no edits");
             return Ok(None);
         }
+        let label = match changes.len() {
+            1 => "Eliminate unused variables".to_string(),
+            n => format!("Eliminate unused variables ({n} files)"),
+        };
         self.send_client_request(
             ApplyWorkspaceEdit::METHOD,
             ApplyWorkspaceEditParams {
-                label: Some("Eliminate unused variables".to_string()),
+                label: Some(label),
                 edit: WorkspaceEdit::new(changes),
             },
         )?;
         Ok(None)
     }
 
-    /// `arguments[0]` may be a document URI (string or `{uri}`) from the current
-    /// editor; otherwise every open buffer is rewritten.
-    fn command_target_uris(&self, args: &[Value]) -> Vec<NormalizedUrl> {
-        if let Some(arg) = args.first() {
-            if let Some(uri) = uri_from_command_arg(arg) {
-                return vec![uri];
-            }
+    /// Which documents the command rewrites. `arguments[0]` is either a document
+    /// URI (string or `{uri}`) from the current editor, or `"workspace"` /
+    /// `{"scope": "workspace"}` for every open buffer.
+    ///
+    /// `None` means "no target": rewriting every open buffer is too large a
+    /// blast radius to infer from a bare, argument-less invocation, so that has
+    /// to be asked for.
+    fn command_target_uris(&self, args: &[Value]) -> Option<Vec<NormalizedUrl>> {
+        let arg = args.first()?;
+        if let Some(uri) = uri_from_command_arg(arg) {
+            return Some(vec![uri]);
         }
-        self.file_cache.entries()
+        let scope = arg
+            .as_str()
+            .or_else(|| arg.get("scope").and_then(|v| v.as_str()))?;
+        (scope == "workspace").then(|| self.file_cache.entries())
     }
 
     pub(crate) fn gen_show_trait_impls_command(

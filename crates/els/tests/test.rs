@@ -934,6 +934,29 @@ fn test_eliminate_unused_vars() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Rewriting every open buffer is too much to infer from a bare invocation:
+/// without a target the command must do nothing.
+#[test]
+fn test_eliminate_unused_vars_needs_a_target() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    client.notify_open(FILE_UNUSED_VARS)?;
+    client.request::<ExecuteCommand>(ExecuteCommandParams {
+        command: "erg.eliminate_unused_vars".to_string(),
+        arguments: vec![],
+        work_done_progress_params: Default::default(),
+    })?;
+    assert!(
+        !client
+            .responses
+            .iter()
+            .any(|msg| msg.get("method").and_then(|m| m.as_str()) == Some("workspace/applyEdit")),
+        "an argument-less invocation must not rewrite anything"
+    );
+    Ok(())
+}
+
 /// Completion is suppressed inside `#[ ]#` block comments and `'''` doc comments.
 #[test]
 fn test_completion_in_multiline_comment() -> Result<(), Box<dyn std::error::Error>> {

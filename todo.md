@@ -34,8 +34,10 @@
     ロケーションを `from_ranges` に格納。test_call_hierarchy_outgoing。
 - [x] **`executeCommand: eliminate_unused_vars` 未処理** — `command.rs` に arm が無く `Ok(None)`。
   → **完了**: コードアクションと同じ `unused_var_edits` で編集を組み立て、
-    `workspace/applyEdit` でクライアントに適用。引数に URI があればそのファイル、
-    無ければ開いているバッファ全部。未使用パラメータは warn 位置で `_` に置換
+    `workspace/applyEdit` でクライアントに適用。対象は `arguments[0]` 必須で、
+    URI ならそのファイル、`"workspace"` なら開いているバッファ全部
+    (引数無しで全バッファを書き換えるのは影響範囲が大きすぎるので何もしない)。
+    未使用パラメータは warn 位置で `_` に置換
     (従来は先頭 diagnostic の range を誤用していた)。test_eliminate_unused_vars。
 - [x] **Code Lens 継承数 `send_class_inherits_lens` 空実装** — `code_lens.rs`。
   → **完了**: `gen_show_class_refs_command(loc, noun, hide_when_empty)` に共通化し、各 `ClassDef`

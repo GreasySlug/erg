@@ -16,16 +16,21 @@ impl Linter {
     /// (e.g. `3.14`) are better written as named constants like `math.pi`.
     pub(crate) fn lint_magic_number(&mut self, expr: &Expr) {
         if let Expr::Literal(lit) = expr {
-            if let ValueObj::Float(fl) = &lit.value {
-                if let Some(name) = well_known_constant(**fl) {
-                    self.warns.push(magic_number(
-                        self.input(),
-                        line!() as usize,
-                        self.caused_by(),
-                        lit.loc(),
-                        name,
-                    ));
-                }
+            // A decimal literal folds to an exact `Ratio` (`3.14` is 157/50);
+            // only an inexact one stays a `Float`.
+            let value = match &lit.value {
+                ValueObj::Float(fl) => Some(**fl),
+                ValueObj::Ratio(num, den) => Some(*num as f64 / *den as f64),
+                _ => None,
+            };
+            if let Some(name) = value.and_then(well_known_constant) {
+                self.warns.push(magic_number(
+                    self.input(),
+                    line!() as usize,
+                    self.caused_by(),
+                    lit.loc(),
+                    name,
+                ));
             }
         }
         self.check_recursively(&Self::lint_magic_number, expr);

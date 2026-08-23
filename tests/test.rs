@@ -250,6 +250,11 @@ fn exec_inherit() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_pow() -> Result<(), ()> {
+    expect_success("tests/should_ok/pow.er", 0)
+}
+
+#[test]
 fn exec_ratio_literal() -> Result<(), ()> {
     // not executed: `Fraction("0e+2000000000")` would allocate a
     // two-billion-digit integer at run time

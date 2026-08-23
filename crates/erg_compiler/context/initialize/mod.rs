@@ -530,6 +530,8 @@ const FUNC_NOT: &str = "not";
 const FUNC_OCT: &str = "oct";
 const FUNC_ORD: &str = "ord";
 const FUNC_POW: &str = "pow";
+/// `pow` that keeps a negative exponent exact, in `_erg_std_prelude`
+const FUNC_POW_PY: &str = "pow__";
 const FUNC_QUIT: &str = "quit";
 const FUNC_REPR: &str = "repr";
 const FUNC_ROUND: &str = "round";

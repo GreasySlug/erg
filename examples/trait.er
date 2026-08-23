@@ -3,7 +3,9 @@ assert fst([1, 2, 3]) + 1 == 2
 assert fst(["a", "b", "c"]) + "b" == "ab"
 assert fst((1, 2, 3)) + 1 == 2
 
-Norm = Trait {.norm = (self: Self) -> Nat}
+# `Ratio`, not `Nat`: `Int ** Int` is negative for an odd power of a negative
+# number, and not even an integer for a negative exponent.
+Norm = Trait {.norm = (self: Self) -> Ratio}
 
 Point2D = Class {x = Int; y = Int}
 Point2D|<: Norm|.

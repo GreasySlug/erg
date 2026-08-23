@@ -2348,8 +2348,12 @@ impl PyCodeGenerator {
         // idempotent. `Fraction(a) / b` propagates exactness whatever `b` is.
         // `derefine()` so a refined result (e.g. `{R: Ratio | R >= 0}` from interval
         // arithmetic) is still recognized as `Ratio` and emitted exactly via `Fraction`.
+        // `**` needs the same treatment: `2 ** -1` is 1/2, and a plain
+        // `2 ** -1` would be the float 0.5. `Fraction(a) ** b` is exact for any
+        // integer `b`, and for a fractional one it falls back to a float, which
+        // is what the `(Ratio, Ratio) -> Float` branch of `**` declares.
         let ratio_div = !self.cfg.no_std
-            && bin.op.is(TokenKind::Slash)
+            && (bin.op.is(TokenKind::Slash) || bin.op.is(TokenKind::Pow))
             && bin.ref_t().derefine() == Type::Ratio;
         if ratio_div {
             if !self.fraction_loaded {

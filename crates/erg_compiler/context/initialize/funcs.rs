@@ -359,10 +359,12 @@ impl Context {
         let M = mono_q(TY_M, Constraint::Uninited);
         let M = mono_q(TY_M, subtypeof(poly(MUL, vec![ty_tp(M)])));
         // TODO: mod
+        // `PowOutput`, not `Output`: `Int ** Int` is not an `Int` (`2 ** -1` is
+        // 1/2), and the operator form already projects through `PowOutput`.
         let t_pow = nd_func(
             vec![kw(KW_BASE, M.clone()), kw(KW_EXP, M.clone())],
             None,
-            proj(M, OUTPUT),
+            proj(M, POW_OUTPUT),
         )
         .quantify();
         let t_pyimport = func(
@@ -767,7 +769,7 @@ impl Context {
             vis.clone(),
             Some(t_pow),
             pow_,
-            Some(FUNC_POW),
+            Some(FUNC_POW_PY),
             None,
         );
         self.register_builtin_py_impl(

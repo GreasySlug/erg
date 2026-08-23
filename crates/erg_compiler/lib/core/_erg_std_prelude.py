@@ -103,6 +103,15 @@ class Dimension(Generic[Ty, M, L, T, I, Θ, N, J]):
 from fractions import Fraction as _Fraction
 
 
+def pow__(base, exp):
+    # `base ** exp` for Erg's `Ratio`. A negative exponent is exact -- `2 ** -1`
+    # is 1/2, not the float 0.5 -- which is what the `**` operator emits too, so
+    # `pow(2, -1)` and `2 ** -1` agree. Everything else keeps Python's `**`.
+    if isinstance(exp, int) and exp < 0 and not isinstance(base, (float, complex)):
+        return _Fraction(base) ** exp
+    return base**exp
+
+
 def true_div(a, b):
     # Exact division for Erg's `Ratio`. Used when the operand types are not known
     # at compile time (e.g. a generic `f x = x / 2`): integers divide to an exact

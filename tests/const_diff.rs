@@ -33,6 +33,13 @@ const CASES: &[&str] = &[
     "-7 % 2",
     "7 % -2",
     "2 ** 10",
+    // a negative exponent is an exact rational, not a float: `Int.PowOutput`
+    // used to be `Nat`, so this folded to 0 (and `(-2) ** 3` raised at run time)
+    "2 ** -1",
+    "2 ** -2",
+    "(-2) ** 3",
+    "(-2) ** 2",
+    "pow(2, -1)",
     // beyond `Int` (an i32), but within `Nat`
     "10000000000 - 1",
     "5000000000 + 5000000000",

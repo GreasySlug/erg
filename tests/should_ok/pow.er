@@ -1,0 +1,43 @@
+# `**` typing. The operator is declared `|P <: Mul(P)| (P, P) -> P.PowOutput`,
+# so the base and the exponent share one type variable, and `Int.PowOutput` used
+# to be `Nat` -- which is false for a negative base or a negative exponent.
+# Codegen wraps a call in its static type, so each wrong return type became a
+# wrong value (or a ValueError, since `Nat` rejects negatives).
+
+# a negative exponent is exact, like `/` is
+assert 2 ** -1 == 0.5
+assert 2 ** -2 == 0.25
+half = 2 ** -1
+assert half * 2 == 1
+
+# a negative base with an odd exponent is negative
+neg = -2
+assert neg ** 3 == -8
+assert neg ** 2 == 4
+
+# through a function, where the base's class is not known when `**` is resolved
+sq x = x ** 2
+assert sq(0.5) == 0.25
+assert sq(3) == 9
+inv x = x ** -1
+assert inv(2) == 0.5
+assert inv(0.5) == 2
+
+# `Nat ** Nat` is a `Nat` mathematically, but `**` shares one type variable
+# between the base and the exponent, so an unconstrained base takes its type
+# from the exponent alone. Giving `Nat` its own `PowOutput` would therefore make
+# `sq x = x ** 2` resolve to `Nat -> Nat` and truncate `sq(0.5)` back to 0, so
+# an integer power is a `Ratio` outside constant folding.
+nat_sq(x: Nat): Ratio = x ** 2
+assert nat_sq(4) == 16
+
+# unchanged: a non-negative integer power stays exact
+assert 2 ** 3 == 8
+assert 2 ** 0 == 1
+assert 0 ** 0 == 1
+assert 1.5 ** 2 == 2.25
+assert 1.5 ** -1 == 2 / 3
+fpow = float(2.0) ** float(3.0)
+assert fpow.nearly_eq float(8.0)
+
+print! "OK"

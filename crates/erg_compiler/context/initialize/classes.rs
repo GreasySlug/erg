@@ -717,11 +717,16 @@ impl Context {
             None,
             ValueObj::builtin_class(Int),
         );
+        // `Nat`, which `Nat.PowOutput` is, would be false twice over: `(-2) ** 3`
+        // is -8, and `2 ** -1` is not an integer at all. Codegen wraps a call in
+        // its static type, so the first raised `ValueError: Nat can't be
+        // negative` and the second truncated 0.5 to 0. Both are exact rationals,
+        // and codegen builds them as `Fraction`s (as it already does for `/`).
         int_mul.register_builtin_const(
             POW_OUTPUT,
             Visibility::BUILTIN_PUBLIC,
             None,
-            ValueObj::builtin_class(Nat),
+            ValueObj::builtin_class(Ratio),
         );
         int.register_trait_methods(Int, int_mul);
         let mut int_floordiv = Self::builtin_methods(Some(poly(FLOOR_DIV, vec![ty_tp(Int)])), 2);
@@ -883,6 +888,12 @@ impl Context {
             None,
             ValueObj::builtin_class(Nat),
         );
+        // NOTE: no `PowOutput` of its own, deliberately. `Nat ** Nat` really is a
+        // `Nat`, but `**` shares one type variable between the base and the
+        // exponent, so an unconstrained base takes its type from the exponent
+        // alone: `f x = x ** 2` would resolve to `Nat -> Nat` and then truncate
+        // `f(0.5)` to 0, because codegen wraps a call in its static type.
+        // Inheriting `Int`'s `Ratio` keeps that case honest.
         nat.register_trait_methods(Nat, nat_mul);
         let mut nat_floordiv = Self::builtin_methods(Some(poly(FLOOR_DIV, vec![ty_tp(Nat)])), 2);
         nat_floordiv.register_builtin_erg_impl(

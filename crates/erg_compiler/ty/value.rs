@@ -2203,7 +2203,9 @@ impl ValueObj {
 
     pub fn try_pow(self, other: Self) -> Option<Self> {
         if let (Some((a, b)), Some(exp)) = (self.as_ratio(), other.as_int()) {
-            if matches!(self, Self::Ratio(..)) {
+            // A negative exponent is exact for an integer base too (`2 ** -1` is
+            // 1/2), and `int_pow` below cannot represent it.
+            if matches!(self, Self::Ratio(..)) || exp < 0 {
                 let e = exp.unsigned_abs();
                 let (n, d) = (a.checked_pow(e)?, b.checked_pow(e)?);
                 return if exp < 0 {

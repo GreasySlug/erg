@@ -783,7 +783,20 @@ impl Context {
             );
         }
         if ERG_MODE {
-            self.register_builtin_py_impl(FUNC_IF, t_if, Immutable, vis.clone(), Some(FUNC_IF__));
+            let if_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+                FUNC_IF,
+                if_func,
+                t_if.clone(),
+                None,
+            )));
+            self.register_py_builtin_const(
+                FUNC_IF,
+                vis.clone(),
+                Some(t_if),
+                if_,
+                Some(FUNC_IF__),
+                None,
+            );
             self.register_builtin_py_impl(
                 FUNC_DISCARD,
                 t_discard,

@@ -685,6 +685,11 @@ impl Context {
     fn eval_const_bin(&self, bin: &BinOp) -> Failable<ValueObj> {
         let lhs = self.eval_const_expr(&bin.args[0])?;
         let rhs = self.eval_const_expr(&bin.args[1])?;
+        if bin.op.is(TokenKind::ContainsOp) {
+            return self
+                .eval_contains(lhs, rhs, bin.op.loc())
+                .map_err(|e| (ValueObj::Failure, e));
+        }
         let op = self
             .try_get_op_kind_from_token(&bin.op)
             .map_err(|e| (ValueObj::Failure, e))?;
@@ -913,13 +918,11 @@ impl Context {
                     self.shared.clone(),
                     self.clone(),
                 );
-                // TODO: var_args
-                for (arg, sig) in args
-                    .pos_args
-                    .into_iter()
-                    .zip(user.params.non_defaults.iter())
-                {
+                let mut pos_args = args.pos_args.into_iter();
+                let mut kw_args = args.kw_args;
+                for sig in user.params.non_defaults.iter() {
                     let Some(symbol) = sig.inspect() else {
+                        let _ = pos_args.next();
                         errs.push(EvalError::feature_error(
                             self.cfg.input.clone(),
                             line!() as usize,
@@ -929,10 +932,47 @@ impl Context {
                         ));
                         continue;
                     };
-                    let name = VarName::from_str(symbol.clone());
-                    subr_ctx.consts.insert(name, arg);
+                    let val = pos_args.next().or_else(|| kw_args.remove(symbol));
+                    if let Some(arg) = val {
+                        subr_ctx
+                            .consts
+                            .insert(VarName::from_str(symbol.clone()), arg);
+                    }
                 }
-                for (name, arg) in args.kw_args.into_iter() {
+                let var_params = user.params.var_params.as_ref();
+                if let Some(var) = var_params {
+                    let rest: Vec<_> = pos_args.by_ref().collect();
+                    if let Some(symbol) = var.inspect() {
+                        subr_ctx
+                            .consts
+                            .insert(VarName::from_str(symbol.clone()), ValueObj::from(rest));
+                    }
+                }
+                for default in user.params.defaults.iter() {
+                    let Some(symbol) = default.inspect() else {
+                        continue;
+                    };
+                    let val = if var_params.is_none() {
+                        pos_args.next()
+                    } else {
+                        None
+                    }
+                    .or_else(|| kw_args.remove(symbol));
+                    let val = match val {
+                        Some(v) => v,
+                        None => match subr_ctx.eval_const_expr(&default.default_val) {
+                            Ok(v) => v,
+                            Err((v, es)) => {
+                                errs.extend(es);
+                                v
+                            }
+                        },
+                    };
+                    subr_ctx
+                        .consts
+                        .insert(VarName::from_str(symbol.clone()), val);
+                }
+                for (name, arg) in kw_args {
                     subr_ctx.consts.insert(VarName::from_str(name), arg);
                 }
                 let tp = match subr_ctx.eval_const_block(&user.block()) {
@@ -1588,91 +1628,140 @@ impl Context {
         }))
     }
 
+    /// `container contains elem` (`elem in container` after desugaring).
+    fn eval_contains(
+        &self,
+        container: ValueObj,
+        elem: ValueObj,
+        loc: Location,
+    ) -> EvalResult<ValueObj> {
+        match &container {
+            ValueObj::List(xs) | ValueObj::Tuple(xs) => {
+                return Ok(ValueObj::Bool(xs.iter().any(|v| v == &elem)));
+            }
+            ValueObj::Set(s) => {
+                return Ok(ValueObj::Bool(s.iter().any(|v| v == &elem)));
+            }
+            ValueObj::Dict(d) => {
+                return Ok(ValueObj::Bool(d.linear_get(&elem).is_some()));
+            }
+            ValueObj::Str(s) => {
+                if let Some(sub) = elem.as_str() {
+                    return Ok(ValueObj::Bool(s.contains(&sub[..])));
+                }
+            }
+            _ => {}
+        }
+        match self.convert_value_into_type(container) {
+            Ok(ty) => Ok(ValueObj::Bool(self.subtype_of(&elem.t(), &ty))),
+            Err(_) => Err(EvalErrors::from(EvalError::not_const_expr(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                self.caused_by(),
+            ))),
+        }
+    }
+
+    fn get_const_op_subr(&self, ty: &Type, name: &str) -> Option<ConstSubr> {
+        for ctx in self.get_nominal_super_type_ctxs(ty)? {
+            if let Some(ValueObj::Subr(subr)) = ctx.consts.get(name) {
+                return Some(subr.clone());
+            }
+            for methods in ctx.methods_list.iter() {
+                if let Some(ValueObj::Subr(subr)) = methods.consts.get(name) {
+                    return Some(subr.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn eval_user_binop(&self, op: OpKind, lhs: ValueObj, rhs: ValueObj) -> Option<ValueObj> {
+        let name = op_to_name(op);
+        let subr = self.get_const_op_subr(&lhs.class(), name)?;
+        let args = ValueArgs::pos_only(vec![lhs, rhs]);
+        match self.call(subr, args, Location::Unknown) {
+            Ok(tp) => self
+                .convert_tp_into_value(tp)
+                .ok()
+                .filter(|v| !matches!(v, ValueObj::Failure)),
+            Err(_) => None,
+        }
+    }
+
+    fn eval_prim_or_user(
+        &self,
+        op: OpKind,
+        lhs: ValueObj,
+        rhs: ValueObj,
+        prim: Option<ValueObj>,
+    ) -> EvalResult<ValueObj> {
+        if let Some(v) = prim {
+            Ok(v)
+        } else if let Some(v) = self.eval_user_binop(op, lhs, rhs) {
+            Ok(v)
+        } else {
+            Err(EvalErrors::from(EvalError::unreachable(
+                self.cfg.input.clone(),
+                fn_name!(),
+                line!(),
+            )))
+        }
+    }
+
     fn eval_bin(&self, op: OpKind, lhs: ValueObj, rhs: ValueObj) -> EvalResult<ValueObj> {
         match op {
-            Add => lhs.try_add(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Sub => lhs.try_sub(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Mul => lhs.try_mul(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Div => lhs.try_div(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            FloorDiv => lhs.try_floordiv(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Pow => lhs.try_pow(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Mod => lhs.try_mod(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
+            Add => {
+                let prim = lhs.clone().try_add(rhs.clone());
+                self.eval_prim_or_user(Add, lhs, rhs, prim)
+            }
+            Sub => {
+                let prim = lhs.clone().try_sub(rhs.clone());
+                self.eval_prim_or_user(Sub, lhs, rhs, prim)
+            }
+            Mul => {
+                let prim = lhs.clone().try_mul(rhs.clone());
+                self.eval_prim_or_user(Mul, lhs, rhs, prim)
+            }
+            Div => {
+                let prim = lhs.clone().try_div(rhs.clone());
+                self.eval_prim_or_user(Div, lhs, rhs, prim)
+            }
+            FloorDiv => {
+                let prim = lhs.clone().try_floordiv(rhs.clone());
+                self.eval_prim_or_user(FloorDiv, lhs, rhs, prim)
+            }
+            Pow => {
+                let prim = lhs.clone().try_pow(rhs.clone());
+                self.eval_prim_or_user(Pow, lhs, rhs, prim)
+            }
+            Mod => {
+                let prim = lhs.clone().try_mod(rhs.clone());
+                self.eval_prim_or_user(Mod, lhs, rhs, prim)
+            }
             Lt | Le | Gt | Ge => {
                 if let Some(v) = self.eval_type_cmp(op, &lhs, &rhs) {
                     Ok(v)
                 } else {
-                    let res = match op {
-                        Gt => lhs.try_gt(rhs),
-                        Ge => lhs.try_ge(rhs),
-                        Lt => lhs.try_lt(rhs),
-                        Le => lhs.try_le(rhs),
+                    let prim = match op {
+                        Gt => lhs.clone().try_gt(rhs.clone()),
+                        Ge => lhs.clone().try_ge(rhs.clone()),
+                        Lt => lhs.clone().try_lt(rhs.clone()),
+                        Le => lhs.clone().try_le(rhs.clone()),
                         _ => None,
                     };
-                    res.ok_or_else(|| {
-                        EvalErrors::from(EvalError::unreachable(
-                            self.cfg.input.clone(),
-                            fn_name!(),
-                            line!(),
-                        ))
-                    })
+                    self.eval_prim_or_user(op, lhs, rhs, prim)
                 }
             }
-            Eq => lhs.try_eq(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Ne => lhs.try_ne(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
+            Eq => {
+                let prim = lhs.clone().try_eq(rhs.clone());
+                self.eval_prim_or_user(Eq, lhs, rhs, prim)
+            }
+            Ne => {
+                let prim = lhs.clone().try_ne(rhs.clone());
+                self.eval_prim_or_user(Ne, lhs, rhs, prim)
+            }
             Or | BitOr => self.eval_or(lhs, rhs),
             And | BitAnd => self.eval_and(lhs, rhs),
             BitXor => match (lhs, rhs) {

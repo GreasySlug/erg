@@ -1319,6 +1319,32 @@ pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     }
 }
 
+pub(crate) fn if_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let cond = args
+        .remove_left_or_key("cond")
+        .ok_or_else(|| not_passed("cond"))?;
+    let then = args
+        .remove_left_or_key("then")
+        .ok_or_else(|| not_passed("then"))?;
+    let else_ = args.remove_left_or_key("else");
+    let take_then = match cond {
+        ValueObj::Bool(b) => b,
+        other => return Err(type_mismatch("Bool", other, "cond")),
+    };
+    let branch = if take_then {
+        then
+    } else {
+        else_.unwrap_or(ValueObj::None)
+    };
+    match branch {
+        ValueObj::Subr(subr) => match ctx.call(subr, ValueArgs::empty(), Location::Unknown) {
+            Ok(tp) => Ok(tp),
+            Err((_tp, mut err)) => Err(EvalValueError::from(*err.remove(0).core)),
+        },
+        other => Ok(other.into()),
+    }
+}
+
 pub(crate) fn all_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let iterable = args
         .remove_left_or_key("iterable")

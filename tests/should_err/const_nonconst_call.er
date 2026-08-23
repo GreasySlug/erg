@@ -1,0 +1,6 @@
+# A compile-time function cannot call a runtime-only function.
+# ConstantError: not a constant expression
+
+f x = x + 1
+G(X: Int): Int = f X
+Y = G 1 # ERR

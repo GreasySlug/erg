@@ -18,3 +18,39 @@ assert MySub(10, 3) == 7
 MySquare(X: Nat): Nat = X * X
 assert MySquare(4) == 16
 assert MySquare(3) == 9
+
+# `if` is a compile-time function (both branches must themselves be const)
+Then = if True, do 1, do 0
+assert Then == 1
+Else = if False, do 1, do 0
+assert Else == 0
+NoElse = if False, do 1
+assert NoElse == None
+
+Choose(C, A, B: Int): Int = if C, do A, do B
+assert Choose(True, 10, 20) == 10
+assert Choose(False, 10, 20) == 20
+
+# Default parameters
+Inc(X: Int, D := 1): Int = X + D
+assert Inc(5) == 6
+assert Inc(5, 3) == 8
+assert Inc(X:=5, D:=4) == 9
+
+# `in` / `notin` at compile time (uppercase binding forces const-eval)
+InInt = 1 in Int
+assert InInt
+InList = 1 in [1, 2]
+assert InList
+InTuple = 1 in (1, 2)
+assert InTuple
+InSet = 1 in {1, 2}
+assert InSet
+InDict = 1 in {1: 2}
+assert InDict
+InRange = 1 in 1..2
+assert InRange
+NotInNat = -1 in Nat
+assert not NotInNat
+NotInList = -1 notin [1, 2]
+assert NotInList

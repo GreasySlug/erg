@@ -425,6 +425,11 @@ fn exec_comptime_type_func() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_func() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_func.er", 0)
+}
+
+#[test]
 fn exec_recursive_multi_arm() -> Result<(), ()> {
     expect_success("tests/should_ok/recursive_multi_arm.er", 0)
 }
@@ -886,6 +891,11 @@ fn exec_pyimport_err() -> Result<(), ()> {
 #[test]
 fn exec_recursive_const_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
+}
+
+#[test]
+fn exec_const_nonconst_call_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/const_nonconst_call.er", 0, 1)
 }
 
 #[test]

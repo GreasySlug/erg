@@ -8,6 +8,7 @@ from _erg_float import Float, FloatMut
 from _erg_int import Int, IntMut
 from _erg_mutate_operator import mutate_operator
 from _erg_nat import Nat, NatMut
+from _erg_ratio import RatioMut
 from _erg_range import (ClosedRange, LeftOpenRange, OpenRange, Range,
                         RangeIterator, RightOpenRange)
 from _erg_result import (

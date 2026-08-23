@@ -3688,6 +3688,35 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
             Some(FUNC_UPDATE),
         );
+        // `inc!`/`dec!`, which `Int!` and `Float!` have but `Ratio!` did not
+        let t = pr_met(
+            ref_mut(mono(MUT_RATIO), None),
+            vec![kw(KW_VALUE, Ratio)],
+            None,
+            vec![],
+            NoneType,
+        );
+        ratio_mut_immutizable.register_builtin_py_impl(
+            PROC_INC,
+            t,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_INC),
+        );
+        let t = pr_met(
+            ref_mut(mono(MUT_RATIO), None),
+            vec![kw(KW_VALUE, Ratio)],
+            None,
+            vec![],
+            NoneType,
+        );
+        ratio_mut_immutizable.register_builtin_py_impl(
+            PROC_DEC,
+            t,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_DEC),
+        );
         ratio_mut.register_trait_methods(mono(MUT_RATIO), ratio_mut_immutizable);
         let mut ratio_mut_copy = Self::builtin_methods(Some(mono(COPY)), 1);
         ratio_mut_copy.register_builtin_erg_impl(

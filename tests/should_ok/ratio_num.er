@@ -74,4 +74,18 @@ planck = 6.62607015e-34
 typed: Ratio = planck
 assert typed * 2 == 1.32521403e-33
 
+# `Ratio!` had no run-time class at all: `!0.5` stayed an immutable `Fraction`,
+# so even the `update!` it did declare raised AttributeError.
+mut = !0.5
+mut.inc! 1.0
+assert mut == 1.5
+mut.dec! 0.5
+assert mut == 1.0
+mut.update! old -> old * 3
+assert mut == 3.0
+copied = mut.copy()
+copied.dec! 1.0
+assert copied == 2.0
+assert mut == 3.0
+
 print! "OK"

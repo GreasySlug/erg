@@ -116,6 +116,22 @@ const CASES: &[&str] = &[
     "all([True, True])",
     "any([False, True])",
     "sorted([3, 1, 2])",
+    // const methods called on a value (rather than on the type)
+    "\"abc\".replace(\"a\", \"z\")",
+    "\"abc\".startswith(\"a\")",
+    "\"abc\".endswith(\"c\")",
+    "\"abc\".isalpha()",
+    "\"abc\".isascii()",
+    "\"123\".isdecimal()",
+    "\"abc\".find(\"b\")",
+    "\", \".join([\"a\", \"b\"])",
+    "(-3).abs()",
+    // subscripts (the desugarer turns these into `__getitem__` calls)
+    "[1, 2, 3][0]",
+    "[[1, 2], [3, 4]][0][1]",
+    "{\"a\": 1}[\"a\"]",
+    "(1..5)[0]",
+    "[1, 2].reversed()",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.
@@ -142,6 +158,24 @@ const KNOWN_DIVERGENT: &[(&str, &str)] = &[
     (
         "filter(Odd, [1, 2])",
         "folds to a list, but returns `filter`",
+    ),
+    // `ValueObj::Dict` is a hash map, so it does not keep insertion order the way
+    // Python's dict does -- which also reorders the views below
+    (
+        "{\"a\": 1, \"b\": 2}",
+        "folds unordered, but Python keeps insertion order",
+    ),
+    (
+        "{\"a\": 1, \"b\": 2}.keys()",
+        "folds to a list, but returns `dict_keys`",
+    ),
+    (
+        "{\"a\": 1, \"b\": 2}.values()",
+        "folds to a list, but returns `dict_values`",
+    ),
+    (
+        "{\"a\": 1}.items()",
+        "folds to a list, but returns `dict_items`",
     ),
 ];
 

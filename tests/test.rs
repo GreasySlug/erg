@@ -440,6 +440,11 @@ fn exec_const_recursive() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_method() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_method.er", 0)
+}
+
+#[test]
 fn exec_const_kw_args() -> Result<(), ()> {
     // not executed: CPython's `abs`/`len`/... reject keyword arguments
     expect_compile_success("tests/should_ok/const_kw_args.er", 17)

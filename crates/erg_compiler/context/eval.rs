@@ -613,6 +613,69 @@ impl Context {
         }
     }
 
+    /// `obj[index]`, i.e. `obj.__getitem__(index)`.
+    ///
+    /// `Tuple` and `Str` are indexed here because they have no const
+    /// `__getitem__`; everything else goes through the one its class registers,
+    /// so the behaviour is shared with `obj.__getitem__(index)` written out.
+    fn eval_getitem(&self, obj: ValueObj, index: ValueObj, loc: Location) -> Failable<ValueObj> {
+        let out_of_range = |len: usize| {
+            (
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::index_out_of_range(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc,
+                    self.caused_by(),
+                    len,
+                    index.to_string(),
+                )),
+            )
+        };
+        match &obj {
+            ValueObj::Tuple(elems) => {
+                return usize::try_from(&index)
+                    .ok()
+                    .and_then(|i| elems.get(i).cloned())
+                    .ok_or_else(|| out_of_range(elems.len()));
+            }
+            ValueObj::Str(s) => {
+                return usize::try_from(&index)
+                    .ok()
+                    .and_then(|i| s.chars().nth(i))
+                    .map(|c| ValueObj::Str(c.to_string().into()))
+                    .ok_or_else(|| out_of_range(s.chars().count()));
+            }
+            _ => {}
+        }
+        let Some(subr) = self.get_const_op_subr(&obj.class(), "__getitem__") else {
+            return Err((
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::not_const_expr(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc,
+                    self.caused_by(),
+                )),
+            ));
+        };
+        let args = ValueArgs::pos_only(vec![obj, index]);
+        let tp = self
+            .call(subr, args, loc)
+            .map_err(|(_tp, errs)| (ValueObj::Failure, errs))?;
+        self.convert_tp_into_value(tp).map_err(|_| {
+            (
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::not_const_expr(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc,
+                    self.caused_by(),
+                )),
+            )
+        })
+    }
+
     fn get_value_from_tv_cache(&self, ident: &Identifier) -> Option<ValueObj> {
         if let Some(val) = self.tv_cache.as_ref().and_then(|tv| {
             tv.get_tyvar(ident.inspect())
@@ -680,6 +743,12 @@ impl Context {
                     }
                 }
             }
+        }
+        // A const method called on a value (`"abc".replace("a", "z")`) rather than
+        // on the type. This is the same lookup the binary operators do, so every
+        // const method registered on a builtin class is reachable both ways.
+        if let Some(subr) = self.get_const_op_subr(&obj.class(), ident.inspect()) {
+            return Ok(ValueObj::Subr(subr));
         }
         Err(EvalError::no_attr_error(
             self.cfg.input.clone(),
@@ -784,6 +853,28 @@ impl Context {
             let res_obj = self.eval_const_expr(&call.obj);
             let mut is_method = true;
             let callee = match res_obj.clone() {
+                // The desugarer rewrites `x[i]` into `x.__getitem__(i)` and `x.0`
+                // into `x.__Tuple_getitem__(0)`. `Tuple` and `Str` declare those as
+                // typed methods rather than const subroutines, so index them here.
+                Ok(obj @ (ValueObj::Tuple(_) | ValueObj::Str(_)))
+                    if matches!(&attr.inspect()[..], "__getitem__" | "__Tuple_getitem__") =>
+                {
+                    let (args, errs) = match self.eval_args(&call.args) {
+                        Ok(args) => (args, EvalErrors::empty()),
+                        Err((args, es)) => (args, es),
+                    };
+                    let Some(index) = args.pos_args.into_iter().next() else {
+                        return Err((TyParam::Failure, errs));
+                    };
+                    let val = self
+                        .eval_getitem(obj, index, call.loc())
+                        .map_err(|(val, es)| (TyParam::Value(val), es))?;
+                    return if errs.is_empty() {
+                        Ok(TyParam::Value(val))
+                    } else {
+                        Err((TyParam::Value(val), errs))
+                    };
+                }
                 Ok(obj) => self
                     .eval_attr(obj, attr)
                     .map_err(|err| (TyParam::Failure, err.into()))?,

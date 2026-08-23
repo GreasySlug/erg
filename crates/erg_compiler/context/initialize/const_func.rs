@@ -1255,16 +1255,17 @@ pub(crate) fn str_join(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
             return Err(type_mismatch("Iterable(Str)", iterable, "iterable"));
         }
     };
-    let mut joined = String::new();
+    // NOTE: the separator goes *between* the elements; appending it after each
+    // one and popping a single char left a trailing separator behind whenever it
+    // was longer than one character (`", ".join(["a", "b"]) == "a, b,"`).
+    let mut parts = Vec::with_capacity(arr.len());
     for v in arr.iter() {
         let Some(v) = v.as_str() else {
             return Err(type_mismatch("Str", v, "arr.next()"));
         };
-        joined.push_str(&v[..]);
-        joined.push_str(&slf[..]);
+        parts.push(&v[..]);
     }
-    joined.pop();
-    Ok(ValueObj::Str(joined.into()).into())
+    Ok(ValueObj::Str(parts.join(&slf[..]).into()).into())
 }
 
 pub(crate) fn str_replace(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {

@@ -119,6 +119,32 @@ impl EvalError {
         )
     }
 
+    pub fn index_out_of_range(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        len: usize,
+        index: String,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::only_loc(loc)],
+                switch_lang!(
+                    "japanese" => format!("要素数は{len}ですが、{index}番目の要素にアクセスしようとしています"),
+                    "simplified_chinese" => format!("有{len}个元素，但试图访问第{index}个元素"),
+                    "traditional_chinese" => format!("有{len}個元素，但試圖訪問第{index}個元素"),
+                    "english" => format!("has {len} elements, but tried to access the element at {index}"),
+                ),
+                errno,
+                IndexError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn invalid_literal(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
         Self::new(
             ErrorCore::new(

@@ -26,7 +26,7 @@ use crate::context::Context;
 use self::value_set::inner_class;
 
 use super::codeobj::{tuple_into_bytes, CodeObj};
-use super::constructors::{dict_t, list_t, refinement, set_t, tuple_t, unsized_list_t};
+use super::constructors::{dict_t, list_t, poly, refinement, set_t, tuple_t, unsized_list_t};
 use super::free::{Constraint, FreeTyVar, HasLevel};
 use super::typaram::{IntervalOp, OpKind, TyParam};
 use super::{ConstSubr, Field, HasType, Predicate, SharedFrees, Type};
@@ -1684,9 +1684,10 @@ impl ValueObj {
             Self::Record(rec) => {
                 Type::Record(rec.iter().map(|(k, v)| (k.clone(), v.class())).collect())
             }
-            // all four interval kinds share the single `Range` class
-            Self::DataClass { name, .. } if Self::as_interval_op(name).is_some() => {
-                Type::Mono("Range".into())
+            // all four interval kinds share the single (polymorphic) `Range` class
+            Self::DataClass { name, fields } if Self::as_interval_op(name).is_some() => {
+                let elem = fields.get("start").map_or(Type::Never, |v| v.class());
+                poly("Range", vec![TyParam::t(elem)])
             }
             Self::DataClass { name, .. } => Type::Mono(name.clone()),
             Self::Subr(subr) => subr.sig_t().clone(),

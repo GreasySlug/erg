@@ -1,0 +1,40 @@
+# Const methods called on a *value* (not on the type).
+#
+# `eval_attr` only searched a class's const table when the receiver was a type,
+# so every const method registered on a builtin class was unreachable as
+# `value.method(...)` -- including the `__getitem__`s that subscripts desugar to.
+
+# Str
+assert "abc".replace("a", "z") == "zbc"
+assert "abc".startswith("a")
+assert "abc".endswith("c")
+assert "abc".isalpha()
+assert "abc".isascii()
+assert "123".isdecimal()
+assert "abc".find("b") == 1
+assert ", ".join(["a", "b"]) == "a, b"
+
+# Int
+Neg3 = -3
+assert Neg3.abs() == 3
+
+# List
+assert [1, 2].reversed() == [2, 1]
+
+# subscripts (`x[i]` desugars to `x.__getitem__(i)`, `x.0` to `x.__Tuple_getitem__(0)`)
+Lis = [1, 2, 3]
+assert Lis[0] == 1
+assert Lis[2] == 3
+Nested = [[1, 2], [3, 4]]
+assert Nested[0][1] == 2
+Dic = {"a": 1}
+assert Dic["a"] == 1
+Tup = (1, "two")
+assert Tup[0] == 1
+assert Tup.0 == 1
+assert Tup.1 == "two"
+Stri = "abc"
+assert Stri[0] == "a"
+assert Stri[2] == "c"
+Rng = 1..5
+assert Rng[0] == 1

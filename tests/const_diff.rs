@@ -155,6 +155,15 @@ const CASES: &[&str] = &[
     "\"abc\".find(\"b\")",
     "\", \".join([\"a\", \"b\"])",
     "(-3).abs()",
+    // `Ratio`'s reduced pair, which had no compile-time reading at all
+    "1.5.numerator",
+    "1.5.denominator",
+    "(-1.5).numerator",
+    "(1 / 3).denominator",
+    "3.numerator",
+    "3.denominator",
+    "0.1.real",
+    "0.1.imag",
     // subscripts (the desugarer turns these into `__getitem__` calls)
     "[1, 2, 3][0]",
     "[[1, 2], [3, 4]][0][1]",

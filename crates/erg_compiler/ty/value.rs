@@ -2444,6 +2444,25 @@ impl ValueObj {
                 let v = rec.get(attr)?;
                 Some(v.clone())
             }
+            // `fractions.Fraction` exposes these, and they are the reduced pair
+            // this value already holds. Without them a constant `1.5.numerator`
+            // reported "no attribute numerator", which reads as if the attribute
+            // did not exist rather than as "not known at compile time".
+            Self::Ratio(n, d) => match &attr.symbol[..] {
+                "numerator" => Some(Self::Int(i64::try_from(*n).ok()?)),
+                "denominator" => Some(Self::Nat(u64::try_from(*d).ok()?)),
+                "real" => Some(self.clone()),
+                "imag" => Some(Self::Nat(0)),
+                _ => None,
+            },
+            Self::Int(_) | Self::Nat(_) | Self::Bool(_) => match &attr.symbol[..] {
+                // an integer is a rational with denominator 1
+                "numerator" => Some(Self::Int(self.as_ratio()?.0.try_into().ok()?)),
+                "denominator" => Some(Self::Nat(1)),
+                "real" => Some(self.clone()),
+                "imag" => Some(Self::Nat(0)),
+                _ => None,
+            },
             _ => None,
         }
     }

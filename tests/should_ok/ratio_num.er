@@ -81,6 +81,19 @@ assert 2.5e-38 * 4 == 1e-37
 assert round(1 - 1e-38) == 1
 assert round(0 - 1e-38) == 0
 
+# `.numerator`/`.denominator` are the reduced pair a `Ratio` already holds, but
+# had no compile-time reading -- a constant `1.5.numerator` reported "no
+# attribute numerator", which reads as if the attribute did not exist.
+Numer: {3} = 1.5.numerator
+Denom: {2} = 1.5.denominator
+assert Numer == 3
+assert Denom == 2
+NegNum: {-3} = (-1.5).numerator
+assert NegNum == -3
+Third: {3} = (1 / 3).denominator
+assert Third == 3
+assert 3.denominator == 1
+
 # A `Ratio` literal inside a function body: codegen imports `Fraction` lazily,
 # and the flag saying it had been imported was shared across code objects -- so
 # an import emitted inside this body counted for the module-level `0.5` below,

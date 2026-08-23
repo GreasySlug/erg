@@ -1,0 +1,44 @@
+# Operators on the mutable types. Python looks operators up on the type, so
+# `MutType.__getattr__` -- which is what lets `s.upper()` through -- cannot stand
+# in for them: each one has to be defined. `Str!` had only `==`/`!=`, and
+# `Float!` had no reflected forms, so `"b" + s` and `float(1.0) + f` raised.
+
+s = !"a"
+assert s + "b" == "ab"
+assert "b" + s == "ba"
+assert s * 2 == "aa"
+assert s < "b"
+assert s <= "a"
+assert s > "A"
+assert s >= "a"
+assert len(s) == 1
+assert "a" in s
+assert s[0] == "a"
+# `str.__mul__` wants a real int, so a mutable count has to be unwrapped
+n = !2
+assert "ab" * n == "abab"
+# still forwarded through the attribute fallback
+assert s.upper() == "A"
+
+f = !float(0.5)
+fwd = f + float(1.0)
+assert fwd.nearly_eq float(1.5)
+radd = float(1.0) + f
+assert radd.nearly_eq float(1.5)
+rsub = float(1.0) - f
+assert rsub.nearly_eq float(0.5)
+rmul = float(2.0) * f
+assert rmul.nearly_eq float(1.0)
+rdiv = float(1.0) / f
+assert rdiv.nearly_eq float(2.0)
+
+i = !1
+assert i + 1 == 2
+assert 1 + i == 2
+
+r = !0.5
+assert r + 1.0 == 1.5
+assert 1.0 + r == 1.5
+assert 2 * r == 1.0
+
+print! "OK"

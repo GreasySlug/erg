@@ -250,6 +250,11 @@ fn exec_inherit() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_mut_ops() -> Result<(), ()> {
+    expect_success("tests/should_ok/mut_ops.er", 0)
+}
+
+#[test]
 fn exec_pow() -> Result<(), ()> {
     expect_success("tests/should_ok/pow.er", 0)
 }

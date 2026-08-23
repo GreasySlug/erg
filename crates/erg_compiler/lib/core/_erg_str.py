@@ -1,7 +1,7 @@
 from _erg_control import then__
 from _erg_int import Int
 from _erg_result import Error
-from _erg_type import MutType
+from _erg_type import MutType, _unwrap_mut
 
 
 class Str(str):
@@ -29,10 +29,18 @@ class Str(str):
     def contains(self, s):
         return s in self
 
+    # `str.__add__`/`str.__mul__` raise instead of returning NotImplemented, so
+    # Python never reaches the right operand's reflected method and `"b" + s`
+    # failed for a `Str!`. Hand the operation back explicitly.
     def __add__(self, other):
+        if not isinstance(other, str):
+            return NotImplemented
         return then__(str.__add__(self, other), Str)
 
     def __mul__(self, other):
+        other = _unwrap_mut(other)
+        if not isinstance(other, int):
+            return NotImplemented
         return then__(str.__mul__(self, other), Str)
 
     def __mod__(self, other):
@@ -77,6 +85,46 @@ class StrMut(MutType):  # Inherits Str
             return self.value != other.value
         else:
             return self.value != other
+
+    # `StrMut` had `==`/`!=` and nothing else, so every operator a `Str` supports
+    # raised at run time (`s + "b"`, `len(s)`, `"a" in s`, ...). Method calls got
+    # through only because `MutType.__getattr__` forwards them; Python looks
+    # operators up on the type, where the fallback does not apply.
+    def __lt__(self, other):
+        return self.value < _unwrap_mut(other)
+
+    def __le__(self, other):
+        return self.value <= _unwrap_mut(other)
+
+    def __gt__(self, other):
+        return self.value > _unwrap_mut(other)
+
+    def __ge__(self, other):
+        return self.value >= _unwrap_mut(other)
+
+    def __add__(self, other):
+        return StrMut(self.value + _unwrap_mut(other))
+
+    def __radd__(self, other):
+        return StrMut(_unwrap_mut(other) + self.value)
+
+    def __mul__(self, other):
+        return StrMut(self.value * _unwrap_mut(other))
+
+    def __rmul__(self, other):
+        return StrMut(_unwrap_mut(other) * self.value)
+
+    def __len__(self):
+        return len(self.value)
+
+    def __contains__(self, item):
+        return _unwrap_mut(item) in self.value
+
+    def __iter__(self):
+        return iter(self.value)
+
+    def __getitem__(self, index_or_slice):
+        return self.value[_unwrap_mut(index_or_slice)]
 
     def update(self, f):
         self.value = Str(f(self.value))

@@ -1,6 +1,6 @@
 from _erg_control import then__
 from _erg_result import Error
-from _erg_type import MutType
+from _erg_type import MutType, _unwrap_mut
 
 
 class Float(float):
@@ -143,6 +143,26 @@ class FloatMut(MutType):  # inherits Float
             return FloatMut(self.value**other.value)
         else:
             return FloatMut(self.value**other)
+
+    # Reflected forms, so `1.0 + m` works and not just `m + 1.0`: Python looks
+    # these up on the type, so `MutType.__getattr__` cannot stand in for them.
+    def __radd__(self, other):
+        return FloatMut(_unwrap_mut(other) + self.value)
+
+    def __rsub__(self, other):
+        return FloatMut(_unwrap_mut(other) - self.value)
+
+    def __rmul__(self, other):
+        return FloatMut(_unwrap_mut(other) * self.value)
+
+    def __rfloordiv__(self, other):
+        return FloatMut(_unwrap_mut(other) // self.value)
+
+    def __rtruediv__(self, other):
+        return FloatMut(_unwrap_mut(other) / self.value)
+
+    def __rpow__(self, other):
+        return FloatMut(_unwrap_mut(other) ** self.value)
 
     def __pos__(self):
         return self

@@ -1,13 +1,36 @@
 .Random!: ClassType
 .Random! <: InheritableType
 .Random!.
+    VERSION: Nat
     seed!: (self: RefMut(.Random!), a := Float, version := Nat) => NoneType
     getstate!: (self: Ref(.Random!)) => (Nat, [Nat; _], Nat or NoneType)
     setstate!: (self: RefMut(.Random!), state: (Nat, [Nat; _], Nat or NoneType)) => NoneType
     random!: (self: RefMut(.Random!)) => Float
     getrandbits!: (self: RefMut(.Random!), k: Nat) => Nat
+    randbytes!: (self: RefMut(.Random!), n: Nat) => Bytes
+    randrange!: (self: RefMut(.Random!), start: Int, stop := Int, step := Int) => Int
+    randint!: (self: RefMut(.Random!), a: Int, b: Int) => Int
+    choice!: |T: Type|(self: RefMut(.Random!), seq: Sequence(T)) => T
+    choices!: |T: Type|(
+        self: RefMut(.Random!), population: Sequence(T), weights := [Nat; _] or NoneType, k := Nat
+    ) => [T; _]
+    shuffle!: |T: Type|(self: RefMut(.Random!), seq: Sequence(T)) => NoneType
+    sample!: |T: Type|(self: RefMut(.Random!), population: Sequence(T), k := Nat) => [T; _]
+    uniform!: (self: RefMut(.Random!), a: Ratio or Float, b: Ratio or Float) => Float
+    triangular!: (self: RefMut(.Random!), low := Ratio or Float, high := Ratio or Float, mode := Ratio or Float or NoneType) => Float
+    betavariate!: (self: RefMut(.Random!), alpha: Ratio or Float, beta: Ratio or Float) => Float
+    binomialvariate!: (self: RefMut(.Random!), n := Nat, p := Ratio or Float) => Nat
+    expovariate!: (self: RefMut(.Random!), lambd := Ratio or Float) => Float
+    gammavariate!: (self: RefMut(.Random!), alpha: Ratio or Float, beta: Ratio or Float) => Float
+    gauss!: (self: RefMut(.Random!), mu := Ratio or Float, sigma := Ratio or Float) => Float
+    lognormvariate!: (self: RefMut(.Random!), mu: Ratio or Float, sigma: Ratio or Float) => Float
+    normalvariate!: (self: RefMut(.Random!), mu := Ratio or Float, sigma := Ratio or Float) => Float
+    vonmisesvariate!: (self: RefMut(.Random!), mu: Ratio or Float, kappa: Ratio or Float) => Float
+    paretovariate!: (self: RefMut(.Random!), alpha: Ratio or Float) => Float
+    weibullvariate!: (self: RefMut(.Random!), alpha: Ratio or Float, beta: Ratio or Float) => Float
 
 .SystemRandom!: ClassType
+.SystemRandom! <: .Random!
 .SystemRandom! <: InheritableType
 
 .seed!: (a := Num, version := Int) => NoneType
@@ -25,14 +48,15 @@
 .sample!: |T: Type|(population: Sequence(T), k := Nat) => [T; _]
 .random!: () => 0.0..1.0 # TODO: <1.0
 .dep_uniform! = 'uniform': |A: Int, B: Int|(a: {A}, b: {B}) => A..B
-.uniform!: (a: Int, b: Int) => Int
-.triangular!: (low: Float, high: Float, mode: Float) => Float
-.betavariate!: (alpha: Float, beta: Float) => 0.0..1.0
-.expovariate!: (lambd := Float) => Float
-.gammavariate!: (alpha: Float, beta: Float) => Float
-.gauss!: (mu := Float, sigma := Float) => Float
-.lognormvariate!: (mu: Float, sigma: Float) => Float
-.normalvariate!: (mu := Float, sigma := Float) => Float
-.vonmisesvariate!: (mu: Float, kappa: Float) => Float
-.paretovariate!: (alpha: Float) => Float
-.weibullvariate!: (alpha: Float, beta: Float) => Float
+.uniform!: (a: Ratio or Float, b: Ratio or Float) => Float
+.triangular!: (low := Ratio or Float, high := Ratio or Float, mode := Ratio or Float or NoneType) => Float
+.betavariate!: (alpha: Ratio or Float, beta: Ratio or Float) => 0.0..1.0
+.binomialvariate!: (n := Nat, p := Ratio or Float) => Nat
+.expovariate!: (lambd := Ratio or Float) => Float
+.gammavariate!: (alpha: Ratio or Float, beta: Ratio or Float) => Float
+.gauss!: (mu := Ratio or Float, sigma := Ratio or Float) => Float
+.lognormvariate!: (mu: Ratio or Float, sigma: Ratio or Float) => Float
+.normalvariate!: (mu := Ratio or Float, sigma := Ratio or Float) => Float
+.vonmisesvariate!: (mu: Ratio or Float, kappa: Ratio or Float) => Float
+.paretovariate!: (alpha: Ratio or Float) => Float
+.weibullvariate!: (alpha: Ratio or Float, beta: Ratio or Float) => Float

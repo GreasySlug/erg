@@ -1,37 +1,69 @@
 .pi: Float
 .tau: Float
 .e: Float
-.sin: Float -> Float
-.cos: Float -> Float
-.tan: Float -> Float
-.asin: Float -> Float
-.acos: Float -> Float
-.atan: Float -> Float
-.sinh: Float -> Float
-.cosh: Float -> Float
-.tanh: Float -> Float
-.asinh: Float -> Float
-.acosh: Float -> Float
-.atanh: Float -> Float
-.sqrt: Float -> Float
-.exp: Float -> Float
-.log: Float -> Float
-.log2: Float -> Float
-.log10: Float -> Float
-.floor: Float -> Int
-.ceil: Float -> Int
-.comb: (n: Int, k: Int) -> Int
-.copysign: (x: Float, y: Float) -> Float
-.trunc: Float -> Int
-.fabs: (x: Float) -> Float
-.factorial: (n: Nat) -> Nat
-.fmod: (x: Float, y: Float) -> Float
-.frexp: (x: Float) -> (Float, Int)
-.fsum: (iterable: Iterable Float) -> Float
-.isclose: (a: Float, b: Float, rel_tol := Float, abs_tol := Float) -> Bool
-.isfinite: (x: Float) -> Bool
-.isinf: (x: Float) -> Bool
-.isnan: (x: Float) -> Bool
-.isqrt: (n: Nat) -> Nat
-.perm: (n: Nat, k := Nat) -> Nat
+.inf: Float
+.nan: Float
+
+.sin: (Ratio or Float) -> Float
+.cos: (Ratio or Float) -> Float
+.tan: (Ratio or Float) -> Float
+.asin: (Ratio or Float) -> Float
+.acos: (Ratio or Float) -> Float
+.atan: (Ratio or Float) -> Float
+.atan2: (y: Ratio or Float, x: Ratio or Float) -> Float
+.sinh: (Ratio or Float) -> Float
+.cosh: (Ratio or Float) -> Float
+.tanh: (Ratio or Float) -> Float
+.asinh: (Ratio or Float) -> Float
+.acosh: (Ratio or Float) -> Float
+.atanh: (Ratio or Float) -> Float
+.degrees: (Ratio or Float) -> Float
+.radians: (Ratio or Float) -> Float
+.hypot: (*coordinates: Ratio or Float) -> Float
+.dist: (p: Iterable(Ratio or Float), q: Iterable(Ratio or Float)) -> Float
+
+.sqrt: (Ratio or Float) -> Float
+.cbrt: (Ratio or Float) -> Float
+.exp: (Ratio or Float) -> Float
+.exp2: (Ratio or Float) -> Float
+.expm1: (Ratio or Float) -> Float
+.log: (x: Ratio or Float, base := Ratio or Float) -> Float
+.log2: (Ratio or Float) -> Float
+.log10: (Ratio or Float) -> Float
+.log1p: (Ratio or Float) -> Float
+.pow: (x: Ratio or Float, y: Ratio or Float) -> Float
+
+.floor: (Ratio or Float) -> Int
+.ceil: (Ratio or Float) -> Int
+.trunc: (Ratio or Float) -> Int
+.fabs: (x: Ratio or Float) -> Float
+.fmod: (x: Ratio or Float, y: Ratio or Float) -> Float
+.remainder: (x: Ratio or Float, y: Ratio or Float) -> Float
+.modf: (x: Ratio or Float) -> (Float, Float)
+.frexp: (x: Ratio or Float) -> (Float, Int)
+.ldexp: (x: Ratio or Float, i: Int) -> Float
+.copysign: (x: Ratio or Float, y: Ratio or Float) -> Float
+.nextafter: (x: Ratio or Float, y: Ratio or Float, steps := Nat or NoneType) -> Float
+.ulp: (Ratio or Float) -> Float
+.fma: (x: Ratio or Float, y: Ratio or Float, z: Ratio or Float) -> Float
+
+.fsum: (iterable: Iterable(Ratio or Float)) -> Float
+.sumprod: (p: Iterable(Ratio or Float), q: Iterable(Ratio or Float)) -> Float
 .prod: |T <: Mul(T)|(iterable: Iterable(T), start := T) -> T.Output
+
+.isclose: (a: Ratio or Float, b: Ratio or Float, rel_tol := Ratio or Float, abs_tol := Ratio or Float) -> Bool
+.isfinite: (x: Ratio or Float) -> Bool
+.isinf: (x: Ratio or Float) -> Bool
+.isnan: (x: Ratio or Float) -> Bool
+
+.comb: (n: Int, k: Int) -> Int
+.perm: (n: Nat, k := Nat) -> Nat
+.factorial: (n: Nat) -> Nat
+.isqrt: (n: Nat) -> Nat
+.gcd: (*integers: Int) -> Nat
+.lcm: (*integers: Int) -> Nat
+
+.erf: (Ratio or Float) -> Float
+.erfc: (Ratio or Float) -> Float
+.gamma: (Ratio or Float) -> Float
+.lgamma: (Ratio or Float) -> Float

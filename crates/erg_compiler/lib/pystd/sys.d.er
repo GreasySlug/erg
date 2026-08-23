@@ -77,9 +77,12 @@ io = pyimport "io"
 }
 .maxsize: Nat
 .maxunicode: Nat
-.meta_path: List!(Str, _)
+.meta_path: List!(Obj, _)
 .modules: Dict!({Str: Module})
+.orig_argv: [Str; _]
 .path: List!(Str, _)
+.path_hooks: List!(Obj, _)
+.path_importer_cache: Dict!({Str: Obj})
 '''
 * AIX -> 'aix'
 * FreeBSD -> 'freebsd'
@@ -100,6 +103,12 @@ io = pyimport "io"
 .stdin: io.TextIOWrapper!
 .stdout: io.TextIOWrapper!
 .stdlib_module_names: [Str; _]
+.thread_info: NamedTuple {
+    .name = Str or NoneType;
+    .lock = Str or NoneType;
+    .version = Str or NoneType;
+}
+.unraisablehook: Obj
 .version: Str
 .version_info: NamedTuple {
     .major = Nat;
@@ -108,21 +117,41 @@ io = pyimport "io"
     .releaselevel = Str;
     .serial = Nat;
 }
+.warnoptions: [Str; _]
+.monitoring: Obj
 
 ._clear_type_cache!: () => NoneType
 ._current_frames!: () => {Int: Frame}
 .addaudithook!: (hook: (Str, *Obj) => NoneType) => NoneType
 .audit!: (event: Str, *args: Obj) => NoneType
 .breakpointhook!: () => NoneType
+.call_tracing: (func: GenericCallable, args: GenericTuple) -> Obj
 .displayhook!: (value: Obj) => NoneType
+.excepthook!: (exctype: Type, value: Exception, traceback: Traceback or NoneType) => NoneType
 .exception!: () => Exception or NoneType
 .exc_info!: () => (Type or NoneType, Exception or NoneType, Traceback or NoneType)
 .exit: Obj -> Never
+.get_asyncgen_hooks!: () => (Obj, Obj)
+.get_coroutine_origin_tracking_depth!: () => Nat
+.get_int_max_str_digits!: () => Nat
+.getallocatedblocks!: () => Nat
 .getdefaultencoding!: () => Str
+.getdlopenflags!: () => Int
+.getfilesystemencodeerrors!: () => Str
+.getfilesystemencoding!: () => Str
+.getprofile!: () => Obj or NoneType
 .getrecursionlimit!: () => Nat
 .getrefcount!: (obj: Obj) => Nat
 .getsizeof: (obj: Obj) -> Nat
 .getswitchinterval!: () => Float
+.gettrace!: () => Obj or NoneType
 .intern: (string: Str) -> Str
 .is_finalizing!: () => Bool
+.set_asyncgen_hooks!: (firstiter := Obj or NoneType, finalizer := Obj or NoneType) => NoneType
+.set_coroutine_origin_tracking_depth!: (depth: Nat) => NoneType
+.set_int_max_str_digits!: (maxdigits: Nat) => NoneType
+.setdlopenflags!: (flags: Int) => NoneType
+.setprofile!: (profilefunc: Obj or NoneType) => NoneType
 .setrecursionlimit!: Nat => NoneType
+.setswitchinterval!: (interval: Float) => NoneType
+.settrace!: (tracefunc: Obj or NoneType) => NoneType

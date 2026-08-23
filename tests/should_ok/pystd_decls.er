@@ -98,3 +98,42 @@ cProfile = pyimport "cProfile"
 _ = cProfile.label
 
 print! "ok"
+
+# --- builtin modules (math, random, importlib, io, socket, sys, time) ---
+math = pyimport "math"
+_: Float = math.hypot(3.0, 4.0)
+_: Nat = math.gcd(12, 8)
+_: Float = math.degrees(math.pi)
+_: Bool = math.isnan(math.nan)
+
+random = pyimport "random"
+_ = random.Random!
+_: Float = random.uniform!(0.0, 1.0)
+
+sys = pyimport "sys"
+_: Str = sys.getfilesystemencoding!()
+_: [Str; _] = sys.orig_argv
+_: Nat = sys.get_int_max_str_digits!()
+
+time = pyimport "time"
+info = time.get_clock_info! "monotonic"
+_: Bool = info.monotonic
+_: Float = time.monotonic!()
+
+io = pyimport "io"
+_: Nat = io.SEEK_SET
+buf = io.StringIO!("hello")
+_: Str = buf.getvalue()
+
+importlib = pyimport "importlib"
+_: Bytes = importlib.util.MAGIC_NUMBER
+_ = importlib.util.find_spec "os"
+_: [Str; _] = importlib.machinery.SOURCE_SUFFIXES
+importlib.invalidate_caches!()
+
+socket = pyimport "socket"
+_: Bool = socket.has_ipv6
+_: Nat = socket.htonl(1)
+_: Bytes = socket.inet_aton "127.0.0.1"
+_ = socket.gaierror
+

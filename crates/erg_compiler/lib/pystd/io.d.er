@@ -1,4 +1,7 @@
 .DEFAULT_BUFFER_SIZE: {8192}
+.SEEK_SET: {0}
+.SEEK_CUR: {1}
+.SEEK_END: {2}
 
 .BlockingIOError = BlockingIOError
 .UnsupportedOperation: ClassType
@@ -54,6 +57,7 @@
 .BytesIO!.
     __call__: (initial_bytes := Bytes) -> .BytesIO!
     getvalue: (self: Ref(.BytesIO!),) -> Bytes
+    getbuffer: (self: Ref(.BytesIO!),) -> MemoryView
 
 .BufferedReader!: ClassType
 .BufferedReader! <: .BufferedIOBase!
@@ -109,6 +113,21 @@
     __call__: (initial_value := Str, newline := Str) -> .StringIO!
     getvalue: (self: Ref(.StringIO!),) -> Str
 
-.open!: (file: PathLike, mode := Str, buffering := Nat, encoding := Str or NoneType) -> File!
+.IncrementalNewlineDecoder!: ClassType
+.IncrementalNewlineDecoder!.
+    __call__: (decoder: Obj, translate: Bool, errors := Str) -> .IncrementalNewlineDecoder!
+    decode!: (self: RefMut(.IncrementalNewlineDecoder!), input: Str, final := Bool) => Str
+    getstate: (self: Ref(.IncrementalNewlineDecoder!),) -> (Bytes, Int)
+    setstate!: (self: RefMut(.IncrementalNewlineDecoder!), state: (Bytes, Int)) => NoneType
+    reset!: (self: RefMut(.IncrementalNewlineDecoder!),) => NoneType
+    newlines: Str or [Str; _] or NoneType
+
+.Reader: ClassType
+.Writer: ClassType
+
+.open!: (
+    file: PathLike, mode := Str, buffering := Nat, encoding := Str or NoneType,
+    errors := Str or NoneType, newline := Str or NoneType, closefd := Bool, opener := Obj or NoneType
+) -> File!
 .open_code!: (path: PathLike) -> File!
 .text_encoding: (encoding: Str or NoneType, stacklevel := Nat) -> Str

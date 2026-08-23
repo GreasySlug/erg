@@ -82,15 +82,15 @@
     - [x] Structural subtyping
       - [x] Refinement subtyping
     - [x] Nominal subtyping
-  - [ ] Module system
-    - [ ] Load Builtin Module
-      - [x] `math` (partially)
-      - [x] `random` (partially)
-      - [x] `importlib` (partially)
-      - [x] `io` (partially)
-      - [x] `socket` (partially)
-      - [x] `sys` (partially)
-      - [x] `time` (partially)
+  - [x] Module system
+    - [x] Load Builtin Module
+      - [x] `math`
+      - [x] `random`
+      - [x] `importlib`
+      - [x] `io`
+      - [x] `socket`
+      - [x] `sys`
+      - [x] `time`
     - [x] Load User Module
     - [x] Recursive module
     - [x] Visibility check

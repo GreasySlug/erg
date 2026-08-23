@@ -1,0 +1,54 @@
+# Runtime coverage for the builtin Python modules listed in TODO.md.
+# Decimal literals are `Ratio`; Python `float` values are `Float` (no `Eq`).
+# Use `math.isclose` / `f64` suffixes instead of `==` / `>=` against `0.0`.
+
+math = pyimport "math"
+assert math.floor(math.pi) == 3
+assert math.isclose(math.hypot(3.0, 4.0), 5.0)
+assert math.gcd(12, 8) == 4
+assert math.isclose(math.degrees(math.pi), 180.0)
+assert math.isnan(math.nan)
+assert math.isinf(math.inf)
+assert math.isclose(math.log(math.e), 1.0)
+
+random = pyimport "random"
+random.seed! 0
+r = random.random!()
+assert r >= 0.0f64
+assert r < 1.0f64
+u = random.uniform! 0.0, 1.0
+assert u >= 0.0f64
+n = random.randint! 1, 3
+assert n >= 1
+assert n <= 3
+
+sys = pyimport "sys"
+assert sys.version_info.major == 3
+_ = sys.platform
+_ = sys.getfilesystemencoding!()
+_ = sys.orig_argv
+_ = sys.getsizeof(1)
+
+time = pyimport "time"
+assert time.time!() > 0.0f64
+assert time.monotonic!() > 0.0f64
+info = time.get_clock_info! "time"
+assert info.resolution > 0.0f64
+
+io = pyimport "io"
+buf = io.StringIO!("hello")
+assert buf.getvalue() == "hello"
+assert io.SEEK_SET == 0
+
+importlib = pyimport "importlib"
+_ = importlib.util.MAGIC_NUMBER
+spec = importlib.util.find_spec "os"
+assert spec in importlib.machinery.ModuleSpec
+_ = importlib.machinery.SOURCE_SUFFIXES
+
+socket = pyimport "socket"
+_ = socket.has_ipv6
+assert socket.ntohl(socket.htonl(1)) == 1
+assert socket.inet_ntoa(socket.inet_aton("127.0.0.1")) == "127.0.0.1"
+_ = socket.AF_INET
+_ = socket.SOCK_STREAM

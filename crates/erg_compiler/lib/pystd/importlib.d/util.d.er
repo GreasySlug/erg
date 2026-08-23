@@ -2,4 +2,25 @@ machinery = pyimport "machinery"
 
 .MAGIC_NUMBER: Bytes
 
-.find_spec: (name: Str) -> machinery.ModuleSpec or NoneType
+.Loader: ClassType
+.LazyLoader: ClassType
+.LazyLoader <: .Loader
+.LazyLoader.
+    __call__: (cls: Type, loader: .Loader) -> .LazyLoader
+    factory: (loader: .Loader) -> .Loader
+
+.find_spec: (name: Str, package := Str or NoneType) -> machinery.ModuleSpec or NoneType
+.cache_from_source: (
+    path: Str, debug_override := Bool or NoneType, optimization := Str or NoneType
+) -> Str
+.source_from_cache: (path: Str) -> Str
+.decode_source: (source_bytes: Bytes) -> Str
+.module_from_spec: (spec: machinery.ModuleSpec) -> GenericModule
+.spec_from_file_location: (
+    name: Str, location := Str or NoneType, loader := .Loader or NoneType
+) -> machinery.ModuleSpec or NoneType
+.spec_from_loader: (
+    name: Str, loader: .Loader or NoneType, origin := Str or NoneType, is_package := Bool or NoneType
+) -> machinery.ModuleSpec or NoneType
+.resolve_name: (name: Str, package: Str or NoneType) -> Str
+.source_hash: (source_bytes: Bytes) -> Bytes

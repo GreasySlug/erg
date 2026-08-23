@@ -4,3 +4,4 @@
 .__import__: (name: Str, globals := {Str: Obj}) -> GenericModule
 .import_module: (name: Str, package := Str or NoneType) -> GenericModule
 .reload!: (GenericModule,) => NoneType
+.invalidate_caches!: () => NoneType

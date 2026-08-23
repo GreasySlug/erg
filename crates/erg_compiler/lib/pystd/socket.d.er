@@ -78,6 +78,21 @@
 .SOCK_SEQPACKET: .SocketKind
 .SOCK_STREAM: .SocketKind
 
+.SHUT_RD: Nat
+.SHUT_RDWR: Nat
+.SHUT_WR: Nat
+.MSG_OOB: Nat
+.MSG_PEEK: Nat
+.MSG_WAITALL: Nat
+.IPPROTO_IP: Nat
+.IPPROTO_TCP: Nat
+.IPPROTO_UDP: Nat
+.IPPROTO_IPV6: Nat
+.AI_PASSIVE: Nat
+.AI_CANONNAME: Nat
+.NI_NUMERICHOST: Nat
+.NI_NUMERICSERV: Nat
+
 .SOL_ALG: Nat
 .SOL_CAN_BASE: Nat
 .SOL_CAN_RAW: Nat
@@ -111,26 +126,38 @@
     getblocking!: (self: RefMut(.Socket!)) => Bool
     gettimeout!: (self: RefMut(.Socket!)) => Float or NoneType
     listen!: (self: RefMut(.Socket!), backlog: Int) => NoneType
-    recv!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => Str
-    recvfrom!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => (Str, (Str, Int))
+    makefile!: (
+        self: RefMut(.Socket!), mode := Str, buffering := Int, encoding := Str or NoneType
+    ) => File!
+    recv!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => Bytes
+    recvfrom!: (self: RefMut(.Socket!), bufsize: Int, flags := Int) => (Bytes, (Str, Int))
     recvmsg!: (
         self: RefMut(.Socket!), bufsize: Int, ancbufsize := Int, flags := Int
-    ) => (Str, (Str, Int), Int)
+    ) => (Bytes, Obj, Int, Obj)
     recvmsg_into!: (
         self: RefMut(.Socket!), buffers: Iterable(Writable!), ancbufsize := Int, flags := Int
-    ) => (Str, (Str, Int), Int)
-    recvfrom_into!: (self: RefMut(.Socket!), buffer: Writable!, flags := Int) => (Str, (Str, Int))
+    ) => (Int, Obj, Int, Obj)
+    recvfrom_into!: (self: RefMut(.Socket!), buffer: Writable!, nbytes := Int, flags := Int) => (Int, (Str, Int))
     recv_into!: (self: RefMut(.Socket!), buffer: Writable!, nbytes := Int, flags := Int) => Nat
     send!: (self: RefMut(.Socket!), data: Bytes, flags := Int) => Int
     sendall!: (self: RefMut(.Socket!), data: Bytes, flags := Int) => NoneType
+    sendfile!: (self: RefMut(.Socket!), file: File!, offset := Int, count := Int or NoneType) => Int
     sendto!: (self: RefMut(.Socket!), data: Bytes, address: (Str, Int), flags := Int) => Int
     sendmsg!: (
         self: RefMut(.Socket!),
         buffers: Iterable(Bytes),
-        ancdata: Iterable(Bytes),
+        ancdata := Iterable(Obj),
         flags := Int,
         address: (Str, Int) or NoneType := NoneType
     ) => Int
+    set_inheritable!: (self: RefMut(.Socket!), inheritable: Bool) => NoneType
+    setblocking!: (self: RefMut(.Socket!), flag: Bool) => NoneType
+    setsockopt!: (self: RefMut(.Socket!), level: Int, option: Int, value: Int or Bytes) => NoneType
+    settimeout!: (self: RefMut(.Socket!), value: Float or NoneType) => NoneType
+    shutdown!: (self: RefMut(.Socket!), how: Int) => NoneType
+    family: .AddressFamily
+    type: .SocketKind
+    proto: Int
 
 .socketpair!: (
     family := Int,
@@ -150,9 +177,36 @@
     reuse_port := Bool
 ) => .Socket!
 .has_dualstack_ipv6: () -> Bool
-.fromfd!: (fd: Int, family: Int, type: Int, proto: Int) => .Socket!
+.has_ipv6: Bool
+.fromfd!: (fd: Int, family: Int, type: Int, proto := Int) => .Socket!
+.dup!: (fd: Int) => Int
 
-.close!: (fd: .Socket!) => NoneType
+.error = OSError
+.timeout: ClassType
+.timeout <: OSError
+.herror: ClassType
+.herror <: OSError
+.gaierror: ClassType
+.gaierror <: OSError
+
+.close!: (fd: Int) => NoneType
+.getdefaulttimeout!: () => Float or NoneType
+.setdefaulttimeout!: (timeout: Float or NoneType) => NoneType
+.htonl: (x: Nat) -> Nat
+.htons: (x: Nat) -> Nat
+.ntohl: (x: Nat) -> Nat
+.ntohs: (x: Nat) -> Nat
+.inet_aton: (ip_string: Str) -> Bytes
+.inet_ntoa: (packed_ip: Bytes) -> Str
+.inet_pton: (address_family: Int, ip_string: Str) -> Bytes
+.inet_ntop: (address_family: Int, packed_ip: Bytes) -> Str
+.getfqdn!: (name := Str) => Str
+.getprotobyname!: (protocolname: Str) => Int
+.getservbyname!: (servicename: Str, protocolname := Str) => Int
+.getservbyport!: (port: Nat, protocolname := Str) => Str
+.if_indextoname!: (if_index: Nat) => Str
+.if_nametoindex!: (if_name: Str) => Nat
+.if_nameindex!: () => [(Nat, Str); _]
 .getaddrinfo!: (
     host: Str,
     port: Int or NoneType,
@@ -160,7 +214,7 @@
     type: Int or NoneType := NoneType,
     proto: Int or NoneType := NoneType,
     flags: Int or NoneType := NoneType,
-) => (Int, Int, Int, Str, (Str, Int))
+) => [(Int, Int, Int, Str, (Str, Int)); _]
 .gethostbyname!: (hostname: Str) => Str
 .gethostbyname_ex!: (hostname: Str) => (Str, [Str; _], [Str; _])
 .gethostname!: () => Str

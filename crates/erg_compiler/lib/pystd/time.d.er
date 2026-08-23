@@ -4,6 +4,8 @@
 .CLOCK_PROCESS_CPUTIME_ID: Nat
 .CLOCK_PROF: Nat # FreeBSD/NetBSD only
 .CLOCK_REALTIME: Nat
+.CLOCK_TAI: Nat
+.CLOCK_THREAD_CPUTIME_ID: Nat
 
 .altzone: Int
 .daylight: Int
@@ -12,13 +14,20 @@
 
 .asctime!: (tm := StructTime) => Str
 .clock_getres!: (clock_id: Nat) => Float
+.get_clock_info!: (name: Str) => NamedTuple {
+    .adjustable = Bool;
+    .implementation = Str;
+    .monotonic = Bool;
+    .resolution = Float;
+}
+.pthread_getcpuclockid!: (thread_id: Nat) => Nat
 .clock_gettime!: (clock_id: Nat) => Float
 .clock_gettime_ns!: (clock_id: Nat) => Int
-.clock_settime!: (clock_id: Nat, time: Float) => NoneType
+.clock_settime!: (clock_id: Nat, time: Ratio or Float) => NoneType
 .clock_settime_ns!: (clock_id: Nat, time: Int) => NoneType
-.ctime!: (secs := Float) => Str
-.gmtime!: (secs := Float) => StructTime
-.localtime!: (secs := Float) => StructTime
+.ctime!: (secs := Ratio or Float) => Str
+.gmtime!: (secs := Ratio or Float) => StructTime
+.localtime!: (secs := Ratio or Float) => StructTime
 .mktime!: (tm: StructTime) => Float
 .monotonic!: () => Float
 .monotonic_ns!: () => Int
@@ -26,7 +35,7 @@
 .perf_counter_ns!: () => Int
 .process_time!: () => Float
 .process_time_ns!: () => Int
-.sleep!: Float => NoneType
+.sleep!: (Ratio or Float) => NoneType
 .strftime!: (format: Str, tm := StructTime) => Str
 .strptime!: (string: Str, format := Str) => StructTime
 .time!: () => Float

@@ -453,6 +453,11 @@ fn exec_pystd_decls() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_builtin_modules() -> Result<(), ()> {
+    expect_success("tests/should_ok/builtin_modules.er", 0)
+}
+
+#[test]
 fn exec_quantified() -> Result<(), ()> {
     expect_success("examples/quantified.er", 1)
 }

@@ -1,1 +1,30 @@
+.BYTECODE_SUFFIXES: [Str; _]
+.SOURCE_SUFFIXES: [Str; _]
+.EXTENSION_SUFFIXES: [Str; _]
+.all_suffixes: () -> [Str; _]
+
 .ModuleSpec: ClassType
+.ModuleSpec.
+    name: Str
+    loader: Obj
+    origin: Str or NoneType
+    submodule_search_locations: [Str; _] or NoneType
+    cached: Str or NoneType
+    parent: Str
+    has_location: Bool
+
+.BuiltinImporter: ClassType
+.FrozenImporter: ClassType
+.PathFinder: ClassType
+.WindowsRegistryFinder: ClassType
+.FileFinder: ClassType
+.FileFinder.
+    __call__: (path: Str, *loader_details: Obj) -> .FileFinder
+    path: Str
+    find_spec: (self: .FileFinder, fullname: Str, target := Obj or NoneType) -> .ModuleSpec or NoneType
+
+.SourceFileLoader: ClassType
+.SourcelessFileLoader: ClassType
+.ExtensionFileLoader: ClassType
+.NamespaceLoader: ClassType
+.AppleFrameworkLoader: ClassType

@@ -448,6 +448,11 @@ fn exec_quantified() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_type_app() -> Result<(), ()> {
+    expect_success("tests/should_ok/type_app.er", 0)
+}
+
+#[test]
 fn exec_raw_ident() -> Result<(), ()> {
     expect_success("examples/raw_ident.er", 1)
 }
@@ -962,6 +967,11 @@ fn exec_mut_dict_err() -> Result<(), ()> {
 #[test]
 fn exec_quantified_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/quantified.er", 0, 3)
+}
+
+#[test]
+fn exec_type_app_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/type_app.er", 0, 3)
 }
 
 #[test]

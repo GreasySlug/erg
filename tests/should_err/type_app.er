@@ -1,0 +1,8 @@
+# type application errors
+
+id|T|(x: T): T = x
+id|Int|("str") # ERR: Str is not a subtype of Int
+id|Int, Str|(1) # ERR: too many type arguments
+
+mono x: Int = x
+mono|Int|(1) # ERR: not a polymorphic type

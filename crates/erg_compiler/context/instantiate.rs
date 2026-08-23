@@ -4,6 +4,7 @@ use std::option::Option; // conflicting to Type::Option
 
 use erg_common::consts::DEBUG_MODE;
 use erg_common::dict::Dict;
+use erg_common::error::Location;
 #[allow(unused)]
 use erg_common::log;
 use erg_common::set::Set;
@@ -444,6 +445,14 @@ impl TyVarCache {
     pub(crate) fn get_typaram(&self, name: &str) -> Option<&TyParam> {
         self.typaram_instances.get(name)
     }
+}
+
+/// An explicit type argument from `f|Int|` / `f|T: Int|` / `f|T := Int|`.
+#[derive(Debug, Clone)]
+pub(crate) struct ExplicitTypeArg {
+    pub name: Option<Str>,
+    pub typ: Type,
+    pub loc: Location,
 }
 
 impl Context {
@@ -1162,5 +1171,115 @@ impl Context {
     pub(crate) fn instantiate_def_type(&self, typ: &Type) -> TyCheckResult<Type> {
         let mut tv_cache = TyVarCache::new(self.level, self);
         self.instantiate_t_inner(typ.clone(), &mut tv_cache, &())
+    }
+
+    /// Specialize a quantified type with explicit type arguments (`id|Int|` → `Int -> Int`).
+    ///
+    /// Remaining unapplied type variables stay as free vars so later calls can still infer them.
+    pub(crate) fn instantiate_type_app(
+        &self,
+        quantified: Type,
+        args: &[ExplicitTypeArg],
+        callee_name: &str,
+        loc: &impl Locational,
+    ) -> TyCheckResult<Type> {
+        let inner = Self::peel_quantified(quantified);
+        if args.is_empty() {
+            return Ok(inner.quantify());
+        }
+        if !inner.has_qvar() {
+            return Err(TyCheckErrors::from(TyCheckError::too_many_args_error(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc.loc(),
+                callee_name,
+                self.caused_by(),
+                0,
+                args.iter().filter(|a| a.name.is_none()).count(),
+                args.iter().filter(|a| a.name.is_some()).count(),
+            )));
+        }
+        let mut tmp_tv_cache = TyVarCache::new(self.level, self);
+        let inst = self.instantiate_t_inner(inner, &mut tmp_tv_cache, loc)?;
+        let mut assigned = Set::<Str>::new();
+        let mut pos_cursor = 0usize;
+        for arg in args {
+            let name = if let Some(name) = &arg.name {
+                name.clone()
+            } else {
+                loop {
+                    let Some(next) = tmp_tv_cache.ordered_names.get(pos_cursor) else {
+                        return Err(TyCheckErrors::from(TyCheckError::too_many_args_error(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            arg.loc,
+                            callee_name,
+                            self.caused_by(),
+                            tmp_tv_cache.ordered_names.len(),
+                            args.iter().filter(|a| a.name.is_none()).count(),
+                            args.iter().filter(|a| a.name.is_some()).count(),
+                        )));
+                    };
+                    pos_cursor += 1;
+                    let next_name = next.inspect().clone();
+                    if !assigned.contains(&next_name) {
+                        break next_name;
+                    }
+                }
+            };
+            if !assigned.insert(name.clone()) {
+                return Err(TyCheckErrors::from(TyCheckError::syntax_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    arg.loc,
+                    self.caused_by(),
+                    format!("type variable `{name}` is specified more than once"),
+                    None,
+                )));
+            }
+            if let Some(tv) = tmp_tv_cache.get_tyvar(&name).cloned() {
+                self.bind_explicit_type_arg(&tv, &arg.typ, &arg.loc, &name)?;
+            } else if let Some(tp) = tmp_tv_cache.get_typaram(&name).cloned() {
+                if let Ok(tv) = <&Type>::try_from(&tp) {
+                    self.bind_explicit_type_arg(tv, &arg.typ, &arg.loc, &name)?;
+                } else {
+                    tp.destructive_link(&TyParam::t(arg.typ.clone()));
+                }
+            } else {
+                return Err(TyCheckErrors::from(TyCheckError::no_var_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    arg.loc,
+                    self.caused_by(),
+                    &name,
+                    self.get_similar_name(&name),
+                )));
+            }
+        }
+        Ok(inst)
+    }
+
+    fn peel_quantified(t: Type) -> Type {
+        match t {
+            FreeVar(fv) if fv.is_linked() => Self::peel_quantified(fv.crack().clone()),
+            Quantified(quant) => *quant,
+            Refinement(refine) if refine.t.is_quantified_subr() => Self::peel_quantified(*refine.t),
+            other => other,
+        }
+    }
+
+    fn bind_explicit_type_arg(
+        &self,
+        instance: &Type,
+        provided: &Type,
+        loc: &impl Locational,
+        name: &str,
+    ) -> TyCheckResult<()> {
+        let name = Str::rc(name);
+        self.sub_unify(provided, instance, loc, Some(&name))?;
+        if instance.is_unbound_var() {
+            instance.destructive_link(provided);
+        }
+        Ok(())
     }
 }

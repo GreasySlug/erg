@@ -42,7 +42,7 @@ use crate::ty::{
 };
 
 use crate::context::eval::Substituter;
-use crate::context::instantiate::TyVarCache;
+use crate::context::instantiate::{ExplicitTypeArg, TyVarCache};
 use crate::context::{
     ClassDefType, Context, ContextKind, ContextProvider, ControlKind, MethodContext, ModuleContext,
     RegistrationMode, TypeContext,
@@ -1122,6 +1122,159 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
     }
 
+    /// `id|Int|` / `id|T: Int|`: instantiate a quantified type and erase the type arguments
+    /// (type application is a compile-time operation).
+    fn lower_type_app(
+        &mut self,
+        t_app: ast::TypeApp,
+        expect: Option<&Type>,
+    ) -> FailableOption<hir::Expr> {
+        log!(info "entered {}({t_app})", fn_name!());
+        let loc = t_app.loc();
+        let mut errors = LowerErrors::empty();
+        let mut obj = match self.lower_expr(*t_app.obj, None) {
+            Ok(obj) => obj,
+            Err((obj, es)) => {
+                errors.extend(es);
+                obj.unwrap_or(hir::Expr::Dummy(hir::Dummy::empty()))
+            }
+        };
+        let type_args = match self.collect_explicit_type_args(t_app.type_args) {
+            Ok(args) => args,
+            Err((args, es)) => {
+                errors.extend(es);
+                args
+            }
+        };
+        let obj_t = obj.ref_t().clone();
+        let callee_name = obj.to_string_notype();
+        match self
+            .module
+            .context
+            .instantiate_type_app(obj_t, &type_args, &callee_name, &loc)
+        {
+            Ok(inst_t) => {
+                if let Some(t) = obj.ref_mut_t() {
+                    *t = inst_t;
+                }
+            }
+            Err(es) => errors.extend(es),
+        }
+        if let Some(expect) = expect {
+            if let Err(_errs) = self
+                .module
+                .context
+                .sub_unify(obj.ref_t(), expect, &loc, None)
+            {
+                // reported later by resolve_expr_t / assignment
+            }
+        }
+        if errors.is_empty() {
+            Ok(obj)
+        } else {
+            Err((Some(obj), errors))
+        }
+    }
+
+    fn collect_explicit_type_args(
+        &self,
+        type_args: ast::TypeAppArgs,
+    ) -> Failable<Vec<ExplicitTypeArg>> {
+        let mut errors = LowerErrors::empty();
+        let mut collected = vec![];
+        match type_args.args {
+            ast::TypeAppArgsKind::SubtypeOf(t_spec) => {
+                errors.push(LowerError::syntax_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    t_spec.loc(),
+                    self.module.context.caused_by(),
+                    "trait ascription (`|<: T|`) cannot be used as a type application".to_string(),
+                    Some("use `f|T|` to instantiate a polymorphic type".to_string()),
+                ));
+            }
+            ast::TypeAppArgsKind::Args(args) => {
+                let (pos_args, _var_args, kw_args, _kw_var, _paren) = args.deconstruct();
+                for pos in pos_args {
+                    match self.pos_type_app_arg(pos.expr) {
+                        Ok(arg) => collected.push(arg),
+                        Err((arg, es)) => {
+                            collected.push(arg);
+                            errors.extend(es);
+                        }
+                    }
+                }
+                for kw in kw_args {
+                    let loc = Location::concat(&kw.keyword, &kw.expr);
+                    match self.module.context.expr_to_type(kw.expr) {
+                        Ok(typ) => collected.push(ExplicitTypeArg {
+                            name: Some(kw.keyword.content.clone()),
+                            typ,
+                            loc,
+                        }),
+                        Err((typ, es)) => {
+                            collected.push(ExplicitTypeArg {
+                                name: Some(kw.keyword.content.clone()),
+                                typ,
+                                loc,
+                            });
+                            errors.extend(es);
+                        }
+                    }
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(collected)
+        } else {
+            Err((collected, errors))
+        }
+    }
+
+    fn pos_type_app_arg(&self, expr: ast::Expr) -> Failable<ExplicitTypeArg> {
+        let loc = expr.loc();
+        // `id|T: Int|` is parsed as a type ascription of `T` with `Int`
+        if let ast::Expr::TypeAscription(tasc) = &expr {
+            if let ast::Expr::Accessor(ast::Accessor::Ident(ident)) = tasc.expr.as_ref() {
+                let name = ident.inspect().clone();
+                return match self
+                    .module
+                    .context
+                    .instantiate_typespec(&tasc.t_spec.t_spec)
+                {
+                    Ok(typ) => Ok(ExplicitTypeArg {
+                        name: Some(name),
+                        typ,
+                        loc,
+                    }),
+                    Err((typ, es)) => Err((
+                        ExplicitTypeArg {
+                            name: Some(name),
+                            typ,
+                            loc,
+                        },
+                        es,
+                    )),
+                };
+            }
+        }
+        match self.module.context.expr_to_type(expr) {
+            Ok(typ) => Ok(ExplicitTypeArg {
+                name: None,
+                typ,
+                loc,
+            }),
+            Err((typ, es)) => Err((
+                ExplicitTypeArg {
+                    name: None,
+                    typ,
+                    loc,
+                },
+                es,
+            )),
+        }
+    }
+
     pub(crate) fn lower_acc(
         &mut self,
         acc: ast::Accessor,
@@ -1208,15 +1361,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     Err((acc, errors))
                 }
             }
-            ast::Accessor::TypeApp(t_app) => feature_error!(
-                LowerErrors,
-                LowerError,
-                self.module.context,
-                t_app.loc(),
-                "type application"
-            )
-            .map_err(|errs| (hir::Accessor::public_with_line("<todo>".into(), 0), errs)),
-            // TupleAttr, Subscr are desugared
+            // TypeApp is handled in `lower_expr`. TupleAttr and Subscr are desugared.
             _ => unreachable_error!(LowerErrors, LowerError, self.module.context).map_err(|errs| {
                 (
                     hir::Accessor::public_with_line("<unreachable>".into(), 0),
@@ -4213,6 +4358,9 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 self.lower_dict(dict, expect)
                     .map_err(|(dict, es)| (dict.map(hir::Expr::Dict), es))?,
             ),
+            ast::Expr::Accessor(ast::Accessor::TypeApp(t_app)) => {
+                self.lower_type_app(t_app, expect)?
+            }
             ast::Expr::Accessor(acc) => hir::Expr::Accessor(
                 self.lower_acc(acc, expect)
                     .map_err(|(acc, errs)| (Some(hir::Expr::Accessor(acc)), errs))?,

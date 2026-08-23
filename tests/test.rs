@@ -435,6 +435,11 @@ fn exec_const_op() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_recursive() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_recursive.er", 0)
+}
+
+#[test]
 fn exec_const_kw_args() -> Result<(), ()> {
     // not executed: CPython's `abs`/`len`/... reject keyword arguments
     expect_compile_success("tests/should_ok/const_kw_args.er", 17)
@@ -906,7 +911,7 @@ fn exec_pyimport_err() -> Result<(), ()> {
 
 #[test]
 fn exec_recursive_const_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/recursive_const.er", 0, 2)
+    expect_compile_failure("tests/should_err/recursive_const.er", 0, 3)
 }
 
 #[test]

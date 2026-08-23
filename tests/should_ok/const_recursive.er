@@ -1,0 +1,27 @@
+# Recursive compile-time functions.
+#
+# `if` is a compile-time function whose branches are `do` blocks. Evaluating a
+# `do` block used to run its body eagerly (to give the lambda a singleton return
+# type), so both branches ran and the recursion never reached its base case --
+# it overflowed the compiler's stack instead.
+
+Fact(N: Int): Int = if N <= 1, do 1, do N * Fact(N - 1)
+assert Fact(0) == 1
+assert Fact(1) == 1
+assert Fact(5) == 120
+assert Fact(10) == 3628800
+
+Fib(N: Int): Int = if N <= 1, do N, do Fib(N - 1) + Fib(N - 2)
+assert Fib(0) == 0
+assert Fib(1) == 1
+assert Fib(10) == 55
+
+# tail-recursive shape
+Countdown(N: Int): Int = if N <= 0, do 0, do Countdown(N - 1)
+assert Countdown(20) == 0
+
+# mutual recursion
+IsEven(N: Int): Bool = if N == 0, do True, do IsOdd(N - 1)
+IsOdd(N: Int): Bool = if N == 0, do False, do IsEven(N - 1)
+assert IsEven(6)
+assert not IsEven(7)

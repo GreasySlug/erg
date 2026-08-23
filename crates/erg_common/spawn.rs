@@ -10,6 +10,17 @@ const STACK_SIZE: usize = if cfg!(feature = "large_thread") {
     8 * 1024 * 1024
 };
 
+/// Maximum depth of nested compile-time calls.
+///
+/// This bounds the host stack rather than the number of calls: one const call
+/// clones a `Context` and lowers the callee's body, which costs roughly 70 KiB of
+/// stack, so a budget expressed in calls has to be derived from [`STACK_SIZE`].
+/// Counting calls alone is what let a recursive const function overflow the
+/// stack instead of reporting a `RecursionError`.
+///
+/// The divisor leaves roughly a 2x margin over the measured frame size.
+pub const CONST_CALL_LIMIT: usize = STACK_SIZE / (128 * 1024);
+
 #[macro_export]
 macro_rules! enable_overflow_stacktrace {
     () => {

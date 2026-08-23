@@ -601,27 +601,34 @@ macro_rules! fmt_dbg {
     };
 }
 
-use std::sync::atomic::AtomicU32;
+use std::cell::Cell;
+use std::thread::LocalKey;
 
+/// Tracks how deep the current thread is inside a recursive routine.
+///
+/// The budget is per-thread on purpose: with the `parallel` feature several
+/// modules are analyzed concurrently, and a process-wide counter would both let
+/// one thread spend another's budget and, once decremented past zero, wrap
+/// around and disable the guard entirely.
 pub struct RecursionCounter {
-    count: &'static AtomicU32,
+    depth: &'static LocalKey<Cell<usize>>,
+    limit: usize,
 }
 
 impl Drop for RecursionCounter {
     fn drop(&mut self) {
-        self.count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.depth.with(|d| d.set(d.get().saturating_sub(1)));
     }
 }
 
 impl RecursionCounter {
-    pub fn new(count: &'static AtomicU32) -> Self {
-        count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        Self { count }
+    pub fn new(depth: &'static LocalKey<Cell<usize>>, limit: usize) -> Self {
+        depth.with(|d| d.set(d.get().saturating_add(1)));
+        Self { depth, limit }
     }
 
     pub fn limit_reached(&self) -> bool {
-        self.count.load(std::sync::atomic::Ordering::Relaxed) == 0
+        self.depth.with(|d| d.get()) > self.limit
     }
 }
 
@@ -631,22 +638,22 @@ macro_rules! set_recursion_limit {
         set_recursion_limit!(panic, $msg, 256);
     };
     (panic, $msg:expr, $limit:expr) => {
-        use std::sync::atomic::AtomicU32;
+        thread_local! {
+            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
 
-        static COUNTER: AtomicU32 = AtomicU32::new($limit);
-
-        let counter = $crate::macros::RecursionCounter::new(&COUNTER);
+        let counter = $crate::macros::RecursionCounter::new(&DEPTH, $limit);
         if counter.limit_reached() {
             $crate::log!(err "Recursion limit reached");
             panic!($msg);
         }
     };
     ($returns:expr, $limit:expr) => {
-        use std::sync::atomic::AtomicU32;
+        thread_local! {
+            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
 
-        static COUNTER: AtomicU32 = AtomicU32::new($limit);
-
-        let counter = $crate::macros::RecursionCounter::new(&COUNTER);
+        let counter = $crate::macros::RecursionCounter::new(&DEPTH, $limit);
         if counter.limit_reached() {
             $crate::log!(err "Recursion limit reached");
             $crate::log!(backtrace);

@@ -6,6 +6,7 @@ use erg_common::dict::Dict;
 use erg_common::error::Location;
 #[allow(unused)]
 use erg_common::log;
+use erg_common::macros::RecursionCounter;
 use erg_common::set::Set;
 use erg_common::shared::Shared;
 use erg_common::traits::{Locational, Stream};
@@ -525,6 +526,12 @@ impl<'c> Substituter<'c> {
     }
 }
 
+thread_local! {
+    /// How deep the current thread is inside [`Context::eval_const_lambda`]'s
+    /// eager body evaluation.
+    static LAMBDA_BODY_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Context {
     fn try_get_op_kind_from_token(&self, token: &Token) -> EvalResult<OpKind> {
         match token.kind {
@@ -910,7 +917,7 @@ impl Context {
                             self.caused_by(),
                         )),
                     )),
-                    128
+                    erg_common::spawn::CONST_CALL_LIMIT
                 );
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
@@ -1499,7 +1506,19 @@ impl Context {
             );
             lambda_ctx.params.push((name, vi));
         }
-        let return_t = v_enum(set! {lambda_ctx.eval_const_block(&lambda.body)?});
+        // The body is evaluated only to give the lambda a precise (singleton)
+        // return type. Doing that for a *nested* lambda would run both branches of
+        // an inner `if`, so a recursive const function could never reach its base
+        // case: `Cnt(N: Nat): Nat = if N <= 1, do 1, do Cnt(N - 1)` used to
+        // overflow the compiler's stack. Deeper lambdas fall back to `Obj`; their
+        // value is unaffected, since it comes from actually calling them.
+        let counter = RecursionCounter::new(&LAMBDA_BODY_DEPTH, 1);
+        let return_t = if counter.limit_reached() {
+            Type::Obj
+        } else {
+            v_enum(set! {lambda_ctx.eval_const_block(&lambda.body)?})
+        };
+        drop(counter);
         let sig_t = subr_t(
             SubrKind::from(lambda.op.kind),
             non_default_params.clone(),

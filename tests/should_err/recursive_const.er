@@ -10,5 +10,11 @@ G n = H n
 H n = G n
 Y = G 1 # ERR
 
+# infinite recursion that goes through `if` (a compile-time function): the
+# branches are `do` blocks, so this used to overflow the compiler's stack
+Loop(N: Int): Int = if True, do Loop(N), do 0
+Z = Loop 1 # ERR
+
 print! X
 print! Y
+print! Z

@@ -9,7 +9,9 @@ NotKw: {False} = not(b := True)
 # NOTE: `str` is overloaded, and overload resolution does not match keyword
 # arguments against non-default parameters yet, so `str(object := 1)` is left out.
 LenKw: {3} = len(s := [1, 2, 3])
-RevKw: {[2, 1]} = reversed(seq := [1, 2])
+# `reversed` cannot be a constant on its own -- it builds an iterator at run
+# time (see tests/should_err/stateful_const.er) -- so consume it here.
+RevKw: {3} = sum(reversed(seq := [1, 2]))
 SuccKw: {2} = succ(n := 1)
 PredKw: {0} = pred(n := 1)
 IntKw: {7} = int(obj := "7")

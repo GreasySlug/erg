@@ -1,0 +1,20 @@
+# `map`/`filter`/`zip`/`reversed` build lazy iterators. Folding one to a list
+# and calling that a constant used to make the same constant read differently
+# each time: codegen wrapped the iterator in `List(...)` at every use, draining
+# it, so `print! D` printed `[2, 1]` and then `[]`.
+Dbl(N: Nat): Nat = N * 2
+Odd(N: Nat): Bool = N % 2 == 1
+
+Rev = reversed [1, 2]
+Mapped = map(Dbl, [1, 2])
+Filtered = filter(Odd, [1, 2])
+Zipped = zip([1], [2])
+# the dict views are re-iterable, but `ValueObj::Dict` is a hash map, so folding
+# one to a list also loses Python's insertion order
+Keys = {"a": 1, "b": 2}.keys()
+Values = {"a": 1, "b": 2}.values()
+Items = {"a": 1}.items()
+
+# consuming them is still fine, and still folds
+Summed: {6} = sum(map(Dbl, [1, 2]))
+Every: {True} = all(map(Odd, [1, 3]))

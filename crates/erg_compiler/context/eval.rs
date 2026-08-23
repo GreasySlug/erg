@@ -1702,6 +1702,64 @@ impl Context {
         }
     }
 
+    /// Every class the declared return type of `t` names, across the branches of
+    /// an intersection.
+    ///
+    /// `None` as soon as one branch returns something that is not a nominal
+    /// class: a type variable says nothing about the class the program builds,
+    /// and any branch may be the one that applied. `x[i]` is an intersection of
+    /// `(Nat) -> T` and `(Range) -> List(T)`, so seeing only the `List` would
+    /// reject every fold of an ordinary index.
+    fn declared_return_classes(t: &Type) -> Option<Vec<Str>> {
+        match t {
+            Type::Quantified(quant) => Self::declared_return_classes(quant),
+            Type::And(tys, _) => {
+                let mut all = vec![];
+                for t in tys {
+                    all.extend(Self::declared_return_classes(t)?);
+                }
+                Some(all)
+            }
+            Type::Subr(subr) => match subr.return_t.derefine() {
+                Type::Poly { name, .. } => Some(vec![name]),
+                _ => None,
+            },
+            _ => Some(vec![]),
+        }
+    }
+
+    /// The class `call` builds at run time, when folding it produced a different
+    /// one -- `None` when the fold is faithful.
+    ///
+    /// `reversed [1, 2]` evaluates to the list `[2, 1]`, but the emitted program
+    /// builds a `Reversed`. Typing the constant `{[2, 1]}` then has codegen wrap
+    /// that stateful iterator in `List(...)`, which drains it: the second use of
+    /// the constant sees an empty one. Folding it is still right *inside* a
+    /// larger constant -- `sum(map(F, l))`, or the `all(map(P, xs))` of a
+    /// refinement predicate -- so only a chunk's own value is checked, not the
+    /// nested calls, which go through `eval_const_expr`.
+    fn folded_away_class(&self, call: &Call, val: &ValueObj) -> Option<(String, Str, Type)> {
+        let callee = match &call.attr_name {
+            Some(attr) => self
+                .eval_const_expr(&call.obj)
+                .ok()
+                .and_then(|obj| self.eval_attr(obj, attr).ok()),
+            None => self.eval_const_expr(&call.obj).ok(),
+        };
+        let Some(ValueObj::Subr(subr)) = callee else {
+            return None;
+        };
+        let mut declared = Self::declared_return_classes(subr.sig_t())?;
+        if declared.is_empty() {
+            return None;
+        }
+        let class = val.class();
+        let built = self
+            .get_super_classes_or_self(&class)
+            .any(|c| declared.contains(&c.qual_name()));
+        (!built).then(|| (subr.to_string(), declared.swap_remove(0), class))
+    }
+
     // Evaluate compile-time expression (just Expr on AST) instead of evaluating ConstExpr
     // Return Err if it cannot be evaluated at compile time
     // ConstExprを評価するのではなく、コンパイル時関数の式(AST上ではただのExpr)を評価する
@@ -1714,7 +1772,24 @@ impl Context {
             Expr::Accessor(acc) => self.eval_const_acc(acc),
             Expr::BinOp(bin) => self.eval_const_bin(bin),
             Expr::UnaryOp(unary) => self.eval_const_unary(unary),
-            Expr::Call(call) => self.eval_const_call(call),
+            Expr::Call(call) => {
+                let val = self.eval_const_call(call)?;
+                match self.folded_away_class(call, &val) {
+                    Some((callee, class, folded)) => Err((
+                        ValueObj::Failure,
+                        EvalErrors::from(EvalError::fold_changes_class(
+                            self.cfg.input.clone(),
+                            line!() as usize,
+                            call.loc(),
+                            self.caused_by(),
+                            callee,
+                            class.to_string(),
+                            folded.to_string(),
+                        )),
+                    )),
+                    None => Ok(val),
+                }
+            }
             Expr::List(lis) => self.eval_const_list(lis),
             Expr::Set(set) => self.eval_const_set(set),
             Expr::Dict(dict) => self.eval_const_dict(dict),

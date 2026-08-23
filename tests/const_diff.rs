@@ -207,34 +207,13 @@ const CASES: &[&str] = &[
 /// Each entry must still diverge: fixing one makes this test fail, which is the
 /// reminder to delete the entry. See docs/const-eval-plan.md (phases 3 and 5).
 const KNOWN_DIVERGENT: &[(&str, &str)] = &[
-    // phase 5: these fold to a list, but return a lazy iterator at run time
-    (
-        "reversed([1, 2])",
-        "folds to a list, but returns `Reversed`",
-    ),
-    ("zip([1], [2])", "folds to a list, but returns `zip`"),
-    ("map(Dbl, [1, 2])", "folds to a list, but returns `map`"),
-    (
-        "filter(Odd, [1, 2])",
-        "folds to a list, but returns `filter`",
-    ),
-    // `ValueObj::Dict` is a hash map, so it does not keep insertion order the way
-    // Python's dict does -- which also reorders the views below
+    // `ValueObj::Dict` is an `FxHashMap`, so it does not keep insertion order the
+    // way Python's dict does. Only the printed form differs -- dicts compare
+    // equal regardless of order, and the order-exposing views (`.keys()` and
+    // friends) are no longer folded at all (tests/should_err/stateful_const.er)
     (
         "{\"a\": 1, \"b\": 2}",
         "folds unordered, but Python keeps insertion order",
-    ),
-    (
-        "{\"a\": 1, \"b\": 2}.keys()",
-        "folds to a list, but returns `dict_keys`",
-    ),
-    (
-        "{\"a\": 1, \"b\": 2}.values()",
-        "folds to a list, but returns `dict_values`",
-    ),
-    (
-        "{\"a\": 1}.items()",
-        "folds to a list, but returns `dict_items`",
     ),
 ];
 

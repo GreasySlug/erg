@@ -957,6 +957,11 @@ fn exec_const_op_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_stateful_const_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/stateful_const.er", 0, 7)
+}
+
+#[test]
 fn exec_set() -> Result<(), ()> {
     expect_compile_failure("examples/set.er", 3, 1)
 }

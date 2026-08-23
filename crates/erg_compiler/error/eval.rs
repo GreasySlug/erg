@@ -157,6 +157,46 @@ impl EvalError {
         )
     }
 
+    /// A constant whose folded value is not of the class the emitted program
+    /// builds: `reversed [1, 2]` evaluates to the list `[2, 1]`, but the program
+    /// builds a `Reversed`, and codegen would wrap that stateful iterator in
+    /// `List(...)` at every use -- draining it on the first one.
+    pub fn fold_changes_class(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        callee: String,
+        class: String,
+        folded: String,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(
+                    loc,
+                    vec![],
+                    Some(switch_lang!(
+                        "japanese" => format!("畳み込むと`{folded}`になってしまいます。小文字の名前(実行時変数)に束縛するか、`{class}`を消費する式の中で使ってください"),
+                        "simplified_chinese" => format!("折叠后会变成`{folded}`。请绑定到小写名称(运行时变量)，或在消费`{class}`的表达式中使用"),
+                        "traditional_chinese" => format!("摺疊後會變成`{folded}`。請繫結到小寫名稱(執行時變數)，或在消費`{class}`的表示式中使用"),
+                        "english" => format!("folding it would give a `{folded}` instead; bind it to a lowercase name (a run-time variable), or use it inside an expression that consumes the `{class}`"),
+                    )),
+                )],
+                switch_lang!(
+                    "japanese" => format!("`{callee}`は実行時に`{class}`を作るため、定数として畳み込めません"),
+                    "simplified_chinese" => format!("`{callee}`在运行时构造`{class}`，因此无法折叠为常量"),
+                    "traditional_chinese" => format!("`{callee}`在執行時構造`{class}`，因此無法摺疊為常數"),
+                    "english" => format!("`{callee}` builds a `{class}` at run time, so it cannot be folded into a constant"),
+                ),
+                errno,
+                NotConstExpr,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn index_out_of_range(
         input: Input,
         errno: usize,

@@ -334,16 +334,28 @@ const 関数は `EvalValueResult<TyParam>` を返し、`Err` は必ずハード�
 - `repr` / `format` は表現が実行時と一致するか要検討（`str` で踏んだのと同じ罠。Python の `repr("a")` は
   シングルクォート `'a'`）
 
-### const 関数の戻り値型の不一致
+### const 関数の戻り値型の不一致 ✅
 
 `reversed` / `filter` / `map` / `zip` は const では `List` を返すが、実行時はイテレータオブジェクト。
+`.keys()` / `.values()` / `.items()` も同様（実行時はビュー）。
 
 ```erg
 D = reversed [1, 2]
-assert D == [2, 1]   # 型は {[2, 1]} だが実行時は False
+print! D             # [2, 1]
+print! D             # []  ← 同じ定数が二度目は空
 ```
 
-型を合わせるか、これらを const から外すかの判断が要る。
+codegen は `D` の静的型 `{[2, 1]}`（クラスは `List`）に合わせて使用箇所ごとに `List(...)` で
+包むが、`D` の実体は遅延イテレータなので最初の包みで枯れる。`abs` / `**` と同じ
+「嘘の戻り値型が誤った値になる」系統。
+
+**採った解**: 畳み込み自体は残し、**チャンク自身の値**になるときだけクラス不一致を弾く
+(`eval_const_chunk` の Call アーム → `folded_away_class`)。ネストした呼び出しは
+`eval_const_expr` を通るので `sum(map(F, l))` や篩型述語の `all(map(P, xs))` は今まで通り畳み込める。
+`tests/should_ok/dependent_refinement.er` が const `map` に依存しているので、const から外す案は取れない。
+
+交差型の一部の枝しか nominal でない場合（`x[i]` は `(Nat) -> T` と `(Range) -> List(T)`）は
+判定を放棄する。ここを忘れると全ての添字アクセスが弾かれる。
 
 ### その他の評価機構のギャップ
 
@@ -389,9 +401,13 @@ assert D == [2, 1]   # 型は {[2, 1]} だが実行時は False
 
 | 式 | 内容 | フェーズ |
 | --- | --- | --- |
-| `reversed(...)` / `zip(...)` / `map(...)` / `filter(...)` | List に畳み込むが実行時は遅延イテレータ | 5 |
 | `{"a": 1, "b": 2}` | `ValueObj::Dict` がハッシュマップなので挿入順を保たない | 5 |
-| `{...}.keys()` / `.values()` / `.items()` | List に畳み込むが実行時はビュー（かつ順序も違う） | 5 |
+
+`reversed` / `zip` / `map` / `filter` / `.keys()` / `.values()` / `.items()` は
+定数として畳み込めなくなった（`tests/should_err/stateful_const.er`）ので一覧から外した。
+Dict の順序は**表示だけ**の差（dict の等価比較は順序非依存で、順序が漏れるビューは畳み込まない）。
+直すには `erg_common::Dict` を挿入順保持にする必要があり、コンパイラ全体が使う基盤データ構造なので
+独立した判断として扱う。
 
 ---
 

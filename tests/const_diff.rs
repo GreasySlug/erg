@@ -189,6 +189,10 @@ const CASES: &[&str] = &[
     "-1.5",
     "1e+3",
     "1e-3",
+    "1e0",
+    "245e5",
+    "25E5",
+    "2.5E-2",
     // `Int` is an i64, so negative results below i32 fold too
     "1 - 10000000000",
     "-100000 * 100000",

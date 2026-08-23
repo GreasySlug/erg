@@ -59,7 +59,7 @@ This is a literal representing exponential notation often used in academic calcu
 The notation is the same as in Python.
 
 ```python
-1e-34, 0.4e-10, 2.455+e5, 245e5, 25E5, ...
+1e-34, 0.4e-10, 2.455e+5, 245e5, 25E5, ...
 ```
 
 ```python

@@ -690,19 +690,32 @@ impl Lexer /*<'a>*/ {
         }
     }
 
+    /// Whether `c`, followed by `next`, starts an exponent and not a symbol.
+    /// A bare `e` does not: `3e` is `3 * e`, the same way `3x` is `3 * x`.
+    fn is_exponent_start(c: char, next: Option<char>) -> bool {
+        (c == 'e' || c == 'E') && next.is_some_and(|n| n == '+' || n == '-' || n.is_ascii_digit())
+    }
+
+    /// The `e5` of `245e5`: an optional sign and then at least one digit.
     fn lex_exponent(&mut self, mantissa: String) -> LexResult<Token> {
         let mut num = mantissa;
-        debug_power_assert!(self.peek_cur_ch(), ==, Some('e'));
-        num.push(self.consume().unwrap()); // e
-        if self.peek_cur_ch().is_some() {
-            num.push(self.consume().unwrap()); // + | -
-            while let Some(cur) = self.peek_cur_ch() {
-                if cur.is_ascii_digit() || cur == '_' {
-                    num.push(self.consume().unwrap());
-                } else {
-                    break;
-                }
+        debug_power_assert!(self.peek_cur_ch().map(|c| c == 'e' || c == 'E'), ==, Some(true));
+        num.push(self.consume().unwrap()); // e | E
+        if self.peek_cur_ch().is_some_and(|c| c == '+' || c == '-') {
+            num.push(self.consume().unwrap());
+        }
+        let mut has_digit = false;
+        while let Some(cur) = self.peek_cur_ch() {
+            if cur.is_ascii_digit() {
+                has_digit = true;
+                num.push(self.consume().unwrap());
+            } else if cur == '_' {
+                num.push(self.consume().unwrap());
+            } else {
+                break;
             }
+        }
+        if has_digit {
             Ok(self.emit_singleline_token(RatioLit, &num))
         } else {
             let token = self.emit_singleline_token(RatioLit, &num);
@@ -757,10 +770,8 @@ impl Lexer /*<'a>*/ {
                     }
                 }
                 c if Self::is_valid_continue_symbol_ch(c) => {
-                    // exponent (e.g. 10e+3)
-                    if c == 'e'
-                        && (self.peek_next_ch() == Some('+') || self.peek_next_ch() == Some('-'))
-                    {
+                    // exponent (e.g. 10e+3, 245e5, 25E5)
+                    if Self::is_exponent_start(c, self.peek_next_ch()) {
                         return self.lex_exponent(num);
                     } else {
                         // IntLit * Symbol(e.g. 3x + 1)
@@ -851,7 +862,7 @@ impl Lexer /*<'a>*/ {
         while let Some(cur) = self.peek_cur_ch() {
             if cur.is_ascii_digit() || cur == '_' {
                 num.push(self.consume().unwrap());
-            } else if cur == 'e' {
+            } else if Self::is_exponent_start(cur, self.peek_next_ch()) {
                 return self.lex_exponent(num);
             } else {
                 break;

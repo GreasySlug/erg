@@ -126,4 +126,16 @@ copied.dec! 1.0
 assert copied == 2.0
 assert mut == 3.0
 
+# Every exponent form doc/EN/syntax/01_literal.md lists. Only the signed ones
+# used to lex: `245e5` broke into `245` and a symbol `e5`, and a bare `e` still
+# does, the same way `3x` is `3 * x`.
+assert 1e0 == 1
+assert 245e5 == 24500000
+assert 25E5 == 2500000
+assert 1.5e2 == 150
+assert 2.5E-2 == 0.025
+assert 1e1_0 == 10000000000
+e = 3
+assert 3 * e == 9
+
 print! "OK"

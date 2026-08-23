@@ -3492,6 +3492,54 @@ impl Context {
         // holding a type variable cannot be inferred yet (the same is true of a plain
         // `f|T|(g: (T or NoneType) -> (T or NoneType))`). Write `o.set!(f(o.get()))`.
         self.register_builtin_type(opt_mut_t, option_mut, vis.clone(), Const, Some(OPTION_MUT));
+        /* Cell! */
+        // A box that can hold any `T` and replace it. Unlike dedicated `Int!`/`Str!`
+        // classes, this is the general way to make an immutable type mutable
+        // (including unions, which cannot implement `Mutizable`).
+        // Methods of `T` are used via `.get()`. Making `Cell! T <: T` would let
+        // assert-casting strip the cell down to `T` and then `.set!` would fail.
+        // There is no `.update!`: an unconstrained `x.update!` would otherwise
+        // infer `x` as `Cell!` instead of `Int!` (see `mutizable.er`).
+        let cell_t = poly(MUT_CELL, vec![ty_tp(T.clone())]);
+        let mut cell = Self::builtin_poly_class(MUT_CELL, vec![PS::t_nd(TY_T)], 4);
+        cell.register_superclass(Obj, &obj);
+        cell.register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
+            .unwrap();
+        cell.register_builtin_py_impl(
+            FUNDAMENTAL_CALL,
+            no_var_func(vec![kw(KW_VALUE, T.clone())], vec![], cell_t.clone()).quantify(),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNDAMENTAL_CALL),
+        );
+        let t_get = fn0_met(ref_(cell_t.clone()), T.clone()).quantify();
+        cell.register_builtin_py_impl(
+            FUNC_GET,
+            t_get,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_GET),
+        );
+        let t_set = pr1_met(ref_mut(cell_t.clone(), None), T.clone(), NoneType).quantify();
+        cell.register_builtin_py_impl(
+            PROC_SET,
+            t_set,
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+            Some(FUNC_SET),
+        );
+        // no `Immutizable` impl: `x.update!` on an unconstrained parameter would
+        // otherwise prefer `Cell!` over `Int!`/`Nat!` (see `mutizable.er`).
+        // Write `c.set!(f(c.get()))`.
+        let mut cell_copy = Self::builtin_methods(Some(mono(COPY)), 1);
+        cell_copy.register_builtin_erg_impl(
+            FUNC_COPY,
+            fn0_met(ref_(cell_t.clone()), cell_t.clone()).quantify(),
+            Immutable,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        cell.register_trait_methods(cell_t.clone(), cell_copy);
+        self.register_builtin_type(cell_t, cell, vis.clone(), Const, Some(CELL));
         /* Float! */
         let mut float_mut = Self::builtin_mono_class(MUT_FLOAT, 2);
         float_mut.register_superclass(Float, &float);

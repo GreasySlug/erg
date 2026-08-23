@@ -1,0 +1,13 @@
+# misuses of `Cell!`
+
+c: Cell! Int = Cell!(1)
+
+# ERR: the cell only takes an `Int`
+c.set! "a"
+
+# ERR: `.set!` is a procedure of `Cell!`, not of `Int`
+i = 1
+i.set! 2
+
+# ERR: a `Cell!` needs a value; there is no empty cell
+_e = Cell!()

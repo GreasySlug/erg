@@ -26,6 +26,7 @@ fn main() -> std::io::Result<()> {
             eprintln!("failed to create the directory: {erg_path}");
         });
     }
+    println!("cargo:rerun-if-changed=lib");
     println!("cargo:rustc-env=CARGO_ERG_PATH={erg_path}");
     // create a std library in ".erg"
     copy_dir(&erg_path, "lib").unwrap_or_else(|_| {

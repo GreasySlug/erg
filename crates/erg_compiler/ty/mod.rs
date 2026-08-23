@@ -2414,6 +2414,7 @@ impl Type {
                     name: "Dict".into(),
                     params: params.clone(),
                 }),
+                "Cell!" => params.first().and_then(get_t_from_tp),
                 _ => None,
             },
             _ => None,
@@ -2561,6 +2562,18 @@ impl Type {
             Self::Refinement(refine) => refine.t.is_mut_type(),
             Self::And(tys, _) => tys.iter().any(|t| t.is_mut_type()),
             _ => false,
+        }
+    }
+
+    /// Inner type of `Cell! T`, if any.
+    pub fn cell_content(&self) -> Option<Type> {
+        match self {
+            Self::FreeVar(fv) if fv.is_linked() => fv.crack().cell_content(),
+            Self::Poly { name, params } if &name[..] == "Cell!" => {
+                params.first().and_then(get_t_from_tp)
+            }
+            Self::Refinement(refine) => refine.t.cell_content(),
+            _ => None,
         }
     }
 

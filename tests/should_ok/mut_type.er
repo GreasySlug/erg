@@ -1,0 +1,26 @@
+# User-defined class with a mutable field. The `!` on the class name marks the
+# whole type mutable; `.x` can be rewritten, `.y` cannot.
+Point! = Class {.x = Int!; .y = Int}
+Point!.
+    inc_x! ref!(self) = self.x.update! x -> x + 1
+
+p = Point!.new {.x = !0; .y = 0}
+p.inc_x!()
+assert p.x == 1
+assert p.y == 0
+
+# `Cell! T` is a box that can replace its content. Read with `.get()`, write
+# with `.set!`. Dedicated types such as `Int!` still come from `!x`.
+c: Cell! Int = Cell!(1)
+assert c.get() == 1
+c.set! 2
+assert c.get() == 2
+c.set! 3
+assert c.get() == 3
+assert c.copy().get() == 3
+
+# a union can be stored; `T` is taken from the parameter so it is the union
+# itself, not the singleton of the first alternative
+wrap(v: Int or Str): Cell!(Int or Str) = Cell!(v)
+x = wrap(1)
+assert x.get() in Int

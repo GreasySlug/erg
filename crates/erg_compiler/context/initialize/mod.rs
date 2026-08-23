@@ -562,6 +562,9 @@ const OPTION: &str = "Option";
 /// Unlike `Option`, which is only an alias for `T or NoneType`, this is a class.
 const MUT_OPTION: &str = "Option!";
 const OPTION_MUT: &str = "OptionMut";
+/// `Cell! T`: a mutable box holding a `T`.
+const MUT_CELL: &str = "Cell!";
+const CELL: &str = "Cell";
 const RESULT: &str = "Result";
 const EITHER: &str = "Either";
 const KEYS: &str = "keys";

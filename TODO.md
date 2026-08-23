@@ -74,7 +74,7 @@
   - [x] Type variable
     - [x] Dependent type variable
     - [ ] Polymorphic type variable
-  - [ ] Mutable type
+  - [x] Mutable type
     - [x] Dependent mutable method
   - [x] Projection type
     - [x] Projection call type

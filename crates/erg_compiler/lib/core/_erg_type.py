@@ -65,3 +65,74 @@ class MutType:
     # This method is a fallback to implement pseudo-inheritance.
     def __getattr__(self, name):
         return object.__getattribute__(self.value, name)
+
+
+def _unwrap_mut(other):
+    return other.value if isinstance(other, MutType) else other
+
+
+class Cell(MutType):
+    """`Cell! T`: a box holding a `T` that can be replaced."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return "Cell!({})".format(repr(self.value))
+
+    def __str__(self):
+        return str(self.value)
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def __eq__(self, other):
+        return self.value == _unwrap_mut(other)
+
+    def __ne__(self, other):
+        return self.value != _unwrap_mut(other)
+
+    def __lt__(self, other):
+        return self.value < _unwrap_mut(other)
+
+    def __le__(self, other):
+        return self.value <= _unwrap_mut(other)
+
+    def __gt__(self, other):
+        return self.value > _unwrap_mut(other)
+
+    def __ge__(self, other):
+        return self.value >= _unwrap_mut(other)
+
+    def __add__(self, other):
+        return self.value + _unwrap_mut(other)
+
+    def __radd__(self, other):
+        return other + self.value
+
+    def __sub__(self, other):
+        return self.value - _unwrap_mut(other)
+
+    def __rsub__(self, other):
+        return other - self.value
+
+    def __mul__(self, other):
+        return self.value * _unwrap_mut(other)
+
+    def __rmul__(self, other):
+        return other * self.value
+
+    def __bool__(self):
+        return bool(self.value)
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+    def update(self, f):
+        self.value = f(self.value)
+
+    def copy(self):
+        return Cell(self.value)

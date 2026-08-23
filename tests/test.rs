@@ -335,6 +335,11 @@ fn exec_mut() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_mut_type() -> Result<(), ()> {
+    expect_success("tests/should_ok/mut_type.er", 0)
+}
+
+#[test]
 fn exec_mutizable() -> Result<(), ()> {
     expect_success("tests/should_ok/mutizable.er", 0)
 }
@@ -952,6 +957,11 @@ fn exec_multiline_invalid_next() -> Result<(), ()> {
 #[test]
 fn exec_mut_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/mut.er", 0, 1)
+}
+
+#[test]
+fn exec_mut_type_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/mut_type.er", 0, 3)
 }
 
 #[test]

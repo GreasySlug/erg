@@ -27,6 +27,7 @@ from _erg_result import (
 )
 from _erg_set import Set
 from _erg_str import Str, StrMut
+from _erg_type import Cell
 from _erg_type import MutType as _MutType
 from _erg_iterable import (iterable_map, iterable_filter, iterable_reduce,
                         iterable_nth, iterable_skip, iterable_all,

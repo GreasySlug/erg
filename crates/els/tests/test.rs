@@ -32,6 +32,7 @@ const FILE_FOLD: &str = "tests/fold.er";
 const FILE_UNUSED_VARS: &str = "tests/unused_vars.er";
 const FILE_COMMENTS: &str = "tests/comments.er";
 const FILE_QUANTIFIED: &str = "tests/quantified.er";
+const FILE_INLAY_HINT: &str = "tests/inlay_hint.er";
 const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
 const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 
@@ -641,12 +642,48 @@ fn test_inlay_hint() -> Result<(), Box<dyn std::error::Error>> {
     let InlayHintLabel::String(label) = &hints[0].label else {
         todo!()
     };
-    assert_eq!(label, ": {1}");
+    assert_eq!(label, ": Nat");
     let InlayHintLabel::String(label) = &hints[1].label else {
         todo!()
     };
-    // `x + 1` (x: {1}) is refined to the singleton `{2}`
-    assert_eq!(label, ": {2}");
+    // `x + 1` (x: {1}) is a Nat; singleton refinements are stripped for display
+    assert_eq!(label, ": Nat");
+    Ok(())
+}
+
+#[test]
+fn test_inlay_hint_derefines_singletons() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INLAY_HINT).canonicalize()?)?;
+    client.notify_open(FILE_INLAY_HINT)?;
+    let hints = client.request_inlay_hint(uri.raw())?.unwrap();
+    let labels: Vec<String> = hints
+        .iter()
+        .filter_map(|h| match &h.label {
+            InlayHintLabel::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        labels.iter().any(|l| l == ": List(Str, 3)"),
+        "expected list type hint, got {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == ": Str"),
+        "expected element type hint, got {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == ": Nat!"),
+        "expected mutable nat type hint, got {labels:?}"
+    );
+    assert!(
+        labels.iter().all(|l| !l.contains("Good morning")
+            && !l.contains("Hello")
+            && !l.contains("Good evening")),
+        "inlay hints must not repeat source values, got {labels:?}"
+    );
     Ok(())
 }
 

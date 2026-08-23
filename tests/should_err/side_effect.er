@@ -23,6 +23,10 @@ g3 x: Int =
 # NG
 g4 x: Int =
     arr[0] + x
+# NG: internally mutable list
+xs = [!1, !2]
+g5 x: Int =
+    xs[0] + x
 
 C! = Class Dict! { Str: Int }
 # OK

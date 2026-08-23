@@ -1,0 +1,5 @@
+greetings = ["Good morning", "Hello", "Good evening"]
+for! greetings, greeting =>
+    print! "\{greeting}, world!"
+a = !1
+print! a.pred()

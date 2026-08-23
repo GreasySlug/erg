@@ -24,3 +24,14 @@ assert c.copy().get() == 3
 wrap(v: Int or Str): Cell!(Int or Str) = Cell!(v)
 x = wrap(1)
 assert x.get() in Int
+
+# procedural methods on an immutable class are allowed if they do not mutate `self`
+Rng = Class {.n = Nat}
+Rng.
+    sample! ref self = self.n
+r = Rng.new {.n = 1}
+assert r.sample!() == 1
+
+# internally mutable data may be read through a parameter
+nth0 xs: [Int!; 2] = xs[0]
+assert nth0([!1, !2]) == 1

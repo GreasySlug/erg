@@ -10,10 +10,10 @@ use erg_common::Str;
 use erg_common::{impl_display_from_debug, log};
 use erg_parser::ast::{ParamPattern, VarName};
 
-use crate::ty::{HasType, Ownership, Visibility};
+use crate::ty::{HasType, Ownership, Type, Visibility};
 
 use crate::error::{OwnershipError, OwnershipErrors};
-use crate::hir::{self, Accessor, Block, Def, Expr, Identifier, List, Signature, Tuple, HIR};
+use crate::hir::{self, Accessor, Block, Call, Def, Expr, Identifier, List, Signature, Tuple, HIR};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WrapperKind {
@@ -39,6 +39,10 @@ pub struct OwnershipChecker {
     cfg: ErgConfig,
     path_stack: Vec<Visibility>,
     dict: Dict<Str, LocalVars>,
+    /// Directed graph of named mutable objects that may store one another.
+    /// Key: unique id of the source variable; value: (dest id, call site).
+    stores: Dict<Str, Vec<(Str, Location)>>,
+    store_names: Dict<Str, Str>,
     errs: OwnershipErrors,
 }
 
@@ -48,6 +52,8 @@ impl OwnershipChecker {
             cfg,
             path_stack: vec![],
             dict: Dict::new(),
+            stores: Dict::new(),
+            store_names: Dict::new(),
             errs: OwnershipErrors::empty(),
         }
     }
@@ -74,6 +80,7 @@ impl OwnershipChecker {
         for chunk in hir.module.iter() {
             self.check_expr(chunk, Ownership::Owned, true);
         }
+        self.emit_cycle_errors();
         log!(
             "{DEBUG_MAIN}[DEBUG] the ownership checking process has completed, found errors: {}{RESET}",
             self.errs.len()
@@ -152,6 +159,7 @@ impl OwnershipChecker {
             Expr::Accessor(acc) => self.check_acc(acc, ownership, chunk),
             // TODO: referenced
             Expr::Call(call) => {
+                self.record_mut_store(call);
                 let Some(sig_t) = call.signature_t() else {
                     return;
                 };
@@ -385,6 +393,141 @@ impl OwnershipChecker {
             }
         }
         Ok(())
+    }
+
+    fn record_mut_store(&mut self, call: &Call) {
+        let Some(attr) = call.attr_name.as_ref() else {
+            return;
+        };
+        if !attr.is_procedural() {
+            return;
+        }
+        let Some(from) = Self::cyclic_container_ident(&call.obj) else {
+            return;
+        };
+        for arg in call.args.pos_args.iter() {
+            if let Some(to) = Self::cyclic_container_ident(&arg.expr) {
+                self.add_store_edge(from, to, call.loc());
+            }
+        }
+        for arg in call.args.kw_args.iter() {
+            if let Some(to) = Self::cyclic_container_ident(&arg.expr) {
+                self.add_store_edge(from, to, call.loc());
+            }
+        }
+    }
+
+    fn cyclic_container_ident(expr: &Expr) -> Option<&Identifier> {
+        match expr {
+            Expr::Accessor(Accessor::Ident(ident)) if Self::can_form_ref_cycle(ident.ref_t()) => {
+                Some(ident)
+            }
+            Expr::TypeAsc(tasc) => Self::cyclic_container_ident(&tasc.expr),
+            _ => None,
+        }
+    }
+
+    /// Mutable types that can hold other objects (not scalar cells such as `Int!`).
+    fn can_form_ref_cycle(t: &Type) -> bool {
+        if !t.is_mut_type() {
+            return false;
+        }
+        !matches!(
+            &t.local_name()[..],
+            "Int!" | "Nat!" | "Bool!" | "Float!" | "Ratio!" | "Str!" | "Complex!"
+        )
+    }
+
+    fn ident_key(ident: &Identifier) -> Str {
+        Str::from(format!("{}#{}", ident.vi.def_loc, ident.inspect()))
+    }
+
+    fn add_store_edge(&mut self, from: &Identifier, to: &Identifier, loc: Location) {
+        let from_key = Self::ident_key(from);
+        let to_key = Self::ident_key(to);
+        self.store_names
+            .insert(from_key.clone(), from.inspect().clone());
+        self.store_names
+            .insert(to_key.clone(), to.inspect().clone());
+        self.stores.entry(from_key).or_default().push((to_key, loc));
+    }
+
+    fn emit_cycle_errors(&mut self) {
+        let graph = self.stores.clone();
+        let names = self.store_names.clone();
+        let mut color: Dict<Str, u8> = Dict::new();
+        let mut stack: Vec<Str> = vec![];
+        let mut reported: Set<Str> = Set::new();
+        let mut errors = vec![];
+        for start in graph.keys() {
+            if color.get(start).copied().unwrap_or(0) == 0 {
+                Self::dfs_cycles(
+                    &graph,
+                    &names,
+                    start,
+                    &mut color,
+                    &mut stack,
+                    &mut reported,
+                    &mut errors,
+                );
+            }
+        }
+        for (loc, cycle) in errors {
+            self.errs.push(OwnershipError::cycle_error(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                &cycle,
+                self.full_path(),
+            ));
+        }
+    }
+
+    fn dfs_cycles(
+        graph: &Dict<Str, Vec<(Str, Location)>>,
+        names: &Dict<Str, Str>,
+        node: &Str,
+        color: &mut Dict<Str, u8>,
+        stack: &mut Vec<Str>,
+        reported: &mut Set<Str>,
+        errors: &mut Vec<(Location, String)>,
+    ) {
+        color.insert(node.clone(), 1);
+        stack.push(node.clone());
+        if let Some(edges) = graph.get(node) {
+            for (dest, loc) in edges.iter() {
+                let dest_color = color.get(dest).copied().unwrap_or(0);
+                if dest_color == 1 {
+                    if let Some((key, cycle)) = Self::cycle_from_stack(stack, names, dest) {
+                        if reported.insert(key) {
+                            errors.push((*loc, cycle));
+                        }
+                    }
+                } else if dest_color == 0 {
+                    Self::dfs_cycles(graph, names, dest, color, stack, reported, errors);
+                }
+            }
+        }
+        stack.pop();
+        color.insert(node.clone(), 2);
+    }
+
+    fn cycle_from_stack(
+        stack: &[Str],
+        names: &Dict<Str, Str>,
+        dest: &Str,
+    ) -> Option<(Str, String)> {
+        let start = stack.iter().position(|n| n == dest)?;
+        let nodes = &stack[start..];
+        let mut key_parts: Vec<&str> = nodes.iter().map(|s| &s[..]).collect();
+        key_parts.sort_unstable();
+        let key = Str::from(key_parts.join("|"));
+        let mut path: Vec<&str> = nodes
+            .iter()
+            .map(|k| names.get(k).map(|s| &s[..]).unwrap_or(&k[..]))
+            .collect();
+        path.push(names.get(dest).map(|s| &s[..]).unwrap_or(&dest[..]));
+        Some((key, path.join(" → ")))
     }
 }
 

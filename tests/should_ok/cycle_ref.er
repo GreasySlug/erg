@@ -1,0 +1,9 @@
+# cloning yields a distinct object, so this is not a cycle
+a as List!(Obj, _) = ![]
+a.push! a.copy()
+
+# independent lists; pushing a value does not create a cycle
+x as List!(Nat, _) = ![1]
+y as List!(Nat, _) = ![2]
+x.push! 3
+y.push! 4

@@ -340,6 +340,11 @@ fn exec_mut_type() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_cycle_ref() -> Result<(), ()> {
+    expect_success("tests/should_ok/cycle_ref.er", 0)
+}
+
+#[test]
 fn exec_mutizable() -> Result<(), ()> {
     expect_success("tests/should_ok/mutizable.er", 0)
 }
@@ -890,7 +895,7 @@ fn exec_side_effect() -> Result<(), ()> {
 
 #[test]
 fn exec_side_effect_test() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/side_effect.er", 6, 5)
+    expect_compile_failure("tests/should_err/side_effect.er", 6, 6)
 }
 
 #[test]
@@ -962,6 +967,16 @@ fn exec_mut_err() -> Result<(), ()> {
 #[test]
 fn exec_mut_type_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/mut_type.er", 0, 3)
+}
+
+#[test]
+fn exec_mut_class_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/mut_class.er", 0, 4)
+}
+
+#[test]
+fn exec_cycle_ref_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/cycle_ref.er", 0, 2)
 }
 
 #[test]

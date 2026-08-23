@@ -15,7 +15,7 @@ use erg_common::traits::NoTypeDisplay;
 use erg_common::traits::{Locational, Runnable, Stream};
 use erg_compiler::artifact::{BuildRunnable, IncompleteArtifact};
 use erg_compiler::hir::{Block, Call, ClassDef, Def, Expr, Lambda, Params, PatchDef, Signature};
-use erg_compiler::ty::HasType;
+use erg_compiler::ty::{HasType, Type};
 use lsp_types::{
     InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, InlayHintTooltip, Position,
 };
@@ -28,6 +28,19 @@ use crate::util::{self, loc_to_range, NormalizedUrl};
 pub struct InlayHintGenerator<'s, C: BuildRunnable, P: Parsable> {
     _server: &'s Server<C, P>,
     uri: Value,
+}
+
+/// Strip singleton refinements (`{1}` → `Nat`, `{["a", "b"]}` → `List(Str, 2)`)
+/// and bounded types (`Str..Obj` → `Str`) so inlay hints show general types
+/// instead of repeating the value already written in the source.
+///
+/// `derefine` peels only one refinement layer, so a second pass is needed to
+/// strip refinements that remain in type parameters (`List({"a"}, 1)` → `List(Str, 1)`).
+fn hint_t(t: &Type) -> Type {
+    match t.derefine() {
+        Type::Bounded { sub, .. } => hint_t(&sub),
+        other => other.derefine(),
+    }
 }
 
 impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
@@ -132,7 +145,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
             let (Some(ln_end), Some(col_end)) = (nd_param.ln_end(), nd_param.col_end()) else {
                 continue;
             };
-            let hint = self.type_anot(ln_end, col_end, &nd_param.vi.t, false);
+            let hint = self.type_anot(ln_end, col_end, hint_t(&nd_param.vi.t), false);
             result.push(hint);
         }
         if let Some(var_params) = &params.var_params {
@@ -140,7 +153,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
                 return result;
             }
             if let (Some(ln_end), Some(col_end)) = (var_params.ln_end(), var_params.col_end()) {
-                let hint = self.type_anot(ln_end, col_end, &var_params.vi.t, false);
+                let hint = self.type_anot(ln_end, col_end, hint_t(&var_params.vi.t), false);
                 result.push(hint);
             }
         }
@@ -152,7 +165,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
             else {
                 continue;
             };
-            let hint = self.type_anot(ln_end, col_end, &d_param.sig.vi.t, false);
+            let hint = self.type_anot(ln_end, col_end, hint_t(&d_param.sig.vi.t), false);
             result.push(hint);
         }
         for guard in params.guards.iter() {
@@ -184,7 +197,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
                 return result;
             };
             if let Some((ln, col)) = def.sig.ln_end().zip(def.sig.col_end()) {
-                let hint = self.type_anot(ln, col, return_t, subr.params.parens.is_none());
+                let hint = self.type_anot(ln, col, hint_t(return_t), subr.params.parens.is_none());
                 result.push(hint);
             }
             if subr.params.parens.is_none() {
@@ -202,7 +215,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
         // don't show hints for compiler internal variables
         if def.sig.t_spec().is_none() && !def.sig.ident().inspect().starts_with(['%']) {
             if let Some((ln, col)) = def.sig.ln_begin().zip(def.sig.col_end()) {
-                let hint = self.type_anot(ln, col, def.sig.ident().ref_t(), false);
+                let hint = self.type_anot(ln, col, hint_t(def.sig.ident().ref_t()), false);
                 result.push(hint);
             }
         }
@@ -225,7 +238,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
             .zip(lambda.params.col_end())
             .zip(lambda.ref_t().return_t())
         {
-            let hint = self.type_anot(ln, col, return_t, lambda.params.parens.is_none());
+            let hint = self.type_anot(ln, col, hint_t(return_t), lambda.params.parens.is_none());
             result.push(hint);
         }
         result

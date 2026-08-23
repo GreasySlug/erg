@@ -10,7 +10,7 @@ use erg_parser::token::TokenKind;
 
 use crate::context::Context;
 use crate::error::{EffectError, EffectErrors};
-use crate::hir::{Call, Def, Dict, Expr, List, Params, Set, Signature, Tuple, HIR};
+use crate::hir::{Call, ClassDef, Def, Dict, Expr, List, Params, Set, Signature, Tuple, HIR};
 use crate::ty::{HasType, Visibility};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,18 +98,7 @@ impl<'c> SideEffectChecker<'c> {
                     self.check_def(def);
                 }
                 Expr::ClassDef(class_def) => {
-                    if let Some(req_sup) = &class_def.require_or_sup {
-                        self.check_expr(req_sup);
-                    }
-                    let name_and_vis = Visibility::new(
-                        class_def.sig.vis().clone(),
-                        class_def.sig.inspect().clone(),
-                    );
-                    self.path_stack.push(name_and_vis);
-                    for def in class_def.all_methods() {
-                        self.check_expr(def);
-                    }
-                    self.path_stack.pop();
+                    self.check_class_def(class_def, true);
                 }
                 Expr::PatchDef(patch_def) => {
                     self.check_expr(patch_def.base.as_ref());
@@ -337,12 +326,7 @@ impl<'c> SideEffectChecker<'c> {
                 self.check_def(def);
             }
             Expr::ClassDef(class_def) => {
-                if let Some(req_sup) = &class_def.require_or_sup {
-                    self.check_expr(req_sup);
-                }
-                for def in class_def.all_methods() {
-                    self.check_expr(def);
-                }
+                self.check_class_def(class_def, false);
             }
             Expr::PatchDef(patch_def) => {
                 self.check_expr(patch_def.base.as_ref());
@@ -470,7 +454,7 @@ impl<'c> SideEffectChecker<'c> {
             Expr::Accessor(acc) => {
                 if !self.in_context_effects_allowed()
                     && !acc.var_info().is_parameter()
-                    && acc.ref_t().is_mut_type()
+                    && acc.ref_t().contains_mut_type()
                     && acc.root_obj().is_none_or(|obj| !obj.ref_t().is_ref())
                     && acc.var_info().def_namespace() != &self.full_path()
                 {
@@ -487,6 +471,79 @@ impl<'c> SideEffectChecker<'c> {
             | Expr::Compound(_)
             | Expr::Import(_)
             | Expr::Dummy(_) => {}
+        }
+    }
+
+    fn check_class_def(&mut self, class_def: &ClassDef, push_path: bool) {
+        if let Some(req_sup) = &class_def.require_or_sup {
+            self.check_expr(req_sup);
+        }
+        self.check_class_mutability(class_def);
+        if push_path {
+            let name_and_vis =
+                Visibility::new(class_def.sig.vis().clone(), class_def.sig.inspect().clone());
+            self.path_stack.push(name_and_vis);
+        }
+        for def in class_def.all_methods() {
+            self.check_expr(def);
+        }
+        if push_path {
+            self.path_stack.pop();
+        }
+    }
+
+    fn check_class_mutability(&mut self, class_def: &ClassDef) {
+        let name = class_def.sig.inspect();
+        if !name.ends_with('!')
+            && class_def
+                .obj
+                .base_or_sup()
+                .is_some_and(|t| t.typ().requires_mut_name())
+        {
+            self.errs.push(EffectError::mut_type_in_immutable_class(
+                self.cfg.input.clone(),
+                line!() as usize,
+                class_def.sig.loc(),
+                name,
+                self.full_path(),
+            ));
+        }
+        for method in class_def.all_methods() {
+            self.check_method_mut_self(name, method);
+        }
+    }
+
+    fn check_method_mut_self(&mut self, class_name: &Str, method: &Expr) {
+        let Expr::Def(def) = method else {
+            return;
+        };
+        let Signature::Subr(subr) = &def.sig else {
+            return;
+        };
+        let Some(self_param) = subr.params.non_defaults.first() else {
+            return;
+        };
+        if !self_param.vi.t.is_refmut() {
+            return;
+        }
+        let loc = self_param.loc();
+        if !class_name.ends_with('!') {
+            self.errs.push(EffectError::mut_method_on_immut_type(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                class_name,
+                self.full_path(),
+            ));
+        }
+        if !def.sig.is_procedural() {
+            self.errs.push(EffectError::refmut_self_in_function(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                def.sig.inspect(),
+                self.full_path(),
+            ));
         }
     }
 

@@ -2565,6 +2565,70 @@ impl Type {
         }
     }
 
+    /// True if this type is nominally mutable (`Int!`, `List!`) or contains a
+    /// mutable type internally (`List(Int!, n)`, `{.x = Int!}`).
+    ///
+    /// Subroutine types are excluded: `(Int! -> Int)` is not itself mutable data.
+    pub fn contains_mut_type(&self) -> bool {
+        if self.is_mut_type() {
+            return true;
+        }
+        match self {
+            Self::FreeVar(fv) if fv.is_linked() => fv.unwrap_linked().contains_mut_type(),
+            Self::FreeVar(fv) => {
+                fv.get_subsup().is_some_and(|(sub, sup)| {
+                    fv.dummy_link();
+                    let res = sub.contains_mut_type() || sup.contains_mut_type();
+                    fv.undo();
+                    res
+                }) || fv.get_type().is_some_and(|t| t.contains_mut_type())
+            }
+            Self::Record(rec) => rec.iter().any(|(_, t)| t.contains_mut_type()),
+            Self::NamedTuple(rec) => rec.iter().any(|(_, t)| t.contains_mut_type()),
+            Self::Poly { params, .. } => params
+                .iter()
+                .any(|tp| tp.has_type_satisfies(|t| t.contains_mut_type())),
+            Self::Quantified(t) => t.contains_mut_type(),
+            Self::Refinement(refine) => refine.t.contains_mut_type(),
+            Self::Structural(ty) => ty.contains_mut_type(),
+            Self::And(tys, _) => tys.iter().any(|t| t.contains_mut_type()),
+            Self::Or(tys) => tys.iter().any(|t| t.contains_mut_type()),
+            Self::Not(t) => t.contains_mut_type(),
+            Self::Ref(t) => t.contains_mut_type(),
+            Self::RefMut { before, after } => {
+                before.contains_mut_type() || after.as_ref().is_some_and(|t| t.contains_mut_type())
+            }
+            Self::Bounded { sub, sup } => sub.contains_mut_type() || sup.contains_mut_type(),
+            _ => false,
+        }
+    }
+
+    /// True if this type is nominally mutable, or is a record/tuple that has a
+    /// nominally mutable field (possibly nested).
+    ///
+    /// Unlike [`Type::contains_mut_type`], this does not look into container
+    /// type arguments. `List(Int!)` is only internally mutable; `{.x = Int!}`
+    /// and `List!` require a `!` on a user type that uses them as a field/base.
+    pub fn requires_mut_name(&self) -> bool {
+        if self.is_mut_type() {
+            return true;
+        }
+        match self {
+            Self::FreeVar(fv) if fv.is_linked() => fv.crack().requires_mut_name(),
+            Self::Record(rec) => rec.values().any(|t| t.requires_mut_name()),
+            Self::NamedTuple(rec) => rec.iter().any(|(_, t)| t.requires_mut_name()),
+            Self::Refinement(refine) => refine.t.requires_mut_name(),
+            Self::Structural(ty) => ty.requires_mut_name(),
+            Self::And(tys, _) => tys.iter().any(|t| t.requires_mut_name()),
+            Self::Or(tys) => tys.iter().any(|t| t.requires_mut_name()),
+            Self::Ref(t) => t.requires_mut_name(),
+            Self::RefMut { before, after } => {
+                before.requires_mut_name() || after.as_ref().is_some_and(|t| t.requires_mut_name())
+            }
+            _ => false,
+        }
+    }
+
     /// Inner type of `Cell! T`, if any.
     pub fn cell_content(&self) -> Option<Type> {
         match self {

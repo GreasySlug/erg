@@ -5,11 +5,21 @@
 assert abs(-1.5) == 1.5
 assert abs(-0.25) == 0.25
 assert abs(0.1 - 0.3) == 0.2
-# the overload keeps `Nat` for `Int` and `Float` for `Float`
+# the overload keeps `Float` for a `Float`, and an integer comes out as a
+# `Ratio` (`Int <: Ratio`) -- `.abs()` is what narrows an `Int` to `Nat`
 assert abs(-3) == 3
 assert abs(float(-1.5)).nearly_eq float(1.5)
-narrowed: Nat = abs(-3)
+narrowed: Nat = (-3).abs()
 assert narrowed == 3
+
+# inside a lambda the argument's class is not known when `abs` is resolved, so
+# the branch picked there must not be one whose return codegen wraps -- an
+# `Int`/`Nat` return truncated the `Fraction` back to an integer
+# (a `Float` argument reaches the same branch, so it comes out typed `Ratio`;
+# the value is right, and a `Float`-only method on it is a compile error rather
+# than a wrong answer.)
+diff = (l, r) -> abs(l - r)
+assert diff(1.5, 0.25) == 1.25
 
 # through a function, where the argument's class comes from the annotation
 f(x: Ratio) = abs x

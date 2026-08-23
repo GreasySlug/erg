@@ -25,15 +25,20 @@ impl Context {
         let Path = mono_q_tp(PATH, instanceof(Str));
         // Overloaded, because `abs` keeps its argument's class. Declaring a flat
         // `Nat` made codegen wrap the call in `Nat(...)` (see `emit_expr`), which
-        // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. `Int` comes
-        // first (it is the most specific), and `Ratio` is the fallback for an
-        // argument whose type is still unresolved at the call site. Binding the
+        // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. Binding the
         // return to the argument's own type instead would be unsound: the
         // argument is often a singleton (`{-3}`), and `abs` is not the identity.
-        let t_abs = (nd_func(vec![kw(KW_N, Int)], None, Nat)
-            & nd_func(vec![kw(KW_N, Ratio)], None, Ratio)
+        //
+        // `Ratio` has to come first even though `Int` is more specific.
+        // `resolve_overload` takes the first branch that matches, and an argument
+        // whose type is not resolved yet -- `(l, r) -> abs(l - r)`, where `l` and
+        // `r` come from a later call -- matches whichever branch is first. An
+        // `Int`/`Nat` return there would be wrapped, and truncate again. So `abs`
+        // of an integer is a `Ratio` (`Int <: Ratio`, so this is sound, just less
+        // precise); `x.abs()` still narrows an `Int` to `Nat`.
+        let t_abs = (nd_func(vec![kw(KW_N, Ratio)], None, Ratio)
             & nd_func(vec![kw(KW_N, Float)], None, Float))
-        .with_default_intersec_index(1);
+        .with_default_intersec_index(0);
         let abs = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
             FUNC_ABS,
             abs_func,

@@ -100,6 +100,7 @@ const CORE_MODULES: &[(&str, &str)] = &[
         "_erg_contains_operator",
         include_str!("lib/core/_erg_contains_operator.py"),
     ),
+    ("_erg_ratio", include_str!("lib/core/_erg_ratio.py")),
     (
         "_erg_mutate_operator",
         include_str!("lib/core/_erg_mutate_operator.py"),
@@ -145,6 +146,14 @@ const BUILTIN_TYPES_MODULES: &[&str] = &[
     "_erg_dict",
     "_erg_set",
     "_erg_bytes",
+];
+/// `mutate_operator` builds a `RatioMut`, which needs `MutType`
+const MUTATE_OP_MODULES: &[&str] = &[
+    "_erg_result",
+    "_erg_control",
+    "_erg_type",
+    "_erg_ratio",
+    "_erg_mutate_operator",
 ];
 const CONVERTORS_MODULES: &[&str] = &[
     "_erg_result",
@@ -560,7 +569,7 @@ impl PyScriptGenerator {
     }
 
     fn load_mutate_op_if_not(&mut self) {
-        self.load_module_if_not("_erg_mutate_operator");
+        self.load_modules_if_not(MUTATE_OP_MODULES);
     }
 
     fn load_builtin_types_if_not(&mut self) {

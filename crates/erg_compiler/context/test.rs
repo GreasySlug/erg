@@ -5,10 +5,11 @@ use erg_common::Str;
 use crate::ty::constructors::{func1, mono, mono_q, poly, refinement, ty_tp};
 use crate::ty::free::Constraint;
 use crate::ty::typaram::TyParam;
-use crate::ty::{Predicate, Type};
+use crate::ty::{Field, Predicate, Type};
 use Type::*;
 
 use crate::context::Context;
+use erg_common::dict;
 
 impl Context {
     pub fn assert_var_type(&self, varname: &str, ty: &Type) -> Result<(), ()> {
@@ -54,6 +55,30 @@ impl Context {
         } else {
             Err(())
         }
+    }
+
+    pub fn test_record_structural_subtyping(&self) -> Result<(), ()> {
+        let empty = Type::Record(dict! {});
+        let x_int = Type::Record(dict! { Field::private("x".into()) => Int });
+        let xy_int = Type::Record(dict! {
+            Field::private("x".into()) => Int,
+            Field::private("y".into()) => Int,
+        });
+        let x_nat = Type::Record(dict! { Field::private("x".into()) => Nat });
+        let x_pub = Type::Record(dict! { Field::public("x".into()) => Int });
+        // width: extra fields on the subtype are allowed
+        assert!(self.subtype_of(&xy_int, &x_int));
+        assert!(!self.subtype_of(&x_int, &xy_int));
+        assert!(self.subtype_of(&x_int, &empty));
+        // depth: Nat <: Int on fields
+        assert!(self.subtype_of(&x_nat, &x_int));
+        // public <: private (Field Eq ignores vis, so pair it with a depth difference)
+        assert!(self.subtype_of(
+            &Type::Record(dict! { Field::public("x".into()) => Nat }),
+            &x_int
+        ));
+        assert!(!self.subtype_of(&x_nat, &x_pub));
+        Ok(())
     }
 
     pub fn test_quant_subtyping(&self) -> Result<(), ()> {

@@ -41,8 +41,104 @@ except ImportError:
     GenericAlias = FakeGenericAlias
 
 
+class StructuralType:
+    """Runtime wrapper for `Structural T`. Compile-time structural types are
+    otherwise erased; keeping the wrapper lets `in` / `<` distinguish
+    `Structural {i = Int}` from the record class `{i = Int}`.
+    """
+
+    def __init__(self, base):
+        self.base = base
+
+    def __repr__(self):
+        return "Structural({})".format(repr(self.base))
+
+    def __eq__(self, other):
+        if isinstance(other, StructuralType):
+            return self.base == other.base
+        return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(("Structural", self.base))
+
+
 def is_type(x) -> bool:
-    return isinstance(x, (type, FakeGenericAlias, GenericAlias, UnionType))
+    return isinstance(x, (type, FakeGenericAlias, GenericAlias, UnionType, StructuralType))
+
+
+def _record_fields(obj):
+    if hasattr(obj, "_asdict"):
+        try:
+            return obj._asdict()
+        except TypeError:
+            return None
+    if hasattr(obj, "_fields"):
+        try:
+            return {n: getattr(obj, n) for n in obj._fields}
+        except AttributeError:
+            return None
+    return None
+
+
+def _is_type_record(obj):
+    fields = _record_fields(obj)
+    if fields is None:
+        return False
+    if not fields:
+        return type(obj).__name__ == "Record"
+    return all(is_type(v) for v in fields.values())
+
+
+def _unwrap_structural(obj):
+    return obj.base if isinstance(obj, StructuralType) else obj
+
+
+def is_subtype(lhs, rhs):
+    """`lhs <: rhs` (non-proper; equal types are subtypes)."""
+    lhs = _unwrap_structural(lhs)
+    rhs = _unwrap_structural(rhs)
+    if lhs is rhs or lhs == rhs:
+        return True
+    try:
+        if isinstance(lhs, type) and isinstance(rhs, type) and issubclass(lhs, rhs):
+            return True
+    except TypeError:
+        pass
+    if isinstance(lhs, (set, frozenset)) and isinstance(rhs, (set, frozenset)):
+        return lhs.issubset(rhs)
+    lf = _record_fields(lhs)
+    rf = _record_fields(rhs)
+    if lf is not None and rf is not None and _is_type_record(lhs) and _is_type_record(rhs):
+        for name, rty in rf.items():
+            if name not in lf:
+                return False
+            if not is_subtype(lf[name], rty):
+                return False
+        return True
+    if isinstance(rhs, UnionType):
+        return any(is_subtype(lhs, t) for t in rhs.__args__)
+    if isinstance(lhs, UnionType):
+        return all(is_subtype(t, rhs) for t in lhs.__args__)
+    return False
+
+
+def is_lt(lhs, rhs):
+    return is_subtype(lhs, rhs) and not is_subtype(rhs, lhs)
+
+
+def is_le(lhs, rhs):
+    return is_subtype(lhs, rhs)
+
+
+def is_gt(lhs, rhs):
+    return is_lt(rhs, lhs)
+
+
+def is_ge(lhs, rhs):
+    return is_le(rhs, lhs)
 
 
 # The behavior of `builtins.isinstance` depends on the Python version.

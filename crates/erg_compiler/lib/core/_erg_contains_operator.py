@@ -1,15 +1,40 @@
-from collections import namedtuple
-
 from _erg_range import Range
 from _erg_result import is_ok
+from _erg_type import StructuralType
 from _erg_type import UnionType
 from _erg_type import _isinstance
+from _erg_type import _is_type_record
+from _erg_type import _record_fields
 from _erg_type import is_type
+
+def _structurally_contains(type_record, elem) -> bool:
+    fields = _record_fields(type_record)
+    if fields is None:
+        return False
+    for name, ty in fields.items():
+        if hasattr(elem, name):
+            val = getattr(elem, name)
+        elif hasattr(elem, "::" + name):
+            # Erg private instance attributes are stored as `::name`
+            val = getattr(elem, "::" + name)
+        else:
+            return False
+        if not contains_operator(ty, val):
+            return False
+    return True
+
 
 # (elem in y) == contains_operator(y, elem)
 def contains_operator(y, elem) -> bool:
     if hasattr(elem, "type_check"):
         return elem.type_check(y)
+    elif isinstance(y, StructuralType):
+        base = y.base
+        if _is_type_record(base):
+            return _structurally_contains(base, elem)
+        if is_type(base) and _isinstance(elem, base):
+            return True
+        return False
     elif isinstance(y, UnionType):
         return any([contains_operator(t, elem) for t in y.__args__])
     # 1 in Int
@@ -24,6 +49,9 @@ def contains_operator(y, elem) -> bool:
             return y.__origin__.type_check(elem, y)
         # TODO: trait check
         return False
+    # record width: extra fields on the value are allowed
+    elif _is_type_record(y) and type(elem).__name__ == "Record":
+        return _structurally_contains(y, elem)
     # [1] in [Int]
     elif (
         _isinstance(y, list)

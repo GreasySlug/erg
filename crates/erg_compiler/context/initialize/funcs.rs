@@ -1211,7 +1211,9 @@ impl Context {
             Some(FUNC_NE),
         );
         let PO = mono_q(TY_O, subtypeof(mono(PARTIAL_ORD)));
-        let op_t = bin_op(PO.clone(), PO.clone(), Bool).quantify();
+        let ord_t = bin_op(PO.clone(), PO.clone(), Bool).quantify();
+        let type_ord_t = bin_op(Type, Type, Bool);
+        let op_t = (ord_t & type_ord_t).with_default_intersec_index(0);
         self.register_builtin_py_impl(
             OP_LT,
             op_t.clone(),

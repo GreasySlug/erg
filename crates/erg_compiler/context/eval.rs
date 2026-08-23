@@ -1573,6 +1573,21 @@ impl Context {
         self.eval_const_chunk(block.last().unwrap())
     }
 
+    /// Inclusion comparison on type objects (`Nat < Int`, `{=} > {x = Int}`, ...).
+    fn eval_type_cmp(&self, op: OpKind, lhs: &ValueObj, rhs: &ValueObj) -> Option<ValueObj> {
+        let lt = self.convert_value_into_type(lhs.clone()).ok()?;
+        let rt = self.convert_value_into_type(rhs.clone()).ok()?;
+        let sub = self.subtype_of(&lt, &rt);
+        let sup = self.supertype_of(&lt, &rt);
+        Some(ValueObj::Bool(match op {
+            Lt => sub && !sup,
+            Le => sub,
+            Gt => sup && !sub,
+            Ge => sup,
+            _ => return None,
+        }))
+    }
+
     fn eval_bin(&self, op: OpKind, lhs: ValueObj, rhs: ValueObj) -> EvalResult<ValueObj> {
         match op {
             Add => lhs.try_add(rhs).ok_or_else(|| {
@@ -1624,34 +1639,26 @@ impl Context {
                     line!(),
                 ))
             }),
-            Gt => lhs.try_gt(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Ge => lhs.try_ge(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Lt => lhs.try_lt(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
-            Le => lhs.try_le(rhs).ok_or_else(|| {
-                EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))
-            }),
+            Lt | Le | Gt | Ge => {
+                if let Some(v) = self.eval_type_cmp(op, &lhs, &rhs) {
+                    Ok(v)
+                } else {
+                    let res = match op {
+                        Gt => lhs.try_gt(rhs),
+                        Ge => lhs.try_ge(rhs),
+                        Lt => lhs.try_lt(rhs),
+                        Le => lhs.try_le(rhs),
+                        _ => None,
+                    };
+                    res.ok_or_else(|| {
+                        EvalErrors::from(EvalError::unreachable(
+                            self.cfg.input.clone(),
+                            fn_name!(),
+                            line!(),
+                        ))
+                    })
+                }
+            }
             Eq => lhs.try_eq(rhs).ok_or_else(|| {
                 EvalErrors::from(EvalError::unreachable(
                     self.cfg.input.clone(),

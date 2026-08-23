@@ -229,6 +229,7 @@ pub struct PyCodeGenerator {
     prelude_loaded: bool,
     mutate_op_loaded: bool,
     contains_op_loaded: bool,
+    subtype_op_loaded: bool,
     record_type_loaded: bool,
     module_type_loaded: bool,
     control_loaded: bool,
@@ -264,6 +265,7 @@ impl PyCodeGenerator {
             prelude_loaded: false,
             mutate_op_loaded: false,
             contains_op_loaded: false,
+            subtype_op_loaded: false,
             record_type_loaded: false,
             module_type_loaded: false,
             control_loaded: false,
@@ -292,6 +294,7 @@ impl PyCodeGenerator {
             prelude_loaded: false,
             mutate_op_loaded: false,
             contains_op_loaded: false,
+            subtype_op_loaded: false,
             record_type_loaded: false,
             module_type_loaded: false,
             control_loaded: false,
@@ -323,6 +326,7 @@ impl PyCodeGenerator {
         self.prelude_loaded = false;
         self.mutate_op_loaded = false;
         self.contains_op_loaded = false;
+        self.subtype_op_loaded = false;
         self.record_type_loaded = false;
         self.module_type_loaded = false;
         self.control_loaded = false;
@@ -2271,6 +2275,31 @@ impl PyCodeGenerator {
                 self.emit_load_name_instr(Identifier::private("#contains_operator"));
                 self.fixup_push_null_order();
             }
+            TokenKind::Less | TokenKind::LessEq | TokenKind::Gre | TokenKind::GreEq
+                if !self.cfg.no_std && Self::is_type_inclusion_cmp(&bin) =>
+            {
+                if !self.subtype_op_loaded {
+                    self.load_type_cmp_ops();
+                }
+                let helper = match &bin.op.kind {
+                    TokenKind::Less => "#is_lt",
+                    TokenKind::LessEq => "#is_le",
+                    TokenKind::Gre => "#is_gt",
+                    TokenKind::GreEq => "#is_ge",
+                    _ => unreachable!(),
+                };
+                self.emit_push_null();
+                self.emit_load_name_instr(Identifier::private(helper));
+                self.fixup_push_null_order();
+                self.emit_expr(*bin.lhs);
+                self.emit_expr(*bin.rhs);
+                self.emit_binop_instr(
+                    Token::dummy(TokenKind::ContainsOp, "in"),
+                    TypePair::new(&Type::Type, &Type::Type),
+                );
+                debug_assert_eq!(self.stack_len(), init_stack_len + 1);
+                return;
+            }
             _ => {}
         }
         let lhs_t = bin
@@ -2775,15 +2804,23 @@ impl PyCodeGenerator {
             "Del" => self.emit_del_instr(args),
             "not" => self.emit_not_instr(args),
             "discard" => self.emit_discard_instr(args),
-            // `Structural` exists only at compile time; the underlying type object
-            // is used at runtime (e.g. `V = Structural {.name = Str}` binds the record type)
             "Structural" => {
                 let mut args = args;
-                if let Some(base) = args.remove_left_or_key("Type") {
-                    self.emit_expr(base);
-                } else {
-                    self.emit_load_const(ValueObj::None);
+                if self.cfg.no_std {
+                    if let Some(base) = args.remove_left_or_key("Type") {
+                        self.emit_expr(base);
+                    } else {
+                        self.emit_load_const(ValueObj::None);
+                    }
+                    return;
                 }
+                if !self.subtype_op_loaded {
+                    self.load_type_cmp_ops();
+                }
+                self.emit_push_null();
+                self.emit_load_name_instr(Identifier::private("#StructuralType"));
+                self.fixup_push_null_order();
+                self.emit_args_311(args, Name);
             }
             "for" | "for!" => self.emit_for_instr(args),
             "while!" => self.emit_while_instr(args),
@@ -4231,6 +4268,56 @@ impl PyCodeGenerator {
             )],
         );
         self.contains_op_loaded = true;
+    }
+
+    /// `Nat < Int`, `{=} > {x = Int}`, etc.: both operands are type objects.
+    /// Record type literals have meta-type `Record` / `RecordMetaType`, not `Type`.
+    fn is_type_inclusion_cmp(bin: &BinOp) -> bool {
+        let op_lhs = bin.lhs_t().derefine();
+        let op_rhs = bin.rhs_t().derefine();
+        if op_lhs == Type && op_rhs == Type {
+            return true;
+        }
+        Self::is_type_object_t(bin.lhs.ref_t()) && Self::is_type_object_t(bin.rhs.ref_t())
+    }
+
+    fn is_type_object_t(t: &Type) -> bool {
+        let t = t.derefine();
+        t.is_type()
+            || matches!(t, Type::Record(_) | Type::Structural(_))
+            || matches!(
+                &t.qual_name()[..],
+                "RecordMetaType" | "Record" | "StructuralType"
+            )
+    }
+
+    fn load_type_cmp_ops(&mut self) {
+        self.emit_global_import_items(
+            Identifier::static_public("_erg_std_prelude"),
+            vec![
+                (
+                    Identifier::static_public("is_lt"),
+                    Some(Identifier::private("#is_lt")),
+                ),
+                (
+                    Identifier::static_public("is_le"),
+                    Some(Identifier::private("#is_le")),
+                ),
+                (
+                    Identifier::static_public("is_gt"),
+                    Some(Identifier::private("#is_gt")),
+                ),
+                (
+                    Identifier::static_public("is_ge"),
+                    Some(Identifier::private("#is_ge")),
+                ),
+                (
+                    Identifier::static_public("StructuralType"),
+                    Some(Identifier::private("#StructuralType")),
+                ),
+            ],
+        );
+        self.subtype_op_loaded = true;
     }
 
     /// The runtime helpers the error propagation operator (`x?`) needs:

@@ -568,6 +568,11 @@ fn exec_structural_trait() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_structural_subtyping() -> Result<(), ()> {
+    expect_success("tests/should_ok/structural_subtyping.er", 0)
+}
+
+#[test]
 fn exec_trait_op_requirement() -> Result<(), ()> {
     expect_success("tests/should_ok/trait_op_requirement.er", 0)
 }
@@ -911,6 +916,11 @@ fn exec_structural_ambiguity_err() -> Result<(), ()> {
 #[test]
 fn exec_structural_trait_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/structural_trait.er", 0, 5)
+}
+
+#[test]
+fn exec_structural_subtyping_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/structural_subtyping.er", 0, 3)
 }
 
 #[test]

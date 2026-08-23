@@ -79,7 +79,7 @@
   - [x] Projection type
     - [x] Projection call type
   - [x] Subtyping
-    - [ ] Structural subtyping
+    - [x] Structural subtyping
       - [x] Refinement subtyping
     - [x] Nominal subtyping
   - [ ] Module system

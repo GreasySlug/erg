@@ -1,5 +1,5 @@
-# `Structural` exists only at compile time; a `Structural` type alias is bound to
-# the underlying type object at runtime (a record type / a trait class).
+# `Structural T` is a runtime wrapper around `T`, so two aliases of the
+# same structure compare equal and `in` treats class instances structurally.
 
 SNamed = Structural {.name = Str}
 name x: SNamed = x.name

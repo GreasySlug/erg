@@ -1,0 +1,38 @@
+# Type inclusion (`<`, `>`) and structural record subtyping.
+
+assert Nat < Int
+assert Int < Obj
+assert {=} > {x = Int}
+assert {x = Int; y = Int} < {x = Int}
+assert {.i = Int} <= {i = Int}
+
+# Force runtime evaluation (not const-folded).
+type_lt(l: Type, r: Type): Bool = l < r
+assert type_lt(Nat, Int)
+assert not type_lt(Int, Nat)
+
+# Structural types with the same structure are the same object.
+T = Structural {i = Int}
+U = Structural {i = Int}
+assert T == U
+t: T = {i = 1}
+assert t in T
+assert t in U
+
+# Width (extra fields) and depth (Nat <: Int) on assignment.
+_ : {x = Int} = {x = 1; y = 2}
+_ : {x = Int} = {x = 1}
+# public <: private
+_ : {i = Int} = {.i = 1}
+
+# A class instance inhabits a structural record type, not the record class.
+C = Class {i = Int}
+C.
+    new i = Self {i = i}
+c = C.new 1
+assert c in Structural {i = Int}
+assert c notin {i = Int}
+
+# Record width membership: extra fields on the value are allowed.
+assert {.x = 1; .y = 2} in {.x = Int}
+assert {.x = 1; .y = 2} in Structural {.x = Int}

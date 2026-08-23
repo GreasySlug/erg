@@ -1,0 +1,8 @@
+# missing field (width)
+_ : {.x = Int; .y = Int} = {.x = 1} # ERR
+
+# Int is not a subtype of Nat (depth)
+_ : {.x = Nat} = {.x = -1} # ERR
+
+# private field is not a subtype of public
+_ : {.i = Int} = {i = 1} # ERR

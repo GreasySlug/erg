@@ -107,6 +107,13 @@ fn test_refinement_subtyping() -> Result<(), ()> {
 }
 
 #[test]
+fn test_record_structural_subtyping() -> Result<(), ()> {
+    let context = Context::default_with_name("<module>");
+    context.test_record_structural_subtyping()?;
+    Ok(())
+}
+
+#[test]
 fn test_quant_subtyping() -> Result<(), ()> {
     let context = Context::default_with_name("<module>");
     context.test_quant_subtyping()?;

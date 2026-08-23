@@ -240,7 +240,6 @@ pub struct PyCodeGenerator {
     fake_generic_loaded: bool,
     abc_loaded: bool,
     builtins_loaded: bool,
-    fraction_loaded: bool,
     true_div_loaded: bool,
     err_ops_loaded: bool,
     unit_size: usize,
@@ -276,7 +275,6 @@ impl PyCodeGenerator {
             fake_generic_loaded: false,
             abc_loaded: false,
             builtins_loaded: false,
-            fraction_loaded: false,
             true_div_loaded: false,
             err_ops_loaded: false,
             unit_size: 0,
@@ -305,7 +303,6 @@ impl PyCodeGenerator {
             fake_generic_loaded: false,
             abc_loaded: false,
             builtins_loaded: false,
-            fraction_loaded: false,
             true_div_loaded: false,
             err_ops_loaded: false,
             unit_size: 0,
@@ -337,7 +334,6 @@ impl PyCodeGenerator {
         self.fake_generic_loaded = false;
         self.abc_loaded = false;
         self.builtins_loaded = false;
-        self.fraction_loaded = false;
         self.true_div_loaded = false;
         self.err_ops_loaded = false;
     }
@@ -2123,7 +2119,7 @@ impl PyCodeGenerator {
     }
 
     /// Emit a literal. `Ratio` literals (e.g. `0.1`, `1.5`, `3.14`) are constructed
-    /// as `fractions.Fraction("<source>")` so that rationals stay exact
+    /// as `Ratio("<source>")` -- a `fractions.Fraction` -- so that rationals stay exact
     /// (`0.1 + 0.2 == 0.3` holds, unlike Python `float`). All other literals are
     /// emitted as plain constants. In `no_std` mode `Ratio` falls back to a float const.
     fn emit_literal(&mut self, lit: Literal) {
@@ -2142,16 +2138,19 @@ impl PyCodeGenerator {
         self.emit_load_const(lit.value);
     }
 
-    /// Emit `Fraction("<source>")`. `Fraction`'s string constructor parses decimals
-    /// and scientific notation exactly (`Fraction("0.1") == 1/10`), so the original
-    /// literal text is passed through verbatim (underscores included).
+    /// Emit `Ratio("<source>")`. `Ratio` is a `fractions.Fraction`, whose *string*
+    /// constructor parses decimals and scientific notation exactly
+    /// (`Fraction("0.1") == 1/10`), so the literal text is passed through as
+    /// written. `Fraction(0.1)` would take the float route and give it its binary
+    /// value instead.
+    ///
+    /// Digit separators are dropped first: `Fraction` only learned to skip them
+    /// in 3.11, and erg targets 3.7 up, where `Fraction("1_000.5")` raises.
     fn emit_ratio(&mut self, content: Str) {
-        if !self.fraction_loaded {
-            self.load_fraction();
-        }
         self.emit_push_null();
-        self.emit_load_name_instr(Identifier::private("#Fraction"));
+        self.emit_load_name_instr(Identifier::static_public("Ratio"));
         self.fixup_push_null_order();
+        let content = Str::from(content.replace('_', ""));
         let arg = Expr::Literal(Literal::new(ValueObj::Str(content), Token::DUMMY));
         let args = Args::single(PosArg::new(arg));
         self.emit_args_311(args, Name);
@@ -2356,11 +2355,8 @@ impl PyCodeGenerator {
             && (bin.op.is(TokenKind::Slash) || bin.op.is(TokenKind::Pow))
             && bin.ref_t().derefine() == Type::Ratio;
         if ratio_div {
-            if !self.fraction_loaded {
-                self.load_fraction();
-            }
             self.emit_push_null();
-            self.emit_load_name_instr(Identifier::private("#Fraction"));
+            self.emit_load_name_instr(Identifier::static_public("Ratio"));
             self.fixup_push_null_order();
             let args = Args::single(PosArg::new(*bin.lhs));
             self.emit_args_311(args, Name);
@@ -4375,20 +4371,6 @@ impl PyCodeGenerator {
             )],
         );
         self.mutate_op_loaded = true;
-    }
-
-    /// Import `Fraction` from the `fractions` module, bound to `#Fraction`.
-    /// `Ratio` literals and `/` results are constructed as `fractions.Fraction`
-    /// so that rationals stay exact (e.g. `0.1 + 0.2 == 0.3`, `1/3` is not `0.333...`).
-    fn load_fraction(&mut self) {
-        self.emit_global_import_items(
-            Identifier::static_public("fractions"),
-            vec![(
-                Identifier::static_public("Fraction"),
-                Some(Identifier::private("#Fraction")),
-            )],
-        );
-        self.fraction_loaded = self.loaded_for_whole_module();
     }
 
     /// Whether an import emitted right now has run by the time any later use of

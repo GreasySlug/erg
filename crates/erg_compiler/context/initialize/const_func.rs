@@ -1654,8 +1654,9 @@ pub(crate) fn sum_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
 /// Python's `str()`, restricted to the values whose textual form is guaranteed
 /// to be the same at compile time and at run time.
 ///
-/// `Float` is deliberately excluded: float literals are `Ratio`s at run time
-/// (`str 1.5 == "3/2"`), which the compile-time representation cannot reproduce.
+/// `Float` is deliberately excluded: an inexact literal keeps `Float`'s own
+/// shortest-repr rounding, which the compile-time representation does not
+/// reproduce. A `Ratio` prints through `Display`, which is `Ratio.__str__`.
 fn py_str(val: &ValueObj) -> Option<String> {
     match val {
         ValueObj::Str(s) => Some(s.to_string()),
@@ -1663,9 +1664,7 @@ fn py_str(val: &ValueObj) -> Option<String> {
         ValueObj::Nat(n) => Some(n.to_string()),
         ValueObj::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
         ValueObj::None => Some("None".to_string()),
-        // `str(Fraction(3, 2)) == "3/2"`, but an integral one drops the denominator
-        ValueObj::Ratio(n, 1) => Some(n.to_string()),
-        ValueObj::Ratio(n, d) => Some(format!("{n}/{d}")),
+        ValueObj::Ratio(..) => Some(val.to_string()),
         _ => None,
     }
 }

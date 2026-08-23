@@ -151,6 +151,8 @@ const BUILTIN_TYPES_MODULES: &[&str] = &[
     "_erg_set",
     "_erg_bytes",
 ];
+/// `Ratio` subclasses `Fraction` and lives next to `RatioMut`, which needs `MutType`
+const RATIO_MODULES: &[&str] = &["_erg_control", "_erg_type", "_erg_result", "_erg_ratio"];
 /// `mutate_operator` builds a `RatioMut`, which needs `MutType`
 const MUTATE_OP_MODULES: &[&str] = &[
     "_erg_control",
@@ -520,7 +522,7 @@ pub struct PyScriptGenerator {
     level: usize,
     fresh_var_n: usize,
     namedtuple_loaded: bool,
-    fraction_loaded: bool,
+    ratio_loaded: bool,
     prelude: String,
 }
 
@@ -552,14 +554,14 @@ impl PyScriptGenerator {
         }
     }
 
-    /// `Ratio` is a `fractions.Fraction` at run time, as it is in the bytecode
-    /// backend. Without this a decimal literal transpiled to a Python float, so
-    /// the two backends disagreed: `0.1 + 0.2` was 0.30000000000000004 here and
-    /// 3/10 there.
-    fn load_fraction_if_not(&mut self) {
-        if !self.fraction_loaded {
-            self.prelude += "from fractions import Fraction as Fraction__\n";
-            self.fraction_loaded = true;
+    /// `Ratio` is a `fractions.Fraction` subclass at run time, as it is in the
+    /// bytecode backend. Without this a decimal literal transpiled to a Python
+    /// float, so the two backends disagreed: `0.1 + 0.2` was 0.30000000000000004
+    /// here and 0.3 there.
+    fn load_ratio_if_not(&mut self) {
+        if !self.ratio_loaded {
+            self.load_modules_if_not(RATIO_MODULES);
+            self.ratio_loaded = true;
         }
     }
 
@@ -716,18 +718,19 @@ impl PyScriptGenerator {
     fn write_lit(&mut self, lit: Literal, out: &mut String) {
         // `Fraction`'s *string* constructor parses decimals and scientific
         // notation exactly; passing the text unquoted would go through a float
-        // and give `Fraction(0.1)` its binary value rather than 1/10.
+        // and give `Ratio(0.1)` its binary value rather than 1/10. Digit
+        // separators go first -- `Fraction` only learned to skip them in 3.11.
         if lit.is(TokenKind::RatioLit) {
-            self.load_fraction_if_not();
-            out.push_str("Fraction__(\"");
-            Self::write_escaped_str(&lit.token.content, out);
+            self.load_ratio_if_not();
+            out.push_str("Ratio(\"");
+            Self::write_escaped_str(&lit.token.content.replace('_', ""), out);
             out.push_str("\")");
             return;
         }
         // A folded rational (`0.1 + 0.2`) has no literal text to fall back on.
         if let ValueObj::Ratio(n, d) = &lit.value {
-            self.load_fraction_if_not();
-            write!(out, "Fraction__(\"{n}/{d}\")").unwrap();
+            self.load_ratio_if_not();
+            write!(out, "Ratio(\"{n}/{d}\")").unwrap();
             return;
         }
         if matches!(
@@ -802,11 +805,11 @@ impl PyScriptGenerator {
                 out.push(')');
             }
             // `a / b` and `a ** b` are exact when the result is a `Ratio`, the
-            // same way the bytecode backend emits them: `Fraction(a)` makes the
+            // same way the bytecode backend emits them: `Ratio(a)` makes the
             // whole operation exact whatever `b` is.
             TokenKind::Slash | TokenKind::Pow if bin.ref_t().derefine() == Type::Ratio => {
-                self.load_fraction_if_not();
-                out.push_str("(Fraction__(");
+                self.load_ratio_if_not();
+                out.push_str("(Ratio(");
                 self.write_expr(*bin.lhs, out);
                 out.push_str(") ");
                 out.push_str(&bin.op.content);

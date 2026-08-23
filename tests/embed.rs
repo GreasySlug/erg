@@ -115,7 +115,7 @@ print!(2 ** -1, end:=\"\")
         })?;
     let res = exec_py_code_with_output(res.object.code(), &[]).map_err(|_| ())?;
     assert!(res.status.success());
-    assert_eq!(res.stdout, b"3/10 1/3 1/2");
+    assert_eq!(res.stdout, b"0.3 1/3 0.5");
     Ok(())
 }
 

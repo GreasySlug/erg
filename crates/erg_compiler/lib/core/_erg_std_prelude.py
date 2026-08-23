@@ -8,7 +8,7 @@ from _erg_float import Float, FloatMut
 from _erg_int import Int, IntMut
 from _erg_mutate_operator import mutate_operator
 from _erg_nat import Nat, NatMut
-from _erg_ratio import RatioMut
+from _erg_ratio import Ratio, RatioMut
 from _erg_range import (ClosedRange, LeftOpenRange, OpenRange, Range,
                         RangeIterator, RightOpenRange)
 from _erg_result import (
@@ -100,22 +100,19 @@ class Dimension(Generic[Ty, M, L, T, I, Θ, N, J]):
         return t.__name__ == "Dimension"
 
 
-from fractions import Fraction as _Fraction
-
-
 def pow__(base, exp):
     # `base ** exp` for Erg's `Ratio`. A negative exponent is exact -- `2 ** -1`
     # is 1/2, not the float 0.5 -- which is what the `**` operator emits too, so
     # `pow(2, -1)` and `2 ** -1` agree. Everything else keeps Python's `**`.
     if isinstance(exp, int) and exp < 0 and not isinstance(base, (float, complex)):
-        return _Fraction(base) ** exp
+        return Ratio(base) ** exp
     return base**exp
 
 
 def true_div(a, b):
     # Exact division for Erg's `Ratio`. Used when the operand types are not known
     # at compile time (e.g. a generic `f x = x / 2`): integers divide to an exact
-    # `Fraction` (`1 / 3` stays `1/3`), while `Float`/`Complex` keep Python's `/`.
+    # `Ratio` (`1 / 3` stays `1/3`), while `Float`/`Complex` keep Python's `/`.
     if isinstance(a, (float, complex)) or isinstance(b, (float, complex)):
         return a / b
-    return _Fraction(a) / b
+    return Ratio(a) / b

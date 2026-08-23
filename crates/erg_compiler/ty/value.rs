@@ -720,16 +720,56 @@ macro_rules! mono_value_pattern {
     };
 }
 
+/// The exact decimal expansion of `num`/`den`, or `None` when there is none.
+///
+/// A rational in lowest terms is a finite decimal exactly when its denominator
+/// is `2^a * 5^b`, and the digits are then `num * 10^k / den` for
+/// `k = max(a, b)`. That is computed as `num * 2^(k - a) * 5^(k - b)`, so the
+/// `10^k` -- which can be far larger than either -- is never formed. `None`
+/// once even that overflows, which `_erg_ratio.py` mirrors so that a folded
+/// constant prints exactly like the expression it was folded from.
+fn ratio_decimal(num: i128, den: u128) -> Option<String> {
+    let mut rest = den;
+    let mut twos = 0;
+    while rest.is_multiple_of(2) {
+        rest /= 2;
+        twos += 1;
+    }
+    let mut fives = 0;
+    while rest.is_multiple_of(5) {
+        rest /= 5;
+        fives += 1;
+    }
+    if rest != 1 {
+        return None;
+    }
+    // no forced fractional digit: `Fraction(3)` prints `3`, and the compiler
+    // folds an integral rational to a `Nat`/`Int`, which prints the same way
+    let k = twos.max(fives);
+    if k == 0 {
+        return Some(num.to_string());
+    }
+    let scale = 2i128
+        .checked_pow(k - twos)?
+        .checked_mul(5i128.checked_pow(k - fives)?)?;
+    let digits = num.checked_mul(scale)?;
+    let sign = if digits < 0 { "-" } else { "" };
+    let digits = format!("{:0>width$}", digits.unsigned_abs(), width = k as usize + 1);
+    let (int_part, frac) = digits.split_at(digits.len() - k as usize);
+    Some(format!("{sign}{int_part}.{frac}"))
+}
+
 impl fmt::Debug for ValueObj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ratio(n, d) => {
                 if DEBUG_MODE {
                     write!(f, "Ratio({n}/{d})")
-                } else if *d == 1 {
-                    write!(f, "{n}")
                 } else {
-                    write!(f, "{n}/{d}")
+                    match ratio_decimal(*n, *d) {
+                        Some(decimal) => write!(f, "{decimal}"),
+                        None => write!(f, "{n}/{d}"),
+                    }
                 }
             }
             Self::Int(i) => {
@@ -819,9 +859,11 @@ impl fmt::Debug for ValueObj {
 impl fmt::Display for ValueObj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // as `Fraction.__str__` prints it
-            Self::Ratio(n, 1) => write!(f, "{n}"),
-            Self::Ratio(n, d) => write!(f, "{n}/{d}"),
+            // as `Ratio.__str__` prints it (lib/core/_erg_ratio.py)
+            Self::Ratio(n, d) => match ratio_decimal(*n, *d) {
+                Some(decimal) => write!(f, "{decimal}"),
+                None => write!(f, "{n}/{d}"),
+            },
             Self::Int(i) => {
                 if DEBUG_MODE {
                     write!(f, "Int({i})")

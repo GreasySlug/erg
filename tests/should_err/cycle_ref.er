@@ -1,0 +1,9 @@
+# ERR: a mutable object must not contain itself
+a as List!(Obj, _) = ![]
+a.push! a
+
+# ERR: two mutable objects that contain each other
+b as List!(Obj, _) = ![]
+c as List!(Obj, _) = ![]
+b.push! c
+c.push! b

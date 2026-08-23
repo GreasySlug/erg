@@ -488,6 +488,176 @@ impl EffectError {
         )
     }
 
+    pub fn mut_type_in_immutable_class(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        name: &str,
+        caused_by: String,
+    ) -> Self {
+        let mut_name = format!("{name}!");
+        let found = StyledString::new(name, Some(ERR), Some(ATTR));
+        let hint = Some(
+            switch_lang!(
+                "japanese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("型名を");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s.push_str("に変更してください");
+                    s
+                },
+                "simplified_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("请将类型名改为");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+                "traditional_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("請將類型名改為");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+                "english" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("rename the type to ");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+            )
+            .to_string(),
+        );
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!("不変型{found}に可変型が含まれています"),
+                    "simplified_chinese" => format!("不可变类型{found}包含可变类型"),
+                    "traditional_chinese" => format!("不可變類型{found}包含可變類型"),
+                    "english" => format!("immutable type {found} contains a mutable type"),
+                ),
+                errno,
+                HasEffect,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
+    pub fn mut_method_on_immut_type(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        class_name: &str,
+        caused_by: String,
+    ) -> Self {
+        let mut_name = format!("{class_name}!");
+        let found = StyledString::new(class_name, Some(ERR), Some(ATTR));
+        let hint = Some(
+            switch_lang!(
+                "japanese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("型名を");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s.push_str("に変更してください");
+                    s
+                },
+                "simplified_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("请将类型名改为");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+                "traditional_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("請將類型名改為");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+                "english" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("rename the type to ");
+                    s.push_str_with_color_and_attr(&mut_name, WARN, ATTR);
+                    s
+                },
+            )
+            .to_string(),
+        );
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!("不変型{found}にselfの可変参照を取るメソッドは定義できません"),
+                    "simplified_chinese" => format!("不能在不可变类型{found}上定义获取self可变引用的方法"),
+                    "traditional_chinese" => format!("不能在不可變類型{found}上定義取得self可變引用的方法"),
+                    "english" => format!("cannot take a mutable reference to `self` of immutable type {found}"),
+                ),
+                errno,
+                HasEffect,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
+    pub fn refmut_self_in_function(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        name: &str,
+        caused_by: String,
+    ) -> Self {
+        let proc_name = format!("{name}!");
+        let hint = Some(
+            switch_lang!(
+                "japanese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("メソッド名を");
+                    s.push_str_with_color_and_attr(&proc_name, WARN, ATTR);
+                    s.push_str("に変更してください");
+                    s
+                },
+                "simplified_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("请将方法名改为");
+                    s.push_str_with_color_and_attr(&proc_name, WARN, ATTR);
+                    s
+                },
+                "traditional_chinese" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("請將方法名改為");
+                    s.push_str_with_color_and_attr(&proc_name, WARN, ATTR);
+                    s
+                },
+                "english" => {
+                    let mut s = StyledStrings::default();
+                    s.push_str("rename the method to ");
+                    s.push_str_with_color_and_attr(&proc_name, WARN, ATTR);
+                    s
+                },
+            )
+            .to_string(),
+        );
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => "関数でselfの可変参照を取ることはできません",
+                    "simplified_chinese" => "函数中不能获取self的可变引用",
+                    "traditional_chinese" => "函數中不能取得self的可變引用",
+                    "english" => "cannot take a mutable reference to `self` in a function",
+                ),
+                errno,
+                HasEffect,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn touch_mut_error(input: Input, errno: usize, expr: &Expr, caused_by: String) -> Self {
         let (hint, def_loc) = match expr {
             Expr::Accessor(acc)
@@ -567,6 +737,41 @@ impl OwnershipError {
                 errno,
                 MoveError,
                 name_loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
+    pub fn cycle_error(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        cycle: &str,
+        caused_by: String,
+    ) -> Self {
+        let found = StyledString::new(cycle, Some(ERR), Some(ATTR));
+        let hint = Some(
+            switch_lang!(
+                "japanese" => "循環を断ち切るには弱参照を使ってください",
+                "simplified_chinese" => "请使用弱引用来打破循环",
+                "traditional_chinese" => "請使用弱引用來打破循環",
+                "english" => "use a weak reference to break the cycle",
+            )
+            .to_string(),
+        );
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!("循環参照が検出されました: {found}"),
+                    "simplified_chinese" => format!("检测到循环引用: {found}"),
+                    "traditional_chinese" => format!("檢測到循環引用: {found}"),
+                    "english" => format!("circular reference detected: {found}"),
+                ),
+                errno,
+                CyclicError,
+                loc,
             ),
             input,
             caused_by,

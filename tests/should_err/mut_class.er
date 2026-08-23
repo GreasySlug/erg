@@ -1,0 +1,10 @@
+# ERR: a class with a mutable field must have `!` in its name
+Point = Class {.x = Int!; .y = Int}
+Point.
+    # ERR: `ref! self` is only allowed on mutable types
+    inc_x! ref!(self) = self.x.update! x -> x + 1
+
+# ERR: a function cannot take `ref! self` even on a mutable class
+C! = Class {.n = Int!}
+C!.
+    bad ref!(self) = self.n

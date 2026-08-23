@@ -49,6 +49,7 @@ pub enum ErrorKind {
     MethodError = 21,
     DummyError = 22,
     ExpectNextLine = 23,
+    CyclicError = 24,
     /* compile warnings */
     AttributeWarning = 60,
     CastWarning = 61,
@@ -157,6 +158,7 @@ impl From<&str> for ErrorKind {
             "HasEffect" => Self::HasEffect,
             "PurityError" => Self::PurityError,
             "MoveError" => Self::MoveError,
+            "CyclicError" => Self::CyclicError,
             "AttributeWarning" => Self::AttributeWarning,
             "CastWarning" => Self::CastWarning,
             "DeprecationWarning" => Self::DeprecationWarning,

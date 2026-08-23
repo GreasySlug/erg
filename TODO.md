@@ -95,14 +95,14 @@
     - [x] Recursive module
     - [x] Visibility check
   - [x] Patching
-- [ ] Implement a side-effect checker
+- [x] Implement a side-effect checker
   - [x] procedure call
-  - [ ] mutable type
+  - [x] mutable type
 - [x] Implement reference types (for methods)
-- [ ] Implement an ownership checker
+- [x] Implement an ownership checker
   - [x] Implement a move checker
   - [x] Implement a borrow checker
-  - [ ] Implement a cycle-reference detector
+  - [x] Implement a cycle-reference detector
 - [ ] Implement a compile-time evaluator
   - [x] Builtin (Compile-time) operators
   - [ ] Compile-time operator

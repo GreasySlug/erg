@@ -23,17 +23,13 @@ impl Context {
         let T = mono_q(TY_T, instanceof(Type));
         let U = mono_q(TY_U, instanceof(Type));
         let Path = mono_q_tp(PATH, instanceof(Str));
-        // `abs` returns whatever the argument's `.abs()` returns, so it stays
-        // `Nat` for an `Int` but is `Ratio` for a `Ratio`. Declaring a flat `Nat`
-        // made codegen wrap the call in `Nat(...)` (see `emit_expr`), which
-        // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. Binding the
-        // return to the argument's own type instead would be unsound: the
-        // argument is often a singleton (`{-3}`), and `abs` is not the identity.
-        // Overloaded, because `abs` keeps its argument's class: declaring a flat
+        // Overloaded, because `abs` keeps its argument's class. Declaring a flat
         // `Nat` made codegen wrap the call in `Nat(...)` (see `emit_expr`), which
         // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. `Int` comes
         // first (it is the most specific), and `Ratio` is the fallback for an
-        // argument whose type is still unresolved at the call site.
+        // argument whose type is still unresolved at the call site. Binding the
+        // return to the argument's own type instead would be unsound: the
+        // argument is often a singleton (`{-3}`), and `abs` is not the identity.
         let t_abs = (nd_func(vec![kw(KW_N, Int)], None, Nat)
             & nd_func(vec![kw(KW_N, Ratio)], None, Ratio)
             & nd_func(vec![kw(KW_N, Float)], None, Float))

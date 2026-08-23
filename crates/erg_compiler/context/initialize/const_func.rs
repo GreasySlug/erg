@@ -1328,7 +1328,10 @@ fn abs_of(num: ValueObj, param: &str) -> EvalValueResult<TyParam> {
         ValueObj::Nat(n) => Ok(ValueObj::Nat(n).into()),
         ValueObj::Int(n) => Ok(ValueObj::Nat(n.unsigned_abs()).into()),
         ValueObj::Bool(b) => Ok(ValueObj::Nat(b as u64).into()),
-        ValueObj::Ratio(n, d) => Ok(ValueObj::Ratio(n.abs(), d).into()),
+        ValueObj::Ratio(n, d) => n
+            .checked_abs()
+            .map(|n| ValueObj::Ratio(n, d).into())
+            .ok_or_else(|| todo("abs (out of range)")),
         ValueObj::Float(n) => Ok(ValueObj::from(n.abs()).into()),
         ValueObj::Inf | ValueObj::NegInf => Ok(ValueObj::Inf.into()),
         _ => Err(type_mismatch("Num", num, param)),
@@ -1882,8 +1885,11 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
         } else {
             (q, rest)
         };
-        let twice = rest * 2;
-        let round_up = twice > den || (twice == den && q % 2 != 0);
+        // `rest` vs `den / 2` rather than `rest * 2` vs `den`, which overflows
+        // once the denominator passes i128::MAX / 2. An odd denominator can
+        // never land exactly halfway.
+        let half = den / 2;
+        let round_up = rest > half || (den % 2 == 0 && rest == half && q % 2 != 0);
         let rounded = if round_up { q + 1 } else { q };
         return match i64::try_from(rounded) {
             Ok(i) => Ok(ValueObj::Int(i).into()),

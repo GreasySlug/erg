@@ -66,6 +66,10 @@ assert neg_third == -1 / 3
 # 2.5e-38 is 1/(4*10^37) and fits, but the denominator used to be built as
 # 10^39 -- which does not -- before being reduced.
 assert 2.5e-38 * 4 == 1e-37
+# `round` compares against `den / 2`: `rest * 2` overflows once the denominator
+# passes i128::MAX / 2, which 1e-38 already does
+assert round(1 - 1e-38) == 1
+assert round(0 - 1e-38) == 0
 
 # A decimal whose exact rational does not fit `Ratio` is still a `Ratio`, and is
 # built exactly from its source text -- it just cannot be a compile-time constant
@@ -83,6 +87,10 @@ mut.dec! 0.5
 assert mut == 1.0
 mut.update! old -> old * 3
 assert mut == 3.0
+# reflected operators: Python looks these up on the type, so `MutType`'s
+# attribute fallback cannot stand in for them
+assert 1.0 + mut == 4.0
+assert 2 * mut == 6.0
 copied = mut.copy()
 copied.dec! 1.0
 assert copied == 2.0

@@ -75,6 +75,26 @@ class RatioMut(MutType):  # inherits Ratio
     def __pow__(self, other):
         return RatioMut(self.value ** _unwrap(other))
 
+    # Reflected forms, so `1.0 + m` works and not just `m + 1.0`: Python looks
+    # these up on the type, so `MutType.__getattr__` cannot stand in for them.
+    def __radd__(self, other):
+        return RatioMut(_unwrap(other) + self.value)
+
+    def __rsub__(self, other):
+        return RatioMut(_unwrap(other) - self.value)
+
+    def __rmul__(self, other):
+        return RatioMut(_unwrap(other) * self.value)
+
+    def __rfloordiv__(self, other):
+        return RatioMut(_unwrap(other) // self.value)
+
+    def __rtruediv__(self, other):
+        return RatioMut(_unwrap(other) / self.value)
+
+    def __rpow__(self, other):
+        return RatioMut(_unwrap(other) ** self.value)
+
     def __pos__(self):
         return self
 

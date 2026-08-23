@@ -1,0 +1,21 @@
+# Exact folding of decimal literals, at the edges of what `ValueObj::Ratio` can
+# hold. The singleton type ascriptions only hold if the literal folded to
+# exactly that rational.
+#
+# This file is only compiled, not executed: codegen builds a `Ratio` literal
+# from its source text, so `Fraction("0e+2000000000")` would spend the run
+# allocating a two-billion-digit integer.
+
+# 0 is 0 whatever the exponent is, and must not be scaled a digit at a time
+Zero: {0.0} = 0e+2000000000
+NegZero: {0.0} = -0.0
+ZeroFrac: {0.0} = 0.0e+2000000000
+
+# exactly representable, but only once the power of ten is cancelled against the
+# numerator: 2.5e-38 is 1/(4*10^37), while the 10^39 it goes through is not
+Small: {2.5e-38} = 2.5e-38
+Smallest: {1e-38} = 1e-38
+
+Plain: {0.1} = 0.1
+Pi2: {3.14} = 3.14
+Big: {1e+30} = 1e+30

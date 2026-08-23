@@ -1632,13 +1632,20 @@ impl ValueObj {
         } else {
             digits.parse::<i128>().ok()?
         };
+        // `0e+9` is 0 whatever the exponent is. Returning here also keeps the
+        // scaling below from running out the exponent one digit at a time:
+        // multiplying 0 by 10 never overflows, so it would never stop.
+        if num == 0 {
+            return Self::ratio(0, 1);
+        }
         // The denominator is 10^`tens`. Cancel it against the numerator *before*
         // building it, or an exactly representable literal is lost to an overflow
         // on the way: 2.5e-38 is 1/(4*10^37), but 10^39 does not fit an i128.
         let mut tens = i64::from(u32::try_from(frac.len()).ok()?) - i64::from(exp);
-        while tens < 0 {
-            num = num.checked_mul(10)?;
-            tens += 1;
+        if tens < 0 {
+            let scale = 10i128.checked_pow(u32::try_from(tens.unsigned_abs()).ok()?)?;
+            num = num.checked_mul(scale)?;
+            tens = 0;
         }
         let mut twos = tens;
         let mut fives = tens;

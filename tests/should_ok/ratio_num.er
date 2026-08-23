@@ -81,6 +81,13 @@ assert 2.5e-38 * 4 == 1e-37
 assert round(1 - 1e-38) == 1
 assert round(0 - 1e-38) == 0
 
+# A `Ratio` literal inside a function body: codegen imports `Fraction` lazily,
+# and the flag saying it had been imported was shared across code objects -- so
+# an import emitted inside this body counted for the module-level `0.5` below,
+# which runs first and raised `NameError: ::#Fraction`.
+scale(x: Ratio) = x * 0.5
+assert scale(0.5) == 0.25
+
 # A decimal whose exact rational does not fit `Ratio` is still a `Ratio`, and is
 # built exactly from its source text -- it just cannot be a compile-time constant
 # (see tests/should_err/const_op.er).

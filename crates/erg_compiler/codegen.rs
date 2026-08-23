@@ -4384,7 +4384,16 @@ impl PyCodeGenerator {
                 Some(Identifier::private("#Fraction")),
             )],
         );
-        self.fraction_loaded = true;
+        self.fraction_loaded = self.loaded_for_whole_module();
+    }
+
+    /// Whether an import emitted right now has run by the time any later use of
+    /// it is reached. Only a module-level one has: an import inside a function
+    /// body runs when that function is *called*, so remembering it would leave a
+    /// later module-level use with a bare `LOAD_NAME` of a name nothing defined
+    /// (`f(x: Ratio) = x * 0.5` followed by `f(0.5)` used to raise NameError).
+    fn loaded_for_whole_module(&self) -> bool {
+        self.units.len() <= 1
     }
 
     /// Import the `true_div` helper, bound to `#true_div`. Used for divisions
@@ -4399,7 +4408,7 @@ impl PyCodeGenerator {
                 Some(Identifier::private("#true_div")),
             )],
         );
-        self.true_div_loaded = true;
+        self.true_div_loaded = self.loaded_for_whole_module();
     }
 
     fn load_control(&mut self) {

@@ -86,21 +86,25 @@ fn push_indent(code: &mut String, level: usize) {
 /// Core runtime modules, in definition order: a module must appear after any
 /// module whose classes its own class definitions inherit from
 /// (e.g. `_erg_bool` defines `class Bool(Nat)`, so it comes after `_erg_nat`).
+/// In dependency order: the modules are inlined into one prelude with their
+/// cross-imports stripped, so a module has to come after everything it uses.
+/// (`_erg_result` subclasses `_erg_type`'s `MutType`, and listing it first left
+/// every transpiled program raising `NameError: name 'MutType' is not defined`.)
 const CORE_MODULES: &[(&str, &str)] = &[
-    ("_erg_result", include_str!("lib/core/_erg_result.py")),
     ("_erg_control", include_str!("lib/core/_erg_control.py")),
     ("_erg_type", include_str!("lib/core/_erg_type.py")),
+    ("_erg_result", include_str!("lib/core/_erg_result.py")),
     ("_erg_int", include_str!("lib/core/_erg_int.py")),
     ("_erg_nat", include_str!("lib/core/_erg_nat.py")),
     ("_erg_bool", include_str!("lib/core/_erg_bool.py")),
     ("_erg_str", include_str!("lib/core/_erg_str.py")),
     ("_erg_float", include_str!("lib/core/_erg_float.py")),
+    ("_erg_ratio", include_str!("lib/core/_erg_ratio.py")),
     ("_erg_range", include_str!("lib/core/_erg_range.py")),
     (
         "_erg_contains_operator",
         include_str!("lib/core/_erg_contains_operator.py"),
     ),
-    ("_erg_ratio", include_str!("lib/core/_erg_ratio.py")),
     (
         "_erg_mutate_operator",
         include_str!("lib/core/_erg_mutate_operator.py"),
@@ -117,24 +121,24 @@ const CORE_MODULES: &[(&str, &str)] = &[
 
 /// Modules required by each feature (transitive closure, in `CORE_MODULES` order)
 const RANGE_OPS_MODULES: &[&str] = &[
-    "_erg_result",
     "_erg_control",
     "_erg_type",
+    "_erg_result",
     "_erg_int",
     "_erg_nat",
     "_erg_str",
     "_erg_range",
 ];
 const CONTAINS_OP_MODULES: &[&str] = &[
-    "_erg_result",
     "_erg_type",
+    "_erg_result",
     "_erg_range",
     "_erg_contains_operator",
 ];
 const BUILTIN_TYPES_MODULES: &[&str] = &[
-    "_erg_result",
     "_erg_control",
     "_erg_type",
+    "_erg_result",
     "_erg_int",
     "_erg_nat",
     "_erg_bool",
@@ -149,16 +153,16 @@ const BUILTIN_TYPES_MODULES: &[&str] = &[
 ];
 /// `mutate_operator` builds a `RatioMut`, which needs `MutType`
 const MUTATE_OP_MODULES: &[&str] = &[
-    "_erg_result",
     "_erg_control",
     "_erg_type",
+    "_erg_result",
     "_erg_ratio",
     "_erg_mutate_operator",
 ];
 const CONVERTORS_MODULES: &[&str] = &[
-    "_erg_result",
     "_erg_control",
     "_erg_type",
+    "_erg_result",
     "_erg_int",
     "_erg_nat",
     "_erg_str",

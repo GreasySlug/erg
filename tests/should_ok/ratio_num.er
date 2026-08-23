@@ -51,6 +51,22 @@ assert Rounded == 2
 assert RoundedEven == 2
 assert StrOf == "3/2"
 
+# Unary `+`/`-`: `Ratio` implemented neither `Pos` nor `Neg`, so a value typed
+# `Ratio` could not be negated at all (`Int` has them, but the impls do not
+# travel up the hierarchy).
+r = 0.1
+negated = -r
+assert negated == -0.1
+plussed = +r
+assert plussed == 0.1
+third: Ratio = 1 / 3
+neg_third = -third
+assert neg_third == -1 / 3
+
+# 2.5e-38 is 1/(4*10^37) and fits, but the denominator used to be built as
+# 10^39 -- which does not -- before being reduced.
+assert 2.5e-38 * 4 == 1e-37
+
 # A decimal whose exact rational does not fit `Ratio` is still a `Ratio`, and is
 # built exactly from its source text -- it just cannot be a compile-time constant
 # (see tests/should_err/const_op.er).

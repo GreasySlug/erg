@@ -541,6 +541,36 @@ impl Context {
             ValueObj::builtin_class(Ratio),
         );
         ratio.register_trait_methods(Ratio, ratio_floordiv);
+        // Unary `+`/`-`. `Int` has its own, but the impls do not travel up the
+        // hierarchy, so without these a value typed `Ratio` could not be negated.
+        let mut ratio_pos = Self::builtin_methods(Some(mono(POS)), 2);
+        ratio_pos.register_builtin_const(
+            OUTPUT,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            ValueObj::builtin_class(Ratio),
+        );
+        ratio_pos.register_builtin_erg_impl(
+            OP_POS,
+            fn0_met(Ratio, Ratio),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_pos);
+        let mut ratio_neg = Self::builtin_methods(Some(mono(NEG)), 2);
+        ratio_neg.register_builtin_const(
+            OUTPUT,
+            Visibility::BUILTIN_PUBLIC,
+            None,
+            ValueObj::builtin_class(Ratio),
+        );
+        ratio_neg.register_builtin_erg_impl(
+            OP_NEG,
+            fn0_met(Ratio, Ratio),
+            Const,
+            Visibility::BUILTIN_PUBLIC,
+        );
+        ratio.register_trait_methods(Ratio, ratio_neg);
         let mut ratio_mutizable = Self::builtin_methods(Some(mono(MUTIZABLE)), 2);
         ratio_mutizable.register_builtin_const(
             MUTABLE_MUT_TYPE,

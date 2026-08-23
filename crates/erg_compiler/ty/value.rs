@@ -1632,16 +1632,27 @@ impl ValueObj {
         } else {
             digits.parse::<i128>().ok()?
         };
-        let mut den = 10i128.checked_pow(u32::try_from(frac.len()).ok()?)?;
-        match exp.cmp(&0) {
-            std::cmp::Ordering::Greater => {
-                num = num.checked_mul(10i128.checked_pow(exp as u32)?)?
-            }
-            std::cmp::Ordering::Less => {
-                den = den.checked_mul(10i128.checked_pow(exp.unsigned_abs())?)?
-            }
-            std::cmp::Ordering::Equal => {}
+        // The denominator is 10^`tens`. Cancel it against the numerator *before*
+        // building it, or an exactly representable literal is lost to an overflow
+        // on the way: 2.5e-38 is 1/(4*10^37), but 10^39 does not fit an i128.
+        let mut tens = i64::from(u32::try_from(frac.len()).ok()?) - i64::from(exp);
+        while tens < 0 {
+            num = num.checked_mul(10)?;
+            tens += 1;
         }
+        let mut twos = tens;
+        let mut fives = tens;
+        while twos > 0 && num != 0 && num % 2 == 0 {
+            num /= 2;
+            twos -= 1;
+        }
+        while fives > 0 && num != 0 && num % 5 == 0 {
+            num /= 5;
+            fives -= 1;
+        }
+        let den = 2i128
+            .checked_pow(u32::try_from(twos).ok()?)?
+            .checked_mul(5i128.checked_pow(u32::try_from(fives).ok()?)?)?;
         Self::ratio(if neg { -num } else { num }, den)
     }
 

@@ -108,6 +108,14 @@ const CASES: &[&str] = &[
     "str(1.5)",
     "str(-1.5)",
     "str(3.0)",
+    // unary `+`/`-` on a `Ratio`, which had no `Pos`/`Neg` impl
+    "+0.1",
+    "-(1 / 3)",
+    "+(1 / 3)",
+    "-(0.1 + 0.2)",
+    // exactly representable only once the power of ten is cancelled down
+    "2.5e-38",
+    "1e-38",
     "round(float(2.5))",
     "round(float(1.5))",
     "round(float(2.4))",

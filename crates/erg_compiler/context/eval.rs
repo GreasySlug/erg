@@ -2162,6 +2162,7 @@ impl Context {
                 ValueObj::Bool(b) => Ok(ValueObj::Nat(b as u64)),
                 ValueObj::Nat(_)
                 | ValueObj::Int(_)
+                | ValueObj::Ratio(..)
                 | ValueObj::Float(_)
                 | ValueObj::Inf
                 | ValueObj::NegInf => Ok(val),
@@ -2176,6 +2177,10 @@ impl Context {
                 ValueObj::Int(i) => i
                     .checked_neg()
                     .map(ValueObj::Int)
+                    .ok_or_else(|| uncomputable(&val)),
+                ValueObj::Ratio(n, d) => n
+                    .checked_neg()
+                    .map(|n| ValueObj::Ratio(n, *d))
                     .ok_or_else(|| uncomputable(&val)),
                 ValueObj::Float(f) => Ok(ValueObj::Float(-*f)),
                 ValueObj::Inf => Ok(ValueObj::NegInf),

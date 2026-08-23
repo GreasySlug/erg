@@ -50,6 +50,8 @@ impl_u8_enum! {Opcode308;
     INPLACE_MULTIPLY = 57,
     INPLACE_MODULO = 59,
     STORE_SUBSCR = 60,
+    BINARY_LSHIFT = 62,
+    BINARY_RSHIFT = 63,
     BINARY_AND = 64,
     BINARY_XOR = 65,
     BINARY_OR = 66,

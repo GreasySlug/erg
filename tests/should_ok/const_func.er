@@ -54,3 +54,57 @@ NotInNat = -1 in Nat
 assert not NotInNat
 NotInList = -1 notin [1, 2]
 assert NotInList
+
+# Builtin compile-time functions (uppercase bindings force const-eval, and the
+# folded value must agree with what the function returns at runtime)
+IntStr = int "10"
+assert IntStr == 10
+IntTrunc = int 3.7
+assert IntTrunc == 3
+IntTruncNeg = int -3.7
+assert IntTruncNeg == -3
+IntBool = int True
+assert IntBool == 1
+NatOf = nat 5
+assert NatOf == 5
+FloatOf = float "2.5"
+assert FloatOf.nearly_eq(float 2.5)
+# ties round to even, as in Python
+Round25 = round (float 2.5)
+assert Round25 == 2
+Round15 = round (float 1.5)
+assert Round15 == 2
+Round24 = round (float 2.4)
+assert Round24 == 2
+RoundNeg = round (float -1.5)
+assert RoundNeg == -2
+OrdA = ord "a"
+assert OrdA == 97
+ChrA = chr 97
+assert ChrA == "a"
+Hex = hex 255
+assert Hex == "0xff"
+HexNeg = hex -255
+assert HexNeg == "-0xff"
+Bin = bin 5
+assert Bin == "0b101"
+Oct = oct 8
+assert Oct == "0o10"
+Pow = pow 2, 10
+assert Pow == 1024
+DivMod = divmod 7, 2
+assert DivMod == (3, 1)
+DivModNeg = divmod -7, 2
+assert DivModNeg == (-4, 1)
+Sorted = sorted [3, 1, 2]
+assert Sorted == [1, 2, 3]
+StrInt = str 1
+assert StrInt == "1"
+StrBool = str True
+assert StrBool == "True"
+StrStr = str "ab"
+assert StrStr == "ab"
+
+# NOTE: keyword arguments to builtin compile-time functions are covered by
+# tests/should_ok/const_kw_args.er (they cannot be executed: CPython's `abs`,
+# `len`, ... reject keyword arguments).

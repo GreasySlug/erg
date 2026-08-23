@@ -13,7 +13,7 @@ use erg_common::{enum_unwrap, get_hash, log, set};
 
 use crate::ast::{
     Accessor, Args, BinOp, Block, Call, ClassAttr, ClassAttrs, ClassDef, Compound, ConstExpr,
-    DataPack, Def, DefBody, DefId, DefaultParamSignature, DefKind, Dict, DictComprehension, Dummy,
+    DataPack, Def, DefBody, DefId, DefKind, DefaultParamSignature, Dict, DictComprehension, Dummy,
     Expr, GuardClause, Identifier, InlineModule, KeyValue, KwArg, Lambda, LambdaSignature, List,
     ListComprehension, ListTypeSpec, ListWithLength, Literal, Methods, MixedRecord, Module,
     NonDefaultParamSignature, NormalDict, NormalList, NormalRecord, NormalSet, NormalTuple,
@@ -188,9 +188,7 @@ impl Desugarer {
         let mut block = def.body.block;
         if let Some(mut last) = block.pop() {
             for deco in subr.decorators {
-                last = deco
-                    .into_expr()
-                    .call_expr(Args::single(PosArg::new(last)));
+                last = deco.into_expr().call_expr(Args::single(PosArg::new(last)));
             }
             block.push(last);
         }

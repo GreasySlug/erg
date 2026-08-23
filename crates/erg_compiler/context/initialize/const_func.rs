@@ -1306,8 +1306,8 @@ pub(crate) fn str_startswith(mut args: ValueArgs, _ctx: &Context) -> EvalValueRe
 
 pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let num = args
-        .remove_left_or_key("num")
-        .ok_or_else(|| not_passed("num"))?;
+        .remove_left_or_key("n")
+        .ok_or_else(|| not_passed("n"))?;
     match num {
         ValueObj::Nat(n) => Ok(ValueObj::Nat(n).into()),
         ValueObj::Int(n) => Ok(ValueObj::Nat(n.unsigned_abs() as u64).into()),
@@ -1315,7 +1315,7 @@ pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         ValueObj::Float(n) => Ok(ValueObj::from(n.abs()).into()),
         ValueObj::Inf => Ok(ValueObj::Inf.into()),
         ValueObj::NegInf => Ok(ValueObj::Inf.into()),
-        _ => Err(type_mismatch("Num", num, "num")),
+        _ => Err(type_mismatch("Num", num, "n")),
     }
 }
 
@@ -1442,8 +1442,8 @@ pub(crate) fn filter_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult
 
 pub(crate) fn len_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let container = args
-        .remove_left_or_key("iterable")
-        .ok_or_else(|| not_passed("iterable"))?;
+        .remove_left_or_key("s")
+        .ok_or_else(|| not_passed("s"))?;
     let len = match container {
         ValueObj::List(a) => a.len(),
         ValueObj::Tuple(t) => t.len(),
@@ -1566,23 +1566,23 @@ pub(crate) fn min_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
 
 pub(crate) fn not_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let val = args
-        .remove_left_or_key("val")
-        .ok_or_else(|| not_passed("val"))?;
+        .remove_left_or_key("b")
+        .ok_or_else(|| not_passed("b"))?;
     match val {
         ValueObj::Bool(b) => Ok(ValueObj::Bool(!b).into()),
-        _ => Err(type_mismatch("Bool", val, "val")),
+        _ => Err(type_mismatch("Bool", val, "b")),
     }
 }
 
 pub(crate) fn reversed_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let reversible = args
-        .remove_left_or_key("reversible")
-        .ok_or_else(|| not_passed("reversible"))?;
+        .remove_left_or_key("seq")
+        .ok_or_else(|| not_passed("seq"))?;
     let arr = match reversible {
         ValueObj::List(a) => a.to_vec(),
         ValueObj::Tuple(t) => t.to_vec(),
         _ => {
-            return Err(type_mismatch("Reversible", reversible, "reversible"));
+            return Err(type_mismatch("Reversible", reversible, "seq"));
         }
     };
     let mut reversed = vec![];
@@ -1594,12 +1594,17 @@ pub(crate) fn reversed_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueRes
 
 pub(crate) fn str_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let val = args
-        .remove_left_or_key("val")
-        .ok_or_else(|| not_passed("val"))?;
+        .remove_left_or_key("object")
+        .ok_or_else(|| not_passed("object"))?;
     if let Some(_encoding) = args.remove_left_or_key("encoding") {
         return Err(todo("encoding"));
     }
-    Ok(ValueObj::Str(val.to_string().into()).into())
+    // NOTE: `ValueObj`'s `Display` is repr-like (`Str` comes out quoted), so it
+    // must not be used here -- the result has to equal what `str` returns at run time.
+    match py_str(&val) {
+        Some(s) => Ok(ValueObj::Str(s.into()).into()),
+        None => Err(todo(&format!("str({val})"))),
+    }
 }
 
 pub(crate) fn sum_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
@@ -1625,6 +1630,260 @@ pub(crate) fn sum_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         }
     }
     Ok(sum.into())
+}
+
+/// Python's `str()`, restricted to the values whose textual form is guaranteed
+/// to be the same at compile time and at run time.
+///
+/// `Float` is deliberately excluded: float literals are `Ratio`s at run time
+/// (`str 1.5 == "3/2"`), which the compile-time representation cannot reproduce.
+fn py_str(val: &ValueObj) -> Option<String> {
+    match val {
+        ValueObj::Str(s) => Some(s.to_string()),
+        ValueObj::Int(i) => Some(i.to_string()),
+        ValueObj::Nat(n) => Some(n.to_string()),
+        ValueObj::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
+        ValueObj::None => Some("None".to_string()),
+        _ => None,
+    }
+}
+
+/// The integral value of `val` under Python's `int()`: `Float`s truncate towards
+/// zero and `Str`s are parsed as decimal. `None` if `int(val)` would raise.
+fn py_int(val: &ValueObj) -> Option<i64> {
+    match val {
+        ValueObj::Int(i) => Some(*i as i64),
+        ValueObj::Nat(n) => i64::try_from(*n).ok(),
+        ValueObj::Bool(b) => Some(*b as i64),
+        ValueObj::Float(f) => {
+            let t = f.trunc();
+            (t >= i64::MIN as f64 && t <= i64::MAX as f64).then_some(t as i64)
+        }
+        ValueObj::Str(s) => {
+            let s = s.trim();
+            // `_` digit separators are valid in Python but not for `from_str_radix`
+            (!s.contains('_')).then(|| s.parse::<i64>().ok()).flatten()
+        }
+        _ => None,
+    }
+}
+
+fn value_error(msg: String) -> EvalValueError {
+    ErrorCore::new(
+        vec![SubMessage::only_loc(Location::Unknown)],
+        msg,
+        line!() as usize,
+        ErrorKind::ValueError,
+        Location::Unknown,
+    )
+    .into()
+}
+
+/// `int obj`. The runtime `int__` takes no `base`, so neither does this.
+pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let obj = args
+        .remove_left_or_key("obj")
+        .ok_or_else(|| not_passed("obj"))?;
+    if args.remove_left_or_key("base").is_some() {
+        return Err(todo("int(_, base)"));
+    }
+    match py_int(&obj) {
+        Some(i) => i32::try_from(i)
+            .map(|i| ValueObj::Int(i).into())
+            .map_err(|_| todo("int (out of range)")),
+        None => Err(type_mismatch("Int-convertible", obj, "obj")),
+    }
+}
+
+/// `nat obj`. `Nat(_)` raises at run time for negative inputs, so this rejects them too.
+pub(crate) fn nat_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let obj = args
+        .remove_left_or_key("obj")
+        .ok_or_else(|| not_passed("obj"))?;
+    match py_int(&obj) {
+        Some(i) if i < 0 => Err(value_error(format!("Nat can't be negative: {i}"))),
+        Some(i) => Ok(ValueObj::Nat(i as u64).into()),
+        None => Err(type_mismatch("Nat-convertible", obj, "obj")),
+    }
+}
+
+/// `float obj`
+pub(crate) fn float_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let obj = args
+        .remove_left_or_key("obj")
+        .ok_or_else(|| not_passed("obj"))?;
+    let f = match &obj {
+        ValueObj::Float(f) => Some(**f),
+        ValueObj::Int(i) => Some(*i as f64),
+        ValueObj::Nat(n) => Some(*n as f64),
+        ValueObj::Bool(b) => Some(*b as u8 as f64),
+        ValueObj::Str(s) => {
+            let s = s.trim();
+            (!s.contains('_')).then(|| s.parse::<f64>().ok()).flatten()
+        }
+        _ => None,
+    };
+    match f {
+        Some(f) => Ok(ValueObj::from(f).into()),
+        None => Err(type_mismatch("Float-convertible", obj, "obj")),
+    }
+}
+
+/// `round number`. Ties round to even, as in Python (`round 2.5 == 2`).
+pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let number = args
+        .remove_left_or_key("number")
+        .ok_or_else(|| not_passed("number"))?;
+    let Some(f) = number.as_float() else {
+        return Err(type_mismatch("Float", number, "number"));
+    };
+    let lower = f.floor();
+    let diff = f - lower;
+    // exactly halfway: round to the even neighbour
+    let round_up = diff > 0.5 || (diff == 0.5 && (lower / 2.0).fract() != 0.0);
+    let rounded = if round_up { lower + 1.0 } else { lower };
+    match i32::try_from(rounded as i64) {
+        Ok(i) => Ok(ValueObj::Int(i).into()),
+        Err(_) => Err(todo("round (out of range)")),
+    }
+}
+
+/// `ord c`
+pub(crate) fn ord_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let c = args
+        .remove_left_or_key("c")
+        .ok_or_else(|| not_passed("c"))?;
+    let Some(s) = c.as_str() else {
+        return Err(type_mismatch("Str", c, "c"));
+    };
+    let mut chars = s.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => Ok(ValueObj::Nat(c as u64).into()),
+        _ => Err(value_error(format!(
+            "ord() expected a character, but string of length {} found",
+            s.chars().count()
+        ))),
+    }
+}
+
+/// `chr i`
+pub(crate) fn chr_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let i = args
+        .remove_left_or_key("i")
+        .ok_or_else(|| not_passed("i"))?;
+    let Some(n) = py_int(&i).and_then(|n| u32::try_from(n).ok()) else {
+        return Err(type_mismatch("0..1114111", i, "i"));
+    };
+    match char::from_u32(n) {
+        Some(c) => Ok(ValueObj::Str(c.to_string().into()).into()),
+        // lone surrogates are valid for Python's `chr` but have no `char`
+        None if n <= 0x10FFFF => Err(todo("chr (surrogate)")),
+        None => Err(value_error("chr() arg not in range(0x110000)".to_string())),
+    }
+}
+
+fn radix_repr(val: &ValueObj, param: &str, prefix: &str, radix: u32) -> EvalValueResult<TyParam> {
+    let Some(i) = py_int(val).filter(|_| !matches!(val, ValueObj::Float(_) | ValueObj::Str(_)))
+    else {
+        return Err(type_mismatch("Int", val, param));
+    };
+    let digits = match radix {
+        2 => format!("{:b}", i.unsigned_abs()),
+        8 => format!("{:o}", i.unsigned_abs()),
+        _ => format!("{:x}", i.unsigned_abs()),
+    };
+    let sign = if i < 0 { "-" } else { "" };
+    Ok(ValueObj::Str(format!("{sign}{prefix}{digits}").into()).into())
+}
+
+/// `bin n` (e.g. `bin 5 == "0b101"`)
+pub(crate) fn bin_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let n = args
+        .remove_left_or_key("n")
+        .ok_or_else(|| not_passed("n"))?;
+    radix_repr(&n, "n", "0b", 2)
+}
+
+/// `oct X` (e.g. `oct 8 == "0o10"`)
+pub(crate) fn oct_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let x = args
+        .remove_left_or_key("X")
+        .ok_or_else(|| not_passed("X"))?;
+    radix_repr(&x, "X", "0o", 8)
+}
+
+/// `hex n` (e.g. `hex 255 == "0xff"`)
+pub(crate) fn hex_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let n = args
+        .remove_left_or_key("n")
+        .ok_or_else(|| not_passed("n"))?;
+    radix_repr(&n, "n", "0x", 16)
+}
+
+/// `pow base, exp` == `base ** exp`
+pub(crate) fn pow_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let base = args
+        .remove_left_or_key("base")
+        .ok_or_else(|| not_passed("base"))?;
+    let exp = args
+        .remove_left_or_key("exp")
+        .ok_or_else(|| not_passed("exp"))?;
+    match base.clone().try_pow(exp.clone()) {
+        Some(v) => Ok(v.into()),
+        None => Err(todo(&format!("pow({base}, {exp})"))),
+    }
+}
+
+/// `divmod a, b` == `(a // b, a % b)`
+pub(crate) fn divmod_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let a = args
+        .remove_left_or_key("a")
+        .ok_or_else(|| not_passed("a"))?;
+    let b = args
+        .remove_left_or_key("b")
+        .ok_or_else(|| not_passed("b"))?;
+    if b.is_zero() {
+        return Err(value_error(
+            "integer division or modulo by zero".to_string(),
+        ));
+    }
+    let (Some(div), Some(rem)) = (
+        a.clone().try_floordiv(b.clone()),
+        a.clone().try_mod(b.clone()),
+    ) else {
+        return Err(todo(&format!("divmod({a}, {b})")));
+    };
+    Ok(ValueObj::Tuple(vec![div, rem].into()).into())
+}
+
+/// `sorted iterable`
+pub(crate) fn sorted_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let iterable = args
+        .remove_left_or_key("iterable")
+        .ok_or_else(|| not_passed("iterable"))?;
+    let mut elems = match &iterable {
+        ValueObj::List(a) => a.to_vec(),
+        ValueObj::Tuple(t) => t.to_vec(),
+        ValueObj::Set(s) => s.iter().cloned().collect(),
+        _ => return Err(type_mismatch("Iterable(Ord)", iterable, "iterable")),
+    };
+    // every pair must be comparable, otherwise the run-time `sorted` would raise
+    for w in elems.windows(2) {
+        if w[0].try_cmp(&w[1]).is_none() {
+            return Err(type_mismatch("Ord", &w[0], "iterable.next()"));
+        }
+    }
+    let mut failed = false;
+    elems.sort_by(|l, r| {
+        l.try_cmp(r).unwrap_or_else(|| {
+            failed = true;
+            std::cmp::Ordering::Equal
+        })
+    });
+    if failed {
+        return Err(type_mismatch("Ord", iterable, "iterable"));
+    }
+    Ok(ValueObj::List(elems.into()).into())
 }
 
 pub(crate) fn resolve_path_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
@@ -1710,8 +1969,8 @@ pub(crate) fn resolve_decl_path_func(
 
 pub(crate) fn succ_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let val = args
-        .remove_left_or_key("Value")
-        .ok_or_else(|| not_passed("Value"))?;
+        .remove_left_or_key("n")
+        .ok_or_else(|| not_passed("n"))?;
     let val = match &val {
         ValueObj::Bool(b) => ValueObj::Nat(*b as u64 + 1),
         ValueObj::Nat(n) => ValueObj::Nat(n + 1),
@@ -1719,7 +1978,7 @@ pub(crate) fn succ_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<
         ValueObj::Float(n) => ValueObj::from(**n + f64::EPSILON),
         v @ (ValueObj::Inf | ValueObj::NegInf) => v.clone(),
         _ => {
-            return Err(type_mismatch("Number", val, "Value"));
+            return Err(type_mismatch("Number", val, "n"));
         }
     };
     Ok(val.into())
@@ -1727,8 +1986,8 @@ pub(crate) fn succ_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<
 
 pub(crate) fn pred_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let val = args
-        .remove_left_or_key("Value")
-        .ok_or_else(|| not_passed("Value"))?;
+        .remove_left_or_key("n")
+        .ok_or_else(|| not_passed("n"))?;
     let val = match &val {
         ValueObj::Bool(b) => ValueObj::Nat((*b as u64).saturating_sub(1)),
         ValueObj::Nat(n) => ValueObj::Nat(n.saturating_sub(1)),
@@ -1736,7 +1995,7 @@ pub(crate) fn pred_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<
         ValueObj::Float(n) => ValueObj::from(**n - f64::EPSILON),
         v @ (ValueObj::Inf | ValueObj::NegInf) => v.clone(),
         _ => {
-            return Err(type_mismatch("Number", val, "Value"));
+            return Err(type_mismatch("Number", val, "n"));
         }
     };
     Ok(val.into())

@@ -28,7 +28,7 @@ use self::value_set::inner_class;
 use super::codeobj::{tuple_into_bytes, CodeObj};
 use super::constructors::{dict_t, list_t, refinement, set_t, tuple_t, unsized_list_t};
 use super::free::{Constraint, FreeTyVar, HasLevel};
-use super::typaram::{OpKind, TyParam};
+use super::typaram::{IntervalOp, OpKind, TyParam};
 use super::{ConstSubr, Field, HasType, Predicate, SharedFrees, Type};
 use super::{CONTAINER_OMIT_THRESHOLD, GENERIC_LEVEL, STR_OMIT_THRESHOLD};
 
@@ -1328,6 +1328,54 @@ impl HasType for ValueObj {
     }
 }
 
+/// Upper bound on the length of a string built by constant folding `s * n`,
+/// so that a typo like `"x" * 10_000_000_000` cannot exhaust memory at compile time.
+const STR_REPEAT_LIMIT: usize = 1 << 20;
+
+/// `floor(l / r)`, i.e. Python's `//`. `None` if `r == 0`.
+fn floor_div(l: i128, r: i128) -> Option<i128> {
+    if r == 0 {
+        return None;
+    }
+    let q = l / r;
+    if l % r != 0 && (l < 0) != (r < 0) {
+        Some(q - 1)
+    } else {
+        Some(q)
+    }
+}
+
+/// `l - floor(l / r) * r`, i.e. Python's `%` (the result takes the sign of `r`).
+/// `None` if `r == 0`.
+fn floor_mod(l: i128, r: i128) -> Option<i128> {
+    if r == 0 {
+        return None;
+    }
+    let m = l % r;
+    if m != 0 && (m < 0) != (r < 0) {
+        Some(m + r)
+    } else {
+        Some(m)
+    }
+}
+
+/// The float counterpart of [`floor_mod`]. `r == 0.0` yields `NaN`, mirroring `f64::rem`.
+fn floor_mod_f64(l: f64, r: f64) -> f64 {
+    let m = l % r;
+    if m != 0.0 && (m < 0.0) != (r < 0.0) {
+        m + r
+    } else {
+        m
+    }
+}
+
+/// `l ** r` for integers. `None` if `r` is negative (the result would not be an
+/// integer) or the result overflows `i128`.
+fn int_pow(l: i128, r: i32) -> Option<i128> {
+    let r = u32::try_from(r).ok()?;
+    l.checked_pow(r)
+}
+
 impl ValueObj {
     pub const fn builtin_class(t: Type) -> Self {
         ValueObj::Type(TypeObj::Builtin {
@@ -1356,8 +1404,36 @@ impl ValueObj {
 
     /// closed range (..)
     pub fn range(start: Self, end: Self) -> Self {
+        Self::interval(IntervalOp::Closed, start, end)
+    }
+
+    /// The `DataClass` name a range value of `op` is represented by.
+    /// These match the runtime classes defined in `lib/core/_erg_range.py`
+    /// (`..` is kept as `Range` for backward compatibility).
+    pub const fn interval_name(op: IntervalOp) -> &'static str {
+        match op {
+            IntervalOp::Closed => "Range",
+            IntervalOp::LeftOpen => "LeftOpenRange",
+            IntervalOp::RightOpen => "RightOpenRange",
+            IntervalOp::Open => "OpenRange",
+        }
+    }
+
+    /// The interval kind a `DataClass` name denotes, if it denotes a range at all.
+    pub fn as_interval_op(name: &str) -> Option<IntervalOp> {
+        match name {
+            "Range" | "ClosedRange" => Some(IntervalOp::Closed),
+            "LeftOpenRange" => Some(IntervalOp::LeftOpen),
+            "RightOpenRange" => Some(IntervalOp::RightOpen),
+            "OpenRange" => Some(IntervalOp::Open),
+            _ => None,
+        }
+    }
+
+    /// `start..end`, `start<..end`, `start..<end` or `start<..<end`
+    pub fn interval(op: IntervalOp, start: Self, end: Self) -> Self {
         Self::DataClass {
-            name: "Range".into(),
+            name: Self::interval_name(op).into(),
             fields: dict! {
                 Field::private("start".into()) => start,
                 Field::private("end".into()) => end,
@@ -1374,6 +1450,17 @@ impl ValueObj {
 
     pub const fn is_none(&self) -> bool {
         matches!(self, Self::None)
+    }
+
+    /// Whether `self` is a numeric zero (used to reject compile-time division by zero).
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Self::Int(i) => *i == 0,
+            Self::Nat(n) => *n == 0,
+            Self::Bool(b) => !*b,
+            Self::Float(f) => **f == 0.0,
+            _ => false,
+        }
     }
 
     // TODO: add Complex
@@ -1596,6 +1683,10 @@ impl ValueObj {
             Self::Record(rec) => {
                 Type::Record(rec.iter().map(|(k, v)| (k.clone(), v.class())).collect())
             }
+            // all four interval kinds share the single `Range` class
+            Self::DataClass { name, .. } if Self::as_interval_op(name).is_some() => {
+                Type::Mono("Range".into())
+            }
             Self::DataClass { name, .. } => Type::Mono(name.clone()),
             Self::Subr(subr) => subr.sig_t().clone(),
             Self::Type(t_obj) => match t_obj {
@@ -1650,6 +1741,58 @@ impl ValueObj {
         }
     }
 
+    /// Integral view of `self` (`Bool` counts as 0/1), used by the bitwise operators.
+    fn as_i128(&self) -> Option<i128> {
+        match self {
+            Self::Int(i) => Some(*i as i128),
+            Self::Nat(n) => Some(*n as i128),
+            Self::Bool(b) => Some(*b as i128),
+            _ => None,
+        }
+    }
+
+    /// `None` if `i` is not representable (`Nat` is a `u64`, `Int` an `i32`).
+    fn from_i128(i: i128) -> Option<Self> {
+        if let Ok(n) = u64::try_from(i) {
+            Some(Self::Nat(n))
+        } else {
+            i32::try_from(i).ok().map(Self::Int)
+        }
+    }
+
+    /// `l << r`. `None` if the shift count is negative or the result is not representable.
+    pub fn try_shl(self, other: Self) -> Option<Self> {
+        let lhs = self.as_i128()?;
+        let rhs = u32::try_from(other.as_i128()?).ok()?;
+        // a wider shift can never fit back into `Nat`/`Int` (unless `lhs` is 0)
+        if rhs >= u64::BITS {
+            return if lhs == 0 { Some(Self::Nat(0)) } else { None };
+        }
+        // `|lhs| < 2**64` and `rhs < 64`, so this cannot overflow `i128`
+        Self::from_i128(lhs.checked_mul(1i128 << rhs)?)
+    }
+
+    /// `l >> r` (arithmetic, as in Python). `None` if the shift count is negative.
+    pub fn try_shr(self, other: Self) -> Option<Self> {
+        let lhs = self.as_i128()?;
+        let rhs = u32::try_from(other.as_i128()?).ok()?;
+        let shifted = if rhs >= i128::BITS {
+            if lhs < 0 {
+                -1
+            } else {
+                0
+            }
+        } else {
+            lhs >> rhs
+        };
+        Self::from_i128(shifted)
+    }
+
+    /// `~x` == `-(x + 1)`.
+    pub fn try_invert(self) -> Option<Self> {
+        Self::from_i128(!self.as_i128()?)
+    }
+
     pub fn try_binary(self, other: Self, op: OpKind) -> Option<Self> {
         match op {
             OpKind::Add => self.try_add(other),
@@ -1662,6 +1805,8 @@ impl ValueObj {
             OpKind::Ge => self.try_ge(other),
             OpKind::Eq => self.try_eq(other),
             OpKind::Ne => self.try_ne(other),
+            OpKind::Shl => self.try_shl(other),
+            OpKind::Shr => self.try_shr(other),
             _ => None,
         }
     }
@@ -1703,11 +1848,13 @@ impl ValueObj {
     // REVIEW: allow_divergenceオプションを付けるべきか?
     pub fn try_add(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::Int(l + r)),
-            (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l + r)),
+            (Self::Int(l), Self::Int(r)) => l.checked_add(r).map(Self::Int),
+            (Self::Nat(l), Self::Nat(r)) => l.checked_add(r).map(Self::Nat),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l + r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l + r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::Int(l as i32 + r)),
+            (Self::Int(l), Self::Nat(r)) => Self::from_i128(l as i128 + r as i128),
+            (Self::Nat(l), Self::Int(r)) => {
+                i32::try_from(l as i128 + r as i128).ok().map(Self::Int)
+            }
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l + r as f64)),
             (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
@@ -1727,11 +1874,13 @@ impl ValueObj {
 
     pub fn try_sub(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::Int(l - r)),
-            (Self::Nat(l), Self::Nat(r)) => Some(Self::Int(l as i32 - r as i32)),
+            (Self::Int(l), Self::Int(r)) => l.checked_sub(r).map(Self::Int),
+            (Self::Nat(l), Self::Nat(r)) => {
+                i32::try_from(l as i128 - r as i128).ok().map(Self::Int)
+            }
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l - r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l - r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from(l as i32 - r)),
+            (Self::Int(l), Self::Nat(r)) => Self::from_i128(l as i128 - r as i128),
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l - r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 - *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l - r as f64)),
@@ -1751,16 +1900,24 @@ impl ValueObj {
 
     pub fn try_mul(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::from(l * r)),
-            (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l * r)),
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 * r as i128),
+            (Self::Nat(l), Self::Nat(r)) => l.checked_mul(r).map(Self::Nat),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l * r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::Int(l * r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::Int(l as i32 * r)),
+            (Self::Int(l), Self::Nat(r)) => {
+                i32::try_from(l as i128 * r as i128).ok().map(Self::Int)
+            }
+            (Self::Nat(l), Self::Int(r)) => {
+                i32::try_from(l as i128 * r as i128).ok().map(Self::Int)
+            }
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l * r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 * *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l * r as f64)),
             (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 * *r)),
-            (Self::Str(l), Self::Nat(r)) => Some(Self::Str(Str::from(l.repeat(r as usize)))),
+            (Self::Str(l), Self::Nat(r))
+                if l.len().saturating_mul(r as usize) <= STR_REPEAT_LIMIT =>
+            {
+                Some(Self::Str(Str::from(l.repeat(r as usize))))
+            }
             (inf @ (Self::Inf | Self::NegInf), _) | (_, inf @ (Self::Inf | Self::NegInf)) => {
                 Some(inf)
             }
@@ -1769,6 +1926,10 @@ impl ValueObj {
     }
 
     pub fn try_div(self, other: Self) -> Option<Self> {
+        // `x / 0` raises `ZeroDivisionError` at runtime, so it must not fold to `inf`
+        if other.is_zero() {
+            return None;
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l as f64 / r as f64)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l as f64 / r as f64)),
@@ -1784,13 +1945,23 @@ impl ValueObj {
         }
     }
 
+    /// `//` rounds towards -infinity (as in Python), not towards zero.
     pub fn try_floordiv(self, other: Self) -> Option<Self> {
+        if other.is_zero() {
+            return None;
+        }
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::Int(l / r)),
+            (Self::Int(l), Self::Int(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l / r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from((l / r).floor())),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::Int(l / r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::Int(l as i32 / r)),
+            (Self::Int(l), Self::Nat(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
+            (Self::Nat(l), Self::Int(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from((*l / r as f64).floor())),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64 / *r).floor())),
             (Self::Float(l), Self::Int(r)) => Some(Self::from((*l / r as f64).floor())),
@@ -1802,11 +1973,23 @@ impl ValueObj {
 
     pub fn try_pow(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::Int(l.pow(r.try_into().ok()?))),
-            (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l.pow(r.try_into().ok()?))),
+            (Self::Int(l), Self::Int(r)) => {
+                i32::try_from(int_pow(l as i128, r)?).ok().map(Self::Int)
+            }
+            (Self::Nat(l), Self::Nat(r)) => {
+                u64::try_from(int_pow(l as i128, i32::try_from(r).ok()?)?)
+                    .ok()
+                    .map(Self::Nat)
+            }
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l.powf(*r))),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::Int(l.pow(r.try_into().ok()?))),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::Nat(l.pow(r.try_into().ok()?))),
+            (Self::Int(l), Self::Nat(r)) => {
+                i32::try_from(int_pow(l as i128, i32::try_from(r).ok()?)?)
+                    .ok()
+                    .map(Self::Int)
+            }
+            (Self::Nat(l), Self::Int(r)) => {
+                u64::try_from(int_pow(l as i128, r)?).ok().map(Self::Nat)
+            }
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(l.powf(r as f64))),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64).powf(*r))),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(l.powi(r))),
@@ -1815,17 +1998,27 @@ impl ValueObj {
         }
     }
 
+    /// `%` takes the sign of the divisor (as in Python), not of the dividend.
     pub fn try_mod(self, other: Self) -> Option<Self> {
+        if other.is_zero() {
+            return None;
+        }
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Some(Self::Int(l % r)),
+            (Self::Int(l), Self::Int(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l % r)),
-            (Self::Float(l), Self::Float(r)) => Some(Self::Float(l % r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::Int(l % r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::Int(l as i32 % r)),
-            (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l % r as f64)),
-            (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 % *r)),
-            (Self::Float(l), Self::Int(r)) => Some(Self::from(*l % r as f64)),
-            (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 % *r)),
+            (Self::Float(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(*l, *r))),
+            (Self::Int(l), Self::Nat(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
+            (Self::Nat(l), Self::Int(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
+                .ok()
+                .map(Self::Int),
+            (Self::Float(l), Self::Nat(r)) => Some(Self::from(floor_mod_f64(*l, r as f64))),
+            (Self::Nat(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(l as f64, *r))),
+            (Self::Float(l), Self::Int(r)) => Some(Self::from(floor_mod_f64(*l, r as f64))),
+            (Self::Int(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(l as f64, *r))),
             _ => None,
         }
     }

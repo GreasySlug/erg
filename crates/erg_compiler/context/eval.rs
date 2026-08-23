@@ -20,12 +20,12 @@ use erg_parser::desugar::Desugarer;
 use erg_parser::token::{Token, TokenKind};
 
 use crate::ty::constructors::{
-    bounded, callable, closed_range, dict_t, func, guard, list_t, mono, mono_q, named_free_var,
-    poly, proj, proj_call, ref_, ref_mut, refinement, set_t, subr_t, subtypeof, tp_enum,
-    try_v_enum, tuple_t, unknown_len_list_t, unsized_list_t, v_enum,
+    bounded, callable, dict_t, func, guard, interval, list_t, mono, mono_q, named_free_var, poly,
+    proj, proj_call, ref_, ref_mut, refinement, set_t, subr_t, subtypeof, tp_enum, try_v_enum,
+    tuple_t, unknown_len_list_t, unsized_list_t, v_enum,
 };
 use crate::ty::free::HasLevel;
-use crate::ty::typaram::{OpKind, TyParam};
+use crate::ty::typaram::{IntervalOp, OpKind, TyParam};
 use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{
     ConstSubr, HasType, Predicate, SubrKind, SubrType, Type, UserConstSubr, ValueArgs, Visibility,
@@ -68,6 +68,9 @@ pub fn type_from_token_kind(kind: TokenKind) -> Type {
     }
 }
 
+/// The dunder method `op` dispatches to.
+/// Must agree with `binop_to_dname`/`unaryop_to_dname` (`crate::error`) and with the
+/// `OP_*` names the builtin classes are registered under.
 fn op_to_name(op: OpKind) -> &'static str {
     match op {
         OpKind::Add => "__add__",
@@ -90,11 +93,11 @@ fn op_to_name(op: OpKind) -> &'static str {
         OpKind::Or => "__or__",
         OpKind::Not => "__not__",
         OpKind::Invert => "__invert__",
-        OpKind::BitAnd => "__bitand__",
-        OpKind::BitOr => "__bitor__",
-        OpKind::BitXor => "__bitxor__",
-        OpKind::Shl => "__shl__",
-        OpKind::Shr => "__shr__",
+        OpKind::BitAnd => "__and__",
+        OpKind::BitOr => "__or__",
+        OpKind::BitXor => "__xor__",
+        OpKind::Shl => "__lshift__",
+        OpKind::Shr => "__rshift__",
         OpKind::ClosedRange => "__rng__",
         OpKind::LeftOpenRange => "__lorng__",
         OpKind::RightOpenRange => "__rorng__",
@@ -693,7 +696,7 @@ impl Context {
         let op = self
             .try_get_op_kind_from_token(&bin.op)
             .map_err(|e| (ValueObj::Failure, e))?;
-        self.eval_bin(op, lhs, rhs)
+        self.eval_bin(op, lhs, rhs, bin.op.loc())
             .map_err(|e| (ValueObj::Failure, e))
     }
 
@@ -702,7 +705,7 @@ impl Context {
         let op = self
             .try_get_op_kind_from_token(&unary.op)
             .map_err(|e| (ValueObj::Failure, e))?;
-        self.eval_unary_val(op, val)
+        self.eval_unary_val(op, val, unary.op.loc())
             .map_err(|e| (ValueObj::Failure, e))
     }
 
@@ -1696,49 +1699,69 @@ impl Context {
         lhs: ValueObj,
         rhs: ValueObj,
         prim: Option<ValueObj>,
+        loc: Location,
     ) -> EvalResult<ValueObj> {
         if let Some(v) = prim {
             Ok(v)
-        } else if let Some(v) = self.eval_user_binop(op, lhs, rhs) {
-            Ok(v)
         } else {
-            Err(EvalErrors::from(EvalError::unreachable(
-                self.cfg.input.clone(),
-                fn_name!(),
-                line!(),
-            )))
+            let repr = format!("{lhs} {op} {rhs}");
+            if let Some(v) = self.eval_user_binop(op, lhs, rhs) {
+                Ok(v)
+            } else {
+                Err(EvalErrors::from(EvalError::uncomputable_op(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc,
+                    self.caused_by(),
+                    repr,
+                )))
+            }
         }
     }
 
-    fn eval_bin(&self, op: OpKind, lhs: ValueObj, rhs: ValueObj) -> EvalResult<ValueObj> {
+    fn eval_bin(
+        &self,
+        op: OpKind,
+        lhs: ValueObj,
+        rhs: ValueObj,
+        loc: Location,
+    ) -> EvalResult<ValueObj> {
+        if matches!(op, Div | FloorDiv | Mod) && rhs.is_zero() {
+            return Err(EvalErrors::from(EvalError::zero_division(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                self.caused_by(),
+            )));
+        }
         match op {
             Add => {
                 let prim = lhs.clone().try_add(rhs.clone());
-                self.eval_prim_or_user(Add, lhs, rhs, prim)
+                self.eval_prim_or_user(Add, lhs, rhs, prim, loc)
             }
             Sub => {
                 let prim = lhs.clone().try_sub(rhs.clone());
-                self.eval_prim_or_user(Sub, lhs, rhs, prim)
+                self.eval_prim_or_user(Sub, lhs, rhs, prim, loc)
             }
             Mul => {
                 let prim = lhs.clone().try_mul(rhs.clone());
-                self.eval_prim_or_user(Mul, lhs, rhs, prim)
+                self.eval_prim_or_user(Mul, lhs, rhs, prim, loc)
             }
             Div => {
                 let prim = lhs.clone().try_div(rhs.clone());
-                self.eval_prim_or_user(Div, lhs, rhs, prim)
+                self.eval_prim_or_user(Div, lhs, rhs, prim, loc)
             }
             FloorDiv => {
                 let prim = lhs.clone().try_floordiv(rhs.clone());
-                self.eval_prim_or_user(FloorDiv, lhs, rhs, prim)
+                self.eval_prim_or_user(FloorDiv, lhs, rhs, prim, loc)
             }
             Pow => {
                 let prim = lhs.clone().try_pow(rhs.clone());
-                self.eval_prim_or_user(Pow, lhs, rhs, prim)
+                self.eval_prim_or_user(Pow, lhs, rhs, prim, loc)
             }
             Mod => {
                 let prim = lhs.clone().try_mod(rhs.clone());
-                self.eval_prim_or_user(Mod, lhs, rhs, prim)
+                self.eval_prim_or_user(Mod, lhs, rhs, prim, loc)
             }
             Lt | Le | Gt | Ge => {
                 if let Some(v) = self.eval_type_cmp(op, &lhs, &rhs) {
@@ -1751,16 +1774,16 @@ impl Context {
                         Le => lhs.clone().try_le(rhs.clone()),
                         _ => None,
                     };
-                    self.eval_prim_or_user(op, lhs, rhs, prim)
+                    self.eval_prim_or_user(op, lhs, rhs, prim, loc)
                 }
             }
             Eq => {
                 let prim = lhs.clone().try_eq(rhs.clone());
-                self.eval_prim_or_user(Eq, lhs, rhs, prim)
+                self.eval_prim_or_user(Eq, lhs, rhs, prim, loc)
             }
             Ne => {
                 let prim = lhs.clone().try_ne(rhs.clone());
-                self.eval_prim_or_user(Ne, lhs, rhs, prim)
+                self.eval_prim_or_user(Ne, lhs, rhs, prim, loc)
             }
             Or | BitOr => self.eval_or(lhs, rhs),
             And | BitAnd => self.eval_and(lhs, rhs),
@@ -1773,7 +1796,18 @@ impl Context {
                     line!(),
                 ))),
             },
+            Shl => {
+                let prim = lhs.clone().try_shl(rhs.clone());
+                self.eval_prim_or_user(Shl, lhs, rhs, prim, loc)
+            }
+            Shr => {
+                let prim = lhs.clone().try_shr(rhs.clone());
+                self.eval_prim_or_user(Shr, lhs, rhs, prim, loc)
+            }
             ClosedRange => Ok(ValueObj::range(lhs, rhs)),
+            LeftOpenRange => Ok(ValueObj::interval(IntervalOp::LeftOpen, lhs, rhs)),
+            RightOpenRange => Ok(ValueObj::interval(IntervalOp::RightOpen, lhs, rhs)),
+            OpenRange => Ok(ValueObj::interval(IntervalOp::Open, lhs, rhs)),
             _other => Err(EvalErrors::from(EvalError::unreachable(
                 self.cfg.input.clone(),
                 fn_name!(),
@@ -1924,9 +1958,9 @@ impl Context {
         // let lhs = self.eval_tp(lhs).map_err(|(_, es)| es)?;
         // let rhs = self.eval_tp(rhs).map_err(|(_, es)| es)?;
         match (lhs, rhs) {
-            (TyParam::Value(lhs), TyParam::Value(rhs)) => {
-                self.eval_bin(op, lhs, rhs).map(TyParam::value)
-            }
+            (TyParam::Value(lhs), TyParam::Value(rhs)) => self
+                .eval_bin(op, lhs, rhs, Location::Unknown)
+                .map(TyParam::value),
             (TyParam::Dict(l), TyParam::Dict(r)) if op == OpKind::Add => {
                 Ok(TyParam::Dict(l.concat(r)))
             }
@@ -1991,48 +2025,53 @@ impl Context {
         }
     }
 
-    fn eval_unary_val(&self, op: OpKind, val: ValueObj) -> EvalResult<ValueObj> {
+    fn eval_unary_val(&self, op: OpKind, val: ValueObj, loc: Location) -> EvalResult<ValueObj> {
+        let uncomputable = |val: &ValueObj| {
+            EvalErrors::from(EvalError::uncomputable_op(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                self.caused_by(),
+                format!("{op}{val}"),
+            ))
+        };
         match op {
             Pos => match val {
+                ValueObj::Bool(b) => Ok(ValueObj::Nat(b as u64)),
                 ValueObj::Nat(_)
                 | ValueObj::Int(_)
                 | ValueObj::Float(_)
                 | ValueObj::Inf
                 | ValueObj::NegInf => Ok(val),
-                _ => Err(EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))),
+                _ => Err(uncomputable(&val)),
             },
-            Neg => match val {
-                ValueObj::Nat(n) => Ok(ValueObj::Int(-(n as i32))),
-                ValueObj::Int(i) => Ok(ValueObj::Int(-i)),
-                ValueObj::Float(f) => Ok(ValueObj::Float(-f)),
+            Neg => match &val {
+                ValueObj::Bool(b) => Ok(ValueObj::Int(-(*b as i32))),
+                // `Nat` is a `u64` but `Int` an `i32`, so negating can leave the range
+                ValueObj::Nat(n) => i32::try_from(*n)
+                    .map(|n| ValueObj::Int(-n))
+                    .map_err(|_| uncomputable(&val)),
+                ValueObj::Int(i) => i
+                    .checked_neg()
+                    .map(ValueObj::Int)
+                    .ok_or_else(|| uncomputable(&val)),
+                ValueObj::Float(f) => Ok(ValueObj::Float(-*f)),
                 ValueObj::Inf => Ok(ValueObj::NegInf),
                 ValueObj::NegInf => Ok(ValueObj::Inf),
-                _ => Err(EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))),
+                _ => Err(uncomputable(&val)),
             },
-            Invert => match val {
-                ValueObj::Bool(b) => Ok(ValueObj::Bool(!b)),
-                _ => Err(EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))),
+            // `~` is the bitwise complement (`~x == -(x + 1)`), so `Bool` follows
+            // `Int` here (`~True == -2`), just like `UNARY_INVERT` does at runtime.
+            Invert => match &val {
+                ValueObj::Bool(_) | ValueObj::Int(_) | ValueObj::Nat(_) => {
+                    val.clone().try_invert().ok_or_else(|| uncomputable(&val))
+                }
+                _ => Err(uncomputable(&val)),
             },
             Not => match val {
                 ValueObj::Bool(b) => Ok(ValueObj::Bool(!b)),
                 ValueObj::Type(lhs) => Ok(self.eval_not_type(lhs)),
-                _ => Err(EvalErrors::from(EvalError::unreachable(
-                    self.cfg.input.clone(),
-                    fn_name!(),
-                    line!(),
-                ))),
+                val => Err(uncomputable(&val)),
             },
             _other => unreachable_error!(self),
         }
@@ -2042,7 +2081,9 @@ impl Context {
     pub(crate) fn eval_unary_tp(&self, op: OpKind, val: TyParam) -> EvalResult<TyParam> {
         // let val = self.eval_tp(val).map_err(|(_, es)| es)?;
         match val {
-            TyParam::Value(c) => self.eval_unary_val(op, c).map(TyParam::Value),
+            TyParam::Value(c) => self
+                .eval_unary_val(op, c, Location::Unknown)
+                .map(TyParam::Value),
             TyParam::FreeVar(fv) if fv.is_linked() => {
                 let t = fv.crack().clone();
                 self.eval_unary_tp(op, t)
@@ -3209,10 +3250,15 @@ impl Context {
                 Ok(dict_t(TyParam::Dict(dic)))
             }
             ValueObj::Subr(subr) => subr.as_type(self).ok_or(ValueObj::Subr(subr)),
-            ValueObj::DataClass { name, fields } if &name == "Range" => {
+            ValueObj::DataClass { name, fields }
+                if ValueObj::as_interval_op(&name).is_some()
+                    && fields.get("start").is_some()
+                    && fields.get("end").is_some() =>
+            {
+                let op = ValueObj::as_interval_op(&name).unwrap();
                 let start = fields["start"].clone();
                 let end = fields["end"].clone();
-                Ok(closed_range(start.class(), start, end))
+                Ok(interval(op, start.class(), start, end))
             }
             // TODO:
             ValueObj::DataClass { .. }

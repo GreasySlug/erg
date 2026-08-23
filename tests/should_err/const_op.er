@@ -1,0 +1,7 @@
+# Operators that cannot be folded at compile time must be reported, not
+# silently mis-evaluated (and must never panic the compiler).
+
+ZeroFloorDiv = 1 // 0 # ERR
+ZeroMod = 1 % 0 # ERR
+ZeroDiv = 1 / 0 # ERR
+Overflow = 2 ** 100 # ERR

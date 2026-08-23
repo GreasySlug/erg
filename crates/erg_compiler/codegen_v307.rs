@@ -104,6 +104,8 @@ impl PyCodeGenerator {
             TokenKind::AndOp | TokenKind::BitAnd => Opcode308::BINARY_AND,
             TokenKind::OrOp | TokenKind::BitOr => Opcode308::BINARY_OR,
             TokenKind::BitXor => Opcode308::BINARY_XOR,
+            TokenKind::Shl => Opcode308::BINARY_LSHIFT,
+            TokenKind::Shr => Opcode308::BINARY_RSHIFT,
             TokenKind::Less
             | TokenKind::LessEq
             | TokenKind::DblEq

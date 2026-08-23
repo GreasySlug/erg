@@ -449,6 +449,72 @@ impl Context {
             t_zip.clone(),
             None,
         )));
+        let bin_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_BIN,
+            bin_func,
+            t_bin.clone(),
+            None,
+        )));
+        let chr_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_CHR,
+            chr_func,
+            t_chr.clone(),
+            None,
+        )));
+        let divmod = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_DIVMOD,
+            divmod_func,
+            t_divmod.clone(),
+            None,
+        )));
+        let float_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_FLOAT,
+            float_func,
+            t_float.clone(),
+            None,
+        )));
+        let hex_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_HEX,
+            hex_func,
+            t_hex.clone(),
+            None,
+        )));
+        let int_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_INT,
+            int_func,
+            t_int.clone(),
+            None,
+        )));
+        let oct_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_OCT,
+            oct_func,
+            t_oct.clone(),
+            None,
+        )));
+        let ord_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ORD,
+            ord_func,
+            t_ord.clone(),
+            None,
+        )));
+        let pow_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_POW,
+            pow_func,
+            t_pow.clone(),
+            None,
+        )));
+        let round_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ROUND,
+            round_func,
+            t_round.clone(),
+            None,
+        )));
+        let sorted_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_SORTED,
+            sorted_func,
+            t_sorted.clone(),
+            None,
+        )));
         self.register_py_builtin_const(
             FUNC_ABS,
             vis.clone(),
@@ -478,7 +544,14 @@ impl Context {
         // Leave as `Const`, as it may negatively affect assert casting.
         let name = if PYTHON_MODE { FUNC_ASSERT } else { "assert__" };
         self.register_builtin_py_impl(FUNC_ASSERT, t_assert, Const, vis.clone(), Some(name));
-        self.register_builtin_py_impl(FUNC_BIN, t_bin, Immutable, vis.clone(), Some(FUNC_BIN));
+        self.register_py_builtin_const(
+            FUNC_BIN,
+            vis.clone(),
+            Some(t_bin),
+            bin_,
+            Some(FUNC_BIN),
+            None,
+        );
         self.register_builtin_py_impl(
             FUNC_BYTES,
             t_bytes,
@@ -500,7 +573,14 @@ impl Context {
             vis.clone(),
             Some(FUNC_CALLABLE),
         );
-        self.register_builtin_py_impl(FUNC_CHR, t_chr, Immutable, vis.clone(), Some(FUNC_CHR));
+        self.register_py_builtin_const(
+            FUNC_CHR,
+            vis.clone(),
+            Some(t_chr),
+            chr_,
+            Some(FUNC_CHR),
+            None,
+        );
         self.register_builtin_py_impl(
             FUNC_CLASSMETHOD,
             t_classmethod,
@@ -517,12 +597,13 @@ impl Context {
         );
         self.register_builtin_erg_impl(KW_COND, t_cond, Immutable, vis.clone());
         self.register_py_builtin(FUNC_DICT, t_dict, Some(FUNC_DICT), 224);
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_DIVMOD,
-            t_divmod,
-            Immutable,
             vis.clone(),
+            Some(t_divmod),
+            divmod,
             Some(FUNC_DIVMOD),
+            None,
         );
         self.register_builtin_py_impl(
             FUNC_ENUMERATE,
@@ -532,12 +613,13 @@ impl Context {
             Some(FUNC_ENUMERATE),
         );
         self.register_builtin_py_impl(FUNC_EXIT, t_exit, Immutable, vis.clone(), Some(FUNC_EXIT));
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_FLOAT,
-            t_float,
-            Immutable,
             vis.clone(),
+            Some(t_float),
+            float_,
             Some(FUNC_FLOAT),
+            None,
         );
         self.register_builtin_py_impl(
             FUNC_FORMAT,
@@ -576,7 +658,14 @@ impl Context {
             Some(FUNC_HASATTR),
         );
         self.register_builtin_py_impl(FUNC_HASH, t_hash, Immutable, vis.clone(), Some(FUNC_HASH));
-        self.register_builtin_py_impl(FUNC_HEX, t_hex, Immutable, vis.clone(), Some(FUNC_HEX));
+        self.register_py_builtin_const(
+            FUNC_HEX,
+            vis.clone(),
+            Some(t_hex),
+            hex_,
+            Some(FUNC_HEX),
+            None,
+        );
         self.register_builtin_py_impl(
             FUNC_ISINSTANCE,
             t_isinstance,
@@ -639,9 +728,30 @@ impl Context {
             vis.clone(),
             Some(FUNC_OBJECT),
         );
-        self.register_builtin_py_impl(FUNC_OCT, t_oct, Immutable, vis.clone(), Some(FUNC_OCT));
-        self.register_builtin_py_impl(FUNC_ORD, t_ord, Immutable, vis.clone(), Some(FUNC_ORD));
-        self.register_builtin_py_impl(FUNC_POW, t_pow, Immutable, vis.clone(), Some(FUNC_POW));
+        self.register_py_builtin_const(
+            FUNC_OCT,
+            vis.clone(),
+            Some(t_oct),
+            oct_,
+            Some(FUNC_OCT),
+            None,
+        );
+        self.register_py_builtin_const(
+            FUNC_ORD,
+            vis.clone(),
+            Some(t_ord),
+            ord_,
+            Some(FUNC_ORD),
+            None,
+        );
+        self.register_py_builtin_const(
+            FUNC_POW,
+            vis.clone(),
+            Some(t_pow),
+            pow_,
+            Some(FUNC_POW),
+            None,
+        );
         self.register_builtin_py_impl(
             PYIMPORT,
             t_pyimport.clone(),
@@ -707,12 +817,13 @@ impl Context {
             Some(FUNC_REVERSED),
             None,
         );
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_ROUND,
-            t_round,
-            Immutable,
             vis.clone(),
+            Some(t_round),
+            round_,
             Some(FUNC_ROUND),
+            None,
         );
         self.register_py_builtin(FUNC_SET, t_set, Some(FUNC_SET), 233);
         self.register_builtin_py_impl(
@@ -722,12 +833,13 @@ impl Context {
             vis.clone(),
             Some(FUNC_SLICE),
         );
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_SORTED,
-            t_sorted,
-            Immutable,
             vis.clone(),
+            Some(t_sorted),
+            sorted_,
             Some(FUNC_SORTED),
+            None,
         );
         self.register_builtin_py_impl(
             FUNC_STATICMETHOD,
@@ -763,7 +875,7 @@ impl Context {
             None,
         );
         let name = if PYTHON_MODE { FUNC_INT } else { FUNC_INT__ };
-        self.register_builtin_py_impl(FUNC_INT, t_int, Immutable, vis.clone(), Some(name));
+        self.register_py_builtin_const(FUNC_INT, vis.clone(), Some(t_int), int_, Some(name), None);
         if DEBUG_MODE {
             self.register_builtin_py_impl(
                 PY,
@@ -818,12 +930,19 @@ impl Context {
                 vis.clone(),
                 Some(FUNC_PRINT),
             );
-            self.register_builtin_py_impl(
+            let nat = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
                 FUNC_NAT,
-                t_nat,
-                Immutable,
+                nat_func,
+                t_nat.clone(),
+                None,
+            )));
+            self.register_py_builtin_const(
+                FUNC_NAT,
                 vis.clone(),
+                Some(t_nat),
+                nat,
                 Some(FUNC_NAT__),
+                None,
             );
             self.register_builtin_py_impl(
                 FUNC_PANIC,

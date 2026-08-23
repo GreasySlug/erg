@@ -1,0 +1,68 @@
+# Compile-time evaluation of operators (uppercase bindings force const-eval)
+
+# shift operators
+Shl = 1 << 3
+assert Shl == 8
+Shr = 16 >> 2
+assert Shr == 4
+# `>>` is arithmetic, so it rounds towards -infinity
+NegShr = -8 >> 1
+assert NegShr == -4
+Chained = 1 << 2 << 3
+assert Chained == 32
+
+# bitwise complement (`~x == -(x + 1)`, so `Bool` behaves like `Int`)
+Inv = ~5
+assert Inv == -6
+InvNeg = ~(-1)
+assert InvNeg == 0
+InvTrue = ~True
+assert InvTrue == -2
+
+# unary plus/minus
+UPlus = +3
+assert UPlus == 3
+UMinus = -3
+assert UMinus == -3
+
+# `//` rounds towards -infinity and `%` takes the sign of the divisor (as in Python)
+FloorDivNeg = -7 // 2
+assert FloorDivNeg == -4
+FloorDivNegRhs = 7 // -2
+assert FloorDivNegRhs == -4
+ModNeg = -7 % 2
+assert ModNeg == 1
+ModNegRhs = 7 % -2
+assert ModNegRhs == -1
+
+# ranges: all four interval kinds are constant-foldable
+Closed = 1..5
+assert 1 in Closed
+assert 5 in Closed
+RightOpen = 1..<5
+assert 1 in RightOpen
+assert 4 in RightOpen
+assert 5 notin RightOpen
+LeftOpen = 1<..5
+assert 1 notin LeftOpen
+assert 5 in LeftOpen
+Open = 1<..<5
+assert 1 notin Open
+assert 3 in Open
+assert 5 notin Open
+
+# `in` against a range is itself evaluated at compile time
+InClosed = 5 in 1..5
+assert InClosed
+InRightOpen = 5 in 1..<5
+assert not InRightOpen
+InLeftOpen = 1 in 1<..5
+assert not InLeftOpen
+InOpen = 3 in 1<..<5
+assert InOpen
+
+# ranges are iterable at runtime, too
+total = !0
+for! RightOpen, i =>
+    total.inc! i
+assert total == 10

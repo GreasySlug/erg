@@ -1,0 +1,25 @@
+# Builtin compile-time functions must accept their declared keyword names.
+#
+# This file is only compiled, not executed: CPython's `abs`/`len`/... reject
+# keyword arguments, so the emitted call would fail at run time. The point here
+# is that the *compile-time* implementations bind them, which the singleton type
+# ascriptions below check (they only hold if the keyword reached the function).
+AbsKw: {3} = abs(n := -3)
+NotKw: {False} = not(b := True)
+# NOTE: `str` is overloaded, and overload resolution does not match keyword
+# arguments against non-default parameters yet, so `str(object := 1)` is left out.
+LenKw: {3} = len(s := [1, 2, 3])
+RevKw: {[2, 1]} = reversed(seq := [1, 2])
+SuccKw: {2} = succ(n := 1)
+PredKw: {0} = pred(n := 1)
+IntKw: {7} = int(obj := "7")
+NatKw: {7} = nat(obj := "7")
+RoundKw: {2} = round(number := float 2.5)
+OrdKw: {97} = ord(c := "a")
+ChrKw: {"a"} = chr(i := 97)
+HexKw: {"0xff"} = hex(n := 255)
+BinKw: {"0b101"} = bin(n := 5)
+OctKw: {"0o10"} = oct(X := 8)
+PowKw: {9} = pow(base := 3, exp := 2)
+DivModKw: {(3, 1)} = divmod(a := 7, b := 2)
+SortedKw: {[1, 2, 3]} = sorted(iterable := [3, 1, 2])

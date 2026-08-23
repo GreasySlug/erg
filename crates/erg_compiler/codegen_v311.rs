@@ -98,7 +98,9 @@ impl PyCodeGenerator {
             | TokenKind::OrOp
             | TokenKind::BitAnd
             | TokenKind::BitOr
-            | TokenKind::BitXor => InstrKind::BinaryOp,
+            | TokenKind::BitXor
+            | TokenKind::Shl
+            | TokenKind::Shr => InstrKind::BinaryOp,
             TokenKind::IsOp | TokenKind::IsNotOp => InstrKind::IsOp,
             TokenKind::Less
             | TokenKind::LessEq
@@ -151,6 +153,8 @@ impl PyCodeGenerator {
             TokenKind::AndOp | TokenKind::BitAnd => BinOpCode::And as usize,
             TokenKind::OrOp | TokenKind::BitOr => BinOpCode::Or as usize,
             TokenKind::BitXor => BinOpCode::Xor as usize,
+            TokenKind::Shl => BinOpCode::LShift as usize,
+            TokenKind::Shr => BinOpCode::RShift as usize,
             TokenKind::Less => self.opcode_set.encode_compare_arg(0),
             TokenKind::LessEq => self.opcode_set.encode_compare_arg(1),
             TokenKind::DblEq => self.opcode_set.encode_compare_arg(2),

@@ -73,6 +73,52 @@ impl EvalError {
         )
     }
 
+    pub fn zero_division(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::only_loc(loc)],
+                switch_lang!(
+                    "japanese" => "ゼロで除算しています",
+                    "simplified_chinese" => "除以零",
+                    "traditional_chinese" => "除以零",
+                    "english" => "division by zero",
+                ),
+                errno,
+                ZeroDivisionError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
+    /// The operator itself is fine, but this particular application cannot be
+    /// folded at compile time (e.g. the result overflows `Int`/`Nat`).
+    pub fn uncomputable_op(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        expr: String,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::only_loc(loc)],
+                switch_lang!(
+                    "japanese" => format!("`{expr}`をコンパイル時に評価できません"),
+                    "simplified_chinese" => format!("无法在编译时求值`{expr}`"),
+                    "traditional_chinese" => format!("無法在編譯時求值`{expr}`"),
+                    "english" => format!("`{expr}` cannot be evaluated at compile time"),
+                ),
+                errno,
+                NotConstExpr,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn invalid_literal(input: Input, errno: usize, loc: Location, caused_by: String) -> Self {
         Self::new(
             ErrorCore::new(

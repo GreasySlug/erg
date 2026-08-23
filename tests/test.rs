@@ -430,6 +430,17 @@ fn exec_const_func() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_op() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_op.er", 0)
+}
+
+#[test]
+fn exec_const_kw_args() -> Result<(), ()> {
+    // not executed: CPython's `abs`/`len`/... reject keyword arguments
+    expect_compile_success("tests/should_ok/const_kw_args.er", 17)
+}
+
+#[test]
 fn exec_recursive_multi_arm() -> Result<(), ()> {
     expect_success("tests/should_ok/recursive_multi_arm.er", 0)
 }
@@ -896,6 +907,11 @@ fn exec_recursive_const_err() -> Result<(), ()> {
 #[test]
 fn exec_const_nonconst_call_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/const_nonconst_call.er", 0, 1)
+}
+
+#[test]
+fn exec_const_op_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/const_op.er", 0, 4)
 }
 
 #[test]

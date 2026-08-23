@@ -151,6 +151,13 @@ const CASES: &[&str] = &[
     "-1.5",
     "1e+3",
     "1e-3",
+    // `Int` is an i64, so negative results below i32 fold too
+    "1 - 10000000000",
+    "-100000 * 100000",
+    "-3000000000",
+    "-3000000000 + 1",
+    "int(\"-9223372036854775808\")",
+    "-2147483648 - 1",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.

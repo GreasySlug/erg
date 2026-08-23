@@ -824,7 +824,7 @@ fn _list_sum(arr: ValueObj, _ctx: &Context) -> Result<ValueObj, String> {
             if sum.round() == sum && sum >= 0.0 {
                 Ok(ValueObj::Nat(sum as u64))
             } else if sum.round() == sum {
-                Ok(ValueObj::Int(sum as i32))
+                Ok(ValueObj::Int(sum as i64))
             } else {
                 Ok(ValueObj::from(sum))
             }
@@ -874,7 +874,7 @@ fn _list_prod(lis: ValueObj, _ctx: &Context) -> Result<ValueObj, String> {
             if prod.round() == prod && prod >= 0.0 {
                 Ok(ValueObj::Nat(prod as u64))
             } else if prod.round() == prod {
-                Ok(ValueObj::Int(prod as i32))
+                Ok(ValueObj::Int(prod as i64))
             } else {
                 Ok(ValueObj::from(prod))
             }
@@ -1171,7 +1171,7 @@ pub(crate) fn int_abs(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<Ty
     let Some(slf) = slf.as_int() else {
         return Err(type_mismatch("Int", slf, "self"));
     };
-    Ok(ValueObj::Int(slf.abs()).into())
+    Ok(ValueObj::Int(i64::from(slf.abs())).into())
 }
 
 pub(crate) fn str_endswith(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
@@ -1203,7 +1203,7 @@ pub(crate) fn str_find(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     let Some(sub) = sub.as_str() else {
         return Err(type_mismatch("Str", sub, "sub"));
     };
-    Ok(ValueObj::Int(slf.find(&sub[..]).map_or(-1, |i| i as i32)).into())
+    Ok(ValueObj::Int(slf.find(&sub[..]).map_or(-1, |i| i as i64)).into())
 }
 
 pub(crate) fn str_isalpha(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
@@ -1312,7 +1312,7 @@ pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         .ok_or_else(|| not_passed("n"))?;
     match num {
         ValueObj::Nat(n) => Ok(ValueObj::Nat(n).into()),
-        ValueObj::Int(n) => Ok(ValueObj::Nat(n.unsigned_abs() as u64).into()),
+        ValueObj::Int(n) => Ok(ValueObj::Nat(n.unsigned_abs()).into()),
         ValueObj::Bool(b) => Ok(ValueObj::Nat(b as u64).into()),
         ValueObj::Float(n) => Ok(ValueObj::from(n.abs()).into()),
         ValueObj::Inf => Ok(ValueObj::Inf.into()),
@@ -1861,9 +1861,10 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     // exactly halfway: round to the even neighbour
     let round_up = diff > 0.5 || (diff == 0.5 && (lower / 2.0).fract() != 0.0);
     let rounded = if round_up { lower + 1.0 } else { lower };
-    match i32::try_from(rounded as i64) {
-        Ok(i) => Ok(ValueObj::Int(i).into()),
-        Err(_) => Err(todo("round (out of range)")),
+    if rounded.is_finite() {
+        Ok(ValueObj::Int(rounded as i64).into())
+    } else {
+        Err(todo("round (out of range)"))
     }
 }
 

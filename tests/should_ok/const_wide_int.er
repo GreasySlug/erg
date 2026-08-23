@@ -30,3 +30,13 @@ IntU64Max = int "18446744073709551615"
 assert IntU64Max == 18446744073709551615
 NatU64Max = nat "18446744073709551615"
 assert NatU64Max == 18446744073709551615
+
+# `Int` is an i64, so results below `i32::MIN` fold as well
+NegWide = 1 - 10000000000
+assert NegWide == -9999999999
+NegMul = -100000 * 100000
+assert NegMul == -10000000000
+NegLit = -3000000000
+assert NegLit == -3000000000
+IntMin = int "-9223372036854775808"
+assert IntMin < -9223372036854775807

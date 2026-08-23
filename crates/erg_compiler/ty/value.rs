@@ -654,7 +654,7 @@ impl Rem for Float {
 /// コンパイル時評価ができ、シリアライズも可能(Typeなどはシリアライズ不可)
 #[derive(Clone, Default)]
 pub enum ValueObj {
-    Int(i32),
+    Int(i64),
     /// An exact rational, kept in lowest terms with a positive denominator.
     ///
     /// `i128`/`u128` rather than `i64`/`u64` because SI-prefix literals reach
@@ -1018,7 +1018,9 @@ impl PartialEq for ValueObj {
         match (self, other) {
             (Self::Int(i1), Self::Int(i2)) => i1 == i2,
             (Self::Nat(n1), Self::Nat(n2)) => n1 == n2,
-            (Self::Int(i), Self::Nat(n)) | (Self::Nat(n), Self::Int(i)) => *i as u64 == *n,
+            (Self::Int(i), Self::Nat(n)) | (Self::Nat(n), Self::Int(i)) => {
+                *i >= 0 && *i as u64 == *n
+            }
             (Self::Ratio(n1, d1), Self::Ratio(n2, d2)) => n1 == n2 && d1 == d2,
             // `Fraction(2, 1) == 2` at run time, so an integral ratio equals the integer
             (Self::Ratio(n, 1), other) | (other, Self::Ratio(n, 1)) => {
@@ -1078,14 +1080,15 @@ impl std::hash::Hash for ValueObj {
                 0u8.hash(state);
                 i.hash(state);
             }
+            // `Ratio(n, 1)` compares equal to the integer `n`, so hash it alike
+            Self::Ratio(n, 1) if *n < 0 => {
+                0u8.hash(state);
+                (*n as i64).hash(state);
+            }
             // an integral ratio compares equal to the integer, so it must hash alike
             Self::Ratio(n, 1) if *n >= 0 => {
                 1u8.hash(state);
                 (*n as u64).hash(state);
-            }
-            Self::Ratio(n, 1) => {
-                0u8.hash(state);
-                (*n as i32).hash(state);
             }
             Self::Ratio(n, d) => {
                 21u8.hash(state);
@@ -1161,8 +1164,8 @@ impl Neg for ValueObj {
     fn neg(self) -> Self {
         match self {
             Self::Int(i) => Self::Int(-i),
-            Self::Nat(n) if n <= i32::MAX as u64 => Self::Int(-(n as i32)),
-            Self::Nat(n) => panic!("cannot negate Nat({n}): too large for Int(i32)"),
+            Self::Nat(n) if n <= i64::MAX as u64 => Self::Int(-(n as i64)),
+            Self::Nat(n) => panic!("cannot negate Nat({n}): too large for Int(i64)"),
             Self::Float(fl) => Self::Float(-fl),
             Self::Inf => Self::NegInf,
             Self::NegInf => Self::Inf,
@@ -1236,7 +1239,7 @@ impl From<i32> for ValueObj {
         if item >= 0 {
             ValueObj::Nat(item as u64)
         } else {
-            ValueObj::Int(item)
+            ValueObj::Int(item as i64)
         }
     }
 }
@@ -1638,7 +1641,7 @@ impl ValueObj {
 
     pub fn from_str(t: Type, mut content: Str) -> Option<Self> {
         match t {
-            Type::Int => content.replace('_', "").parse::<i32>().ok().map(Self::Int),
+            Type::Int => content.replace('_', "").parse::<i64>().ok().map(Self::Int),
             Type::Nat => {
                 let content = content
                     .trim_start_matches('-') // -0 -> 0
@@ -1704,9 +1707,13 @@ impl ValueObj {
 
     pub fn into_bytes(self, python_ver: PythonVersion) -> Vec<u8> {
         match self {
-            Self::Int(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
-            // `Nat` is a `u64`: anything past `i32` must go out as `TYPE_LONG`,
-            // otherwise it is silently truncated (`1099511627776` would load as 0)
+            // `Int` is an i64 and `Nat` a u64: anything past `i32` must go out as
+            // `TYPE_LONG`, otherwise it is silently truncated (`1099511627776`
+            // would load back as 0)
+            Self::Int(i) => match i32::try_from(i) {
+                Ok(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
+                Err(_) => long_into_bytes(i as i128),
+            },
             Self::Nat(n) => match i32::try_from(n) {
                 Ok(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
                 Err(_) => long_into_bytes(n as i128),
@@ -1832,7 +1839,7 @@ impl ValueObj {
 
     pub fn as_int(&self) -> Option<i32> {
         match self {
-            Self::Int(i) => Some(*i),
+            Self::Int(i) => i32::try_from(*i).ok(),
             Self::Nat(n) => i32::try_from(*n).ok(),
             Self::Ratio(n, 1) => i32::try_from(*n).ok(), // exact integers only
             Self::Bool(b) => Some(if *b { 1 } else { 0 }),
@@ -1902,7 +1909,7 @@ impl ValueObj {
         if let Ok(n) = u64::try_from(i) {
             Some(Self::Nat(n))
         } else {
-            i32::try_from(i).ok().map(Self::Int)
+            i64::try_from(i).ok().map(Self::Int)
         }
     }
 
@@ -2183,7 +2190,9 @@ impl ValueObj {
             }
         }
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => Self::from_i128(int_pow(l as i128, r)?),
+            (Self::Int(l), Self::Int(r)) => {
+                Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
+            }
             (Self::Nat(l), Self::Nat(r)) => {
                 Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
             }
@@ -2191,10 +2200,12 @@ impl ValueObj {
             (Self::Int(l), Self::Nat(r)) => {
                 Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
             }
-            (Self::Nat(l), Self::Int(r)) => Self::from_i128(int_pow(l as i128, r)?),
+            (Self::Nat(l), Self::Int(r)) => {
+                Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
+            }
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(l.powf(r as f64))),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64).powf(*r))),
-            (Self::Float(l), Self::Int(r)) => Some(Self::from(l.powi(r))),
+            (Self::Float(l), Self::Int(r)) => Some(Self::from(l.powi(i32::try_from(r).ok()?))),
             (Self::Int(l), Self::Float(r)) => Some(Self::from((l as f64).powf(*r))),
             _ => None,
         }
@@ -2236,8 +2247,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l > r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l > r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l > r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l > r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from(l as i32 > r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) > (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) > (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l > r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 > *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l > r as f64)),
@@ -2263,8 +2274,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l >= r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l >= r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l >= r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l >= r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from(l as i32 >= r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) >= (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) >= (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l >= r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 >= *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l >= r as f64)),
@@ -2290,8 +2301,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l < r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l < r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l < r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l < r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i32) < r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) < (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) < (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l < r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64) < *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l < r as f64)),
@@ -2317,8 +2328,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l <= r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l <= r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l <= r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l <= r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i32) <= r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) <= (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) <= (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l <= r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64) <= *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l <= r as f64)),
@@ -2344,8 +2355,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l == r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l == r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l == r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l == r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from(l as i32 == r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) == (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) == (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l == r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 == *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l == r as f64)),
@@ -2367,8 +2378,8 @@ impl ValueObj {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l != r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l != r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l != r)),
-            (Self::Int(l), Self::Nat(r)) => Some(Self::from(l != r as i32)),
-            (Self::Nat(l), Self::Int(r)) => Some(Self::from(l as i32 != r)),
+            (Self::Int(l), Self::Nat(r)) => Some(Self::from((l as i128) != (r as i128))),
+            (Self::Nat(l), Self::Int(r)) => Some(Self::from((l as i128) != (r as i128))),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l != r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 != *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l != r as f64)),

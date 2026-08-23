@@ -2153,9 +2153,9 @@ impl Context {
                 _ => Err(uncomputable(&val)),
             },
             Neg => match &val {
-                ValueObj::Bool(b) => Ok(ValueObj::Int(-(*b as i32))),
+                ValueObj::Bool(b) => Ok(ValueObj::Int(-(*b as i64))),
                 // `Nat` is a `u64` but `Int` an `i32`, so negating can leave the range
-                ValueObj::Nat(n) => i32::try_from(*n)
+                ValueObj::Nat(n) => i64::try_from(*n)
                     .map(|n| ValueObj::Int(-n))
                     .map_err(|_| uncomputable(&val)),
                 ValueObj::Int(i) => i

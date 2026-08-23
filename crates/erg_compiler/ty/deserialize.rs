@@ -167,7 +167,7 @@ impl Deserializer {
         match DataTypePrefix::from(v.remove(0)) {
             DataTypePrefix::Int32 => {
                 let bytes = Self::consume::<4>(v);
-                Ok(ValueObj::Int(i32::from_le_bytes(bytes)))
+                Ok(ValueObj::Int(i32::from_le_bytes(bytes) as i64))
             }
             // a signed digit count followed by that many 15-bit digits,
             // least significant first (see `long_into_bytes`)

@@ -2151,7 +2151,7 @@ impl Context {
     pub(crate) fn int_interval_bounds(&self, t: &Type) -> Option<(Option<i64>, Option<i64>)> {
         fn const_int(tp: &TyParam) -> Option<i64> {
             match tp {
-                TyParam::Value(ValueObj::Int(n)) => Some(*n as i64),
+                TyParam::Value(ValueObj::Int(n)) => Some(*n),
                 TyParam::Value(ValueObj::Nat(n)) => i64::try_from(*n).ok(),
                 TyParam::FreeVar(fv) if fv.is_linked() => const_int(&fv.crack()),
                 _ => None,

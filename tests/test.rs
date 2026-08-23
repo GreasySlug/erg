@@ -988,7 +988,7 @@ fn exec_structural_err() -> Result<(), ()> {
 
 #[test]
 fn exec_structural_ambiguity_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/structural_ambiguity.er", 0, 1)
+    expect_compile_failure("tests/should_err/structural_ambiguity.er", 0, 2)
 }
 
 #[test]

@@ -4,3 +4,8 @@ S1 = Structural Trait { .f = (self: Self) -> Int }
 S2 = Structural Trait { .f = (self: Self) -> Str }
 
 h a = a.f() # ERR: cannot determine the type of attribute .f (S1 or S2?)
+
+# The same, from the built-in numeric classes: `Int.abs` narrows to `Nat`,
+# `Ratio.abs` and `Float.abs` keep their class, and `Ratio` and `Float` are not
+# comparable, so there is no most general candidate to pick.
+abs_ x = x.abs() # ERR: cannot determine the type of attribute .abs

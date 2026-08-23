@@ -8,8 +8,11 @@ for__! i, proc! = for! i, proc!
 add x, y = x + y
 add2 = (x, y) -> x + y
 
-abs_ x = x.abs()
-abs2 = x -> x.abs()
+# `.abs` is no longer unique to `Int` -- `Ratio` and `Float` declare one too,
+# with a different return type each, so an untyped receiver is genuinely
+# ambiguous and needs an annotation. `.bit_length` still resolves on its own.
+abs_ x = x.bit_length()
+abs2 = x -> x.bit_length()
 
 Norm = Trait { .norm = (self: Self) -> Nat }
 norm x = x.norm()

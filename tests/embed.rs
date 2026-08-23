@@ -94,6 +94,31 @@ print!(i, end:=\"\")
     Ok(())
 }
 
+/// A `Ratio` is a `fractions.Fraction` at run time in the bytecode backend, so
+/// the transpiler has to build one too -- writing the literal text bare made it
+/// a Python float, and the two backends disagreed on `0.1 + 0.2`.
+#[test]
+fn test_transpiler_ratio() -> Result<(), ()> {
+    let mut trans = Transpiler::default();
+    let res = trans
+        .transpile(
+            "
+print!(0.1 + 0.2, end:=\" \")
+print!(1 / 3, end:=\" \")
+print!(2 ** -1, end:=\"\")
+"
+            .into(),
+            "exec",
+        )
+        .map_err(|es| {
+            es.errors.write_all_stderr();
+        })?;
+    let res = exec_py_code_with_output(res.object.code(), &[]).map_err(|_| ())?;
+    assert!(res.status.success());
+    assert_eq!(res.stdout, b"3/10 1/3 1/2");
+    Ok(())
+}
+
 #[test]
 fn test_transpiler_embedding4() -> Result<(), ()> {
     if env_python_version().unwrap().minor < Some(10) {

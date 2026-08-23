@@ -520,6 +520,7 @@ pub struct PyScriptGenerator {
     level: usize,
     fresh_var_n: usize,
     namedtuple_loaded: bool,
+    fraction_loaded: bool,
     prelude: String,
 }
 
@@ -548,6 +549,17 @@ impl PyScriptGenerator {
         if !self.namedtuple_loaded {
             self.prelude += "from collections import namedtuple as NamedTuple__\n";
             self.namedtuple_loaded = true;
+        }
+    }
+
+    /// `Ratio` is a `fractions.Fraction` at run time, as it is in the bytecode
+    /// backend. Without this a decimal literal transpiled to a Python float, so
+    /// the two backends disagreed: `0.1 + 0.2` was 0.30000000000000004 here and
+    /// 3/10 there.
+    fn load_fraction_if_not(&mut self) {
+        if !self.fraction_loaded {
+            self.prelude += "from fractions import Fraction as Fraction__\n";
+            self.fraction_loaded = true;
         }
     }
 
@@ -702,6 +714,22 @@ impl PyScriptGenerator {
     }
 
     fn write_lit(&mut self, lit: Literal, out: &mut String) {
+        // `Fraction`'s *string* constructor parses decimals and scientific
+        // notation exactly; passing the text unquoted would go through a float
+        // and give `Fraction(0.1)` its binary value rather than 1/10.
+        if lit.is(TokenKind::RatioLit) {
+            self.load_fraction_if_not();
+            out.push_str("Fraction__(\"");
+            Self::write_escaped_str(&lit.token.content, out);
+            out.push_str("\")");
+            return;
+        }
+        // A folded rational (`0.1 + 0.2`) has no literal text to fall back on.
+        if let ValueObj::Ratio(n, d) = &lit.value {
+            self.load_fraction_if_not();
+            write!(out, "Fraction__(\"{n}/{d}\")").unwrap();
+            return;
+        }
         if matches!(
             &lit.value,
             ValueObj::Bool(_)
@@ -770,6 +798,19 @@ impl PyScriptGenerator {
                 out.push_str("contains_operator(");
                 self.write_expr(*bin.lhs, out);
                 out.push(',');
+                self.write_expr(*bin.rhs, out);
+                out.push(')');
+            }
+            // `a / b` and `a ** b` are exact when the result is a `Ratio`, the
+            // same way the bytecode backend emits them: `Fraction(a)` makes the
+            // whole operation exact whatever `b` is.
+            TokenKind::Slash | TokenKind::Pow if bin.ref_t().derefine() == Type::Ratio => {
+                self.load_fraction_if_not();
+                out.push_str("(Fraction__(");
+                self.write_expr(*bin.lhs, out);
+                out.push_str(") ");
+                out.push_str(&bin.op.content);
+                out.push(' ');
                 self.write_expr(*bin.rhs, out);
                 out.push(')');
             }

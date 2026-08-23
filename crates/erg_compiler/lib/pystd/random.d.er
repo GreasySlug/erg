@@ -46,11 +46,11 @@
 # TODO: Sequence!
 .shuffle!: |T: Type|(seq: Sequence(T)) => NoneType
 .sample!: |T: Type|(population: Sequence(T), k := Nat) => [T; _]
-.random!: () => 0.0..1.0 # TODO: <1.0
+.random!: () => Float # TODO: 0.0f64..<1.0f64
 .dep_uniform! = 'uniform': |A: Int, B: Int|(a: {A}, b: {B}) => A..B
 .uniform!: (a: Ratio or Float, b: Ratio or Float) => Float
 .triangular!: (low := Ratio or Float, high := Ratio or Float, mode := Ratio or Float or NoneType) => Float
-.betavariate!: (alpha: Ratio or Float, beta: Ratio or Float) => 0.0..1.0
+.betavariate!: (alpha: Ratio or Float, beta: Ratio or Float) => Float
 .binomialvariate!: (n := Nat, p := Ratio or Float) => Nat
 .expovariate!: (lambd := Ratio or Float) => Float
 .gammavariate!: (alpha: Ratio or Float, beta: Ratio or Float) => Float

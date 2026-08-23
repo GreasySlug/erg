@@ -132,6 +132,25 @@ const CASES: &[&str] = &[
     "{\"a\": 1}[\"a\"]",
     "(1..5)[0]",
     "[1, 2].reversed()",
+    // decimal literals are `Fraction`s at run time, so they are folded exactly
+    "0.1",
+    "0.1 + 0.2",
+    "0.5 + 0.5",
+    "1.5 * 2",
+    "0.1 * 0.1",
+    "1.5 - 0.5",
+    "1.5 // 1",
+    "1.5 % 1",
+    "1.5 ** 2",
+    "0.5 ** 2",
+    "7 / 2",
+    "6 / 2",
+    "1.5 > 1",
+    "0.5 + 0.5 == 1",
+    "int(0.1 + 0.2)",
+    "-1.5",
+    "1e+3",
+    "1e-3",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.
@@ -139,15 +158,6 @@ const CASES: &[&str] = &[
 /// Each entry must still diverge: fixing one makes this test fail, which is the
 /// reminder to delete the entry. See docs/const-eval-plan.md (phases 3 and 5).
 const KNOWN_DIVERGENT: &[(&str, &str)] = &[
-    // phase 3: `Ratio` is exact at run time (`Fraction`), but is folded as f64
-    (
-        "0.1 + 0.2",
-        "folded as f64, but `Fraction(3, 10)` at run time",
-    ),
-    (
-        "7 / 2",
-        "folded as f64 3.5, but `Fraction(7, 2)` at run time",
-    ),
     // phase 5: these fold to a list, but return a lazy iterator at run time
     (
         "reversed([1, 2])",

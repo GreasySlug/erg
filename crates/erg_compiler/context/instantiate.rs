@@ -833,6 +833,7 @@ impl Context {
             }
             ValueObj::Int(_)
             | ValueObj::Nat(_)
+            | ValueObj::Ratio(..)
             | ValueObj::Float(_)
             | ValueObj::Str(_)
             | ValueObj::Bool(_)

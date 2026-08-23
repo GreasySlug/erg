@@ -655,6 +655,11 @@ impl Rem for Float {
 #[derive(Clone, Default)]
 pub enum ValueObj {
     Int(i32),
+    /// An exact rational, kept in lowest terms with a positive denominator.
+    ///
+    /// `i128`/`u128` rather than `i64`/`u64` because SI-prefix literals reach
+    /// `1e+30` and `1e-30` (see `lib/std/unit.er`).
+    Ratio(i128, u128),
     Nat(u64),
     Float(Float),
     Str(Str),
@@ -687,6 +692,7 @@ macro_rules! mono_value_pattern {
     () => {
         $crate::ty::ValueObj::Int(_)
             | $crate::ty::ValueObj::Nat(_)
+            | $crate::ty::ValueObj::Ratio(..)
             | $crate::ty::ValueObj::Float(_)
             | $crate::ty::ValueObj::Inf
             | $crate::ty::ValueObj::NegInf
@@ -701,6 +707,7 @@ macro_rules! mono_value_pattern {
     (-Failure) => {
         $crate::ty::ValueObj::Int(_)
             | $crate::ty::ValueObj::Nat(_)
+            | $crate::ty::ValueObj::Ratio(..)
             | $crate::ty::ValueObj::Float(_)
             | $crate::ty::ValueObj::Inf
             | $crate::ty::ValueObj::NegInf
@@ -716,6 +723,15 @@ macro_rules! mono_value_pattern {
 impl fmt::Debug for ValueObj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Ratio(n, d) => {
+                if DEBUG_MODE {
+                    write!(f, "Ratio({n}/{d})")
+                } else if *d == 1 {
+                    write!(f, "{n}")
+                } else {
+                    write!(f, "{n}/{d}")
+                }
+            }
             Self::Int(i) => {
                 if DEBUG_MODE {
                     write!(f, "Int({i})")
@@ -800,6 +816,9 @@ impl fmt::Debug for ValueObj {
 impl fmt::Display for ValueObj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // as `Fraction.__str__` prints it
+            Self::Ratio(n, 1) => write!(f, "{n}"),
+            Self::Ratio(n, d) => write!(f, "{n}/{d}"),
             Self::Int(i) => {
                 if DEBUG_MODE {
                     write!(f, "Int({i})")
@@ -1000,6 +1019,11 @@ impl PartialEq for ValueObj {
             (Self::Int(i1), Self::Int(i2)) => i1 == i2,
             (Self::Nat(n1), Self::Nat(n2)) => n1 == n2,
             (Self::Int(i), Self::Nat(n)) | (Self::Nat(n), Self::Int(i)) => *i as u64 == *n,
+            (Self::Ratio(n1, d1), Self::Ratio(n2, d2)) => n1 == n2 && d1 == d2,
+            // `Fraction(2, 1) == 2` at run time, so an integral ratio equals the integer
+            (Self::Ratio(n, 1), other) | (other, Self::Ratio(n, 1)) => {
+                other.as_ratio() == Some((*n, 1))
+            }
             (Self::Float(f1), Self::Float(f2)) => f1 == f2,
             (Self::Str(s1), Self::Str(s2)) => s1 == s2,
             (Self::Bool(b1), Self::Bool(b2)) => b1 == b2,
@@ -1053,6 +1077,20 @@ impl std::hash::Hash for ValueObj {
             Self::Int(i) => {
                 0u8.hash(state);
                 i.hash(state);
+            }
+            // an integral ratio compares equal to the integer, so it must hash alike
+            Self::Ratio(n, 1) if *n >= 0 => {
+                1u8.hash(state);
+                (*n as u64).hash(state);
+            }
+            Self::Ratio(n, 1) => {
+                0u8.hash(state);
+                (*n as i32).hash(state);
+            }
+            Self::Ratio(n, d) => {
+                21u8.hash(state);
+                n.hash(state);
+                d.hash(state);
             }
             Self::Float(f) => {
                 2u8.hash(state);
@@ -1271,6 +1309,7 @@ impl TryFrom<&ValueObj> for f64 {
         match val {
             ValueObj::Int(i) => Ok(*i as f64),
             ValueObj::Nat(n) => Ok(*n as f64),
+            ValueObj::Ratio(n, d) => Ok(*n as f64 / *d as f64),
             ValueObj::Float(f) => Ok(**f),
             ValueObj::Inf => Ok(f64::INFINITY),
             ValueObj::NegInf => Ok(f64::NEG_INFINITY),
@@ -1326,6 +1365,16 @@ impl HasType for ValueObj {
     fn signature_mut_t(&mut self) -> Option<&mut Type> {
         None
     }
+}
+
+/// Greatest common divisor, used to keep [`ValueObj::Ratio`] in lowest terms.
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a.max(1)
 }
 
 /// Upper bound on the length of a string built by constant folding `s * n`,
@@ -1456,6 +1505,7 @@ impl ValueObj {
     /// Whether `self` is a numeric zero (used to reject compile-time division by zero).
     pub fn is_zero(&self) -> bool {
         match self {
+            Self::Ratio(n, _) => *n == 0,
             Self::Int(i) => *i == 0,
             Self::Nat(n) => *n == 0,
             Self::Bool(b) => !*b,
@@ -1468,14 +1518,20 @@ impl ValueObj {
     pub const fn is_num(&self) -> bool {
         matches!(
             self,
-            Self::Float(_) | Self::Int(_) | Self::Nat(_) | Self::Bool(_) | Self::Inf | Self::NegInf
+            Self::Float(_)
+                | Self::Ratio(..)
+                | Self::Int(_)
+                | Self::Nat(_)
+                | Self::Bool(_)
+                | Self::Inf
+                | Self::NegInf
         )
     }
 
     pub const fn is_float(&self) -> bool {
         matches!(
             self,
-            Self::Float(_) | Self::Int(_) | Self::Nat(_) | Self::Bool(_)
+            Self::Float(_) | Self::Ratio(..) | Self::Int(_) | Self::Nat(_) | Self::Bool(_)
         )
     }
 
@@ -1541,6 +1597,45 @@ impl ValueObj {
         )
     }
 
+    /// `[+-]?digits[.digits][e[+-]?digits]` as an exact rational.
+    fn parse_ratio(src: &str) -> Option<Self> {
+        let (mantissa, exp) = match src.split_once(['e', 'E']) {
+            Some((m, e)) => (m, e.parse::<i32>().ok()?),
+            None => (src, 0),
+        };
+        let (int, frac) = match mantissa.split_once('.') {
+            Some((i, f)) => (i, f),
+            None => (mantissa, ""),
+        };
+        let (neg, int) = match int.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, int.strip_prefix('+').unwrap_or(int)),
+        };
+        if int.is_empty() && frac.is_empty() {
+            return None;
+        }
+        if !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let digits = format!("{int}{frac}");
+        let mut num = if digits.is_empty() {
+            0i128
+        } else {
+            digits.parse::<i128>().ok()?
+        };
+        let mut den = 10i128.checked_pow(u32::try_from(frac.len()).ok()?)?;
+        match exp.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                num = num.checked_mul(10i128.checked_pow(exp as u32)?)?
+            }
+            std::cmp::Ordering::Less => {
+                den = den.checked_mul(10i128.checked_pow(exp.unsigned_abs())?)?
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+        Self::ratio(if neg { -num } else { num }, den)
+    }
+
     pub fn from_str(t: Type, mut content: Str) -> Option<Self> {
         match t {
             Type::Int => content.replace('_', "").parse::<i32>().ok().map(Self::Int),
@@ -1568,8 +1663,14 @@ impl ValueObj {
                 }
             }
             Type::Float => content.replace('_', "").parse::<f64>().ok().map(Self::from),
-            // TODO:
-            Type::Ratio => content.replace('_', "").parse::<f64>().ok().map(Self::from),
+            // Decimal literals are `Fraction`s at run time, so they must be kept
+            // exactly -- `0.1` is not representable as an `f64`. Literals whose
+            // exact form does not fit (`6.62607015e-34` needs a 10**42
+            // denominator) fall back to the lossy `Float`, as before.
+            Type::Ratio => {
+                let content = content.replace('_', "");
+                Self::parse_ratio(&content).or_else(|| content.parse::<f64>().ok().map(Self::from))
+            }
             Type::Str => {
                 if &content[..] == "\"\"" {
                     Some(Self::Str(Str::from("")))
@@ -1610,6 +1711,13 @@ impl ValueObj {
                 Ok(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
                 Err(_) => long_into_bytes(n as i128),
             },
+            // codegen emits `Ratio` as `Fraction(n/d)`, so this lossy form is only
+            // reached with `--no-std`, which already emitted decimals as floats
+            Self::Ratio(n, d) => [
+                vec![DataTypePrefix::BinFloat as u8],
+                (n as f64 / d as f64).to_le_bytes().to_vec(),
+            ]
+            .concat(),
             Self::Float(f) => [
                 vec![DataTypePrefix::BinFloat as u8],
                 f.to_le_bytes().to_vec(),
@@ -1660,6 +1768,12 @@ impl ValueObj {
         match self {
             Self::Int(_) => Type::Int,
             Self::Nat(_) => Type::Nat,
+            // NOTE: `Ratio` is *not* a subtype of `Float`, and decimal literals are
+            // typed `Ratio` by `ratio_t()` in the literal path (see hir.rs). `class()`
+            // deliberately stays `Float` here: interval and enum types built from
+            // decimal bounds (`0.0..1.0` in the stubs) are `Float`-based, and typing
+            // them `Ratio` makes them incomparable with genuine floats.
+            Self::Ratio(..) => Type::Ratio,
             Self::Float(_) => Type::Float,
             Self::Str(_) => Type::Str,
             Self::Bool(_) => Type::Bool,
@@ -1720,6 +1834,7 @@ impl ValueObj {
         match self {
             Self::Int(i) => Some(*i),
             Self::Nat(n) => i32::try_from(*n).ok(),
+            Self::Ratio(n, 1) => i32::try_from(*n).ok(), // exact integers only
             Self::Bool(b) => Some(if *b { 1 } else { 0 }),
             Self::Float(f) if f.round() == **f => Some(**f as i32),
             _ => None,
@@ -1730,6 +1845,7 @@ impl ValueObj {
         match self {
             Self::Int(i) => Some(*i as f64),
             Self::Nat(n) => Some(*n as f64),
+            Self::Ratio(n, d) => Some(*n as f64 / *d as f64),
             Self::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
             Self::Float(f) => Some(**f),
             _ => None,
@@ -1739,6 +1855,34 @@ impl ValueObj {
     pub fn as_str(&self) -> Option<&Str> {
         match self {
             Self::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// A rational in lowest terms with a positive denominator.
+    ///
+    /// `None` if the denominator is zero or the reduced value does not fit,
+    /// in which case it must not be folded.
+    pub fn ratio(num: i128, den: i128) -> Option<Self> {
+        if den == 0 {
+            return None;
+        }
+        let (num, den) = if den < 0 {
+            (num.checked_neg()?, den.checked_neg()?)
+        } else {
+            (num, den)
+        };
+        let g = gcd(num.unsigned_abs(), den as u128) as i128;
+        Some(Self::Ratio(num / g, (den / g) as u128))
+    }
+
+    /// `self` as an exact `num / den`, for the values that have one.
+    pub fn as_ratio(&self) -> Option<(i128, i128)> {
+        match self {
+            Self::Ratio(n, d) => Some((*n, i128::try_from(*d).ok()?)),
+            Self::Int(i) => Some((*i as i128, 1)),
+            Self::Nat(n) => Some((*n as i128, 1)),
+            Self::Bool(b) => Some((*b as i128, 1)),
             _ => None,
         }
     }
@@ -1822,6 +1966,12 @@ impl ValueObj {
             (Self::Inf, Self::NegInf) => Some(Ordering::Greater),
             // REVIEW: 等しいとみなしてよいのか?
             (Self::Inf, Self::Inf) | (Self::NegInf, Self::NegInf) => Some(Ordering::Equal),
+            (l @ Self::Ratio(..), r) | (l, r @ Self::Ratio(..))
+                if l.as_ratio().is_some() && r.as_ratio().is_some() =>
+            {
+                let ((a, b), (c, d)) = (l.as_ratio()?, r.as_ratio()?);
+                a.checked_mul(d)?.partial_cmp(&c.checked_mul(b)?)
+            }
             (l, r) if l.is_num() && r.is_num() => {
                 f64::try_from(l).ok()?.partial_cmp(&f64::try_from(r).ok()?)
             }
@@ -1847,8 +1997,33 @@ impl ValueObj {
         }
     }
 
+    /// `self <op> other` as exact rationals, if both have an exact rational value
+    /// and at least one of them is a [`Self::Ratio`].
+    ///
+    /// Decimal literals are `Fraction`s at run time, so folding them through
+    /// `f64` would disagree with the emitted program (`0.1 + 0.2`).
+    fn try_ratio_binop(
+        &self,
+        other: &Self,
+        op: impl FnOnce((i128, i128), (i128, i128)) -> Option<(i128, i128)>,
+    ) -> Option<Self> {
+        if !matches!((self, other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return None;
+        }
+        let (n, d) = op(self.as_ratio()?, other.as_ratio()?)?;
+        Self::ratio(n, d)
+    }
+
     // REVIEW: allow_divergenceオプションを付けるべきか?
     pub fn try_add(self, other: Self) -> Option<Self> {
+        if let Some(v) = self.try_ratio_binop(&other, |(a, b), (c, d)| {
+            Some((
+                a.checked_mul(d)?.checked_add(c.checked_mul(b)?)?,
+                b.checked_mul(d)?,
+            ))
+        }) {
+            return Some(v);
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 + r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 + r as i128),
@@ -1873,6 +2048,14 @@ impl ValueObj {
     }
 
     pub fn try_sub(self, other: Self) -> Option<Self> {
+        if let Some(v) = self.try_ratio_binop(&other, |(a, b), (c, d)| {
+            Some((
+                a.checked_mul(d)?.checked_sub(c.checked_mul(b)?)?,
+                b.checked_mul(d)?,
+            ))
+        }) {
+            return Some(v);
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 - r as i128),
@@ -1897,6 +2080,11 @@ impl ValueObj {
     }
 
     pub fn try_mul(self, other: Self) -> Option<Self> {
+        if let Some(v) = self.try_ratio_binop(&other, |(a, b), (c, d)| {
+            Some((a.checked_mul(c)?, b.checked_mul(d)?))
+        }) {
+            return Some(v);
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 * r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 * r as i128),
@@ -1924,6 +2112,13 @@ impl ValueObj {
         if other.is_zero() {
             return None;
         }
+        // `/` is exact at run time (the `true_div` helper keeps integer division
+        // a `Fraction`), so it must not go through `f64` for exact operands
+        if let (Some((a, b)), Some((c, d))) = (self.as_ratio(), other.as_ratio()) {
+            if let Some(v) = Self::ratio(a.checked_mul(d)?, b.checked_mul(c)?) {
+                return Some(v);
+            }
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l as f64 / r as f64)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l as f64 / r as f64)),
@@ -1944,6 +2139,11 @@ impl ValueObj {
         if other.is_zero() {
             return None;
         }
+        // `Fraction.__floordiv__` yields an integer
+        if let Some((n, d)) = self.ratio_divmod(&other) {
+            let _ = d;
+            return Self::from_i128(n);
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_div(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l / r)),
@@ -1959,7 +2159,29 @@ impl ValueObj {
         }
     }
 
+    /// `floor(self / other)` for exact operands, when either side is a [`Self::Ratio`].
+    fn ratio_divmod(&self, other: &Self) -> Option<(i128, i128)> {
+        if !matches!((self, other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return None;
+        }
+        let ((a, b), (c, d)) = (self.as_ratio()?, other.as_ratio()?);
+        let num = a.checked_mul(d)?;
+        let den = b.checked_mul(c)?;
+        Some((floor_div(num, den)?, 1))
+    }
+
     pub fn try_pow(self, other: Self) -> Option<Self> {
+        if let (Some((a, b)), Some(exp)) = (self.as_ratio(), other.as_int()) {
+            if matches!(self, Self::Ratio(..)) {
+                let e = exp.unsigned_abs();
+                let (n, d) = (a.checked_pow(e)?, b.checked_pow(e)?);
+                return if exp < 0 {
+                    Self::ratio(d, n)
+                } else {
+                    Self::ratio(n, d)
+                };
+            }
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(int_pow(l as i128, r)?),
             (Self::Nat(l), Self::Nat(r)) => {
@@ -1983,6 +2205,15 @@ impl ValueObj {
         if other.is_zero() {
             return None;
         }
+        // `self - (self // other) * other`, kept exact
+        if let Some((q, _)) = self.ratio_divmod(&other) {
+            let ((a, b), (c, d)) = (self.as_ratio()?, other.as_ratio()?);
+            return Self::ratio(
+                a.checked_mul(d)?
+                    .checked_sub(q.checked_mul(c)?.checked_mul(b)?)?,
+                b.checked_mul(d)?,
+            );
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_mod(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l % r)),
@@ -1998,6 +2229,9 @@ impl ValueObj {
     }
 
     pub fn try_gt(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(ord.is_gt()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l > r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l > r)),
@@ -2022,6 +2256,9 @@ impl ValueObj {
     }
 
     pub fn try_ge(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(ord.is_ge()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l >= r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l >= r)),
@@ -2046,6 +2283,9 @@ impl ValueObj {
     }
 
     pub fn try_lt(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(ord.is_lt()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l < r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l < r)),
@@ -2070,6 +2310,9 @@ impl ValueObj {
     }
 
     pub fn try_le(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(ord.is_le()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l <= r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l <= r)),
@@ -2094,6 +2337,9 @@ impl ValueObj {
     }
 
     pub fn try_eq(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(ord.is_eq()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l == r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l == r)),
@@ -2114,6 +2360,9 @@ impl ValueObj {
     }
 
     pub fn try_ne(self, other: Self) -> Option<Self> {
+        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+            return self.try_cmp(&other).map(|ord| Self::from(!ord.is_eq()));
+        }
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l != r)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l != r)),

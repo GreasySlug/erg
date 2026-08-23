@@ -2127,11 +2127,19 @@ impl PyCodeGenerator {
     /// (`0.1 + 0.2 == 0.3` holds, unlike Python `float`). All other literals are
     /// emitted as plain constants. In `no_std` mode `Ratio` falls back to a float const.
     fn emit_literal(&mut self, lit: Literal) {
-        if !self.cfg.no_std && lit.is(TokenKind::RatioLit) {
-            self.emit_ratio(lit.token.content);
-        } else {
-            self.emit_load_const(lit.value);
+        if !self.cfg.no_std {
+            if lit.is(TokenKind::RatioLit) {
+                return self.emit_ratio(lit.token.content);
+            }
+            // A folded rational (`A = 0.1 + 0.2`) has no literal text to fall back
+            // on, and `Fraction` is not a marshal constant, so build it from `n/d`.
+            // Without this it would be serialized as the nearest `f64`, and the
+            // program would print 0.3 where `0.1 + 0.2` prints 3/10.
+            if let ValueObj::Ratio(n, d) = lit.value {
+                return self.emit_ratio(Str::from(format!("{n}/{d}")));
+            }
         }
+        self.emit_load_const(lit.value);
     }
 
     /// Emit `Fraction("<source>")`. `Fraction`'s string constructor parses decimals

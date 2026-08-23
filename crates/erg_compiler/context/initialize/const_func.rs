@@ -1657,6 +1657,8 @@ fn py_int(val: &ValueObj) -> Option<i128> {
         ValueObj::Int(i) => Some(*i as i128),
         ValueObj::Nat(n) => Some(*n as i128),
         ValueObj::Bool(b) => Some(*b as i128),
+        // `int(Fraction(37, 10)) == 3`: truncate towards zero
+        ValueObj::Ratio(n, d) => Some(*n / i128::try_from(*d).ok()?),
         ValueObj::Float(f) if f.is_finite() => {
             let t = f.trunc();
             // `i64::MAX as f64` rounds up to 2**63, which `as i64` would saturate
@@ -1832,6 +1834,7 @@ pub(crate) fn float_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     };
     let f = match &obj {
         ValueObj::Float(f) => Some(**f),
+        ValueObj::Ratio(n, d) => Some(*n as f64 / *d as f64),
         ValueObj::Int(i) => Some(*i as f64),
         ValueObj::Nat(n) => Some(*n as f64),
         ValueObj::Bool(b) => Some(*b as u8 as f64),

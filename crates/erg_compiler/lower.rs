@@ -1548,7 +1548,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             .context
             .eval_tp(rhs.clone())
             .unwrap_or_else(|_| rhs.clone());
-        if matches!(evaled, TyParam::Value(ValueObj::Float(_))) {
+        if matches!(
+            evaled,
+            TyParam::Value(ValueObj::Float(_) | ValueObj::Ratio(..))
+        ) {
             Type::Ratio
         } else {
             self.module.context.get_tp_t(rhs).unwrap_or(Type::Obj)

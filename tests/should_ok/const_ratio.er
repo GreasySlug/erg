@@ -1,0 +1,34 @@
+# Decimal literals are `Fraction`s at run time, so folding them through `f64`
+# would make the singleton type disagree with the emitted program:
+# `0.1 + 0.2` folded to 0.30000000000000004 while the program prints 3/10.
+
+assert 0.1 + 0.2 == 0.3
+assert 0.5 + 0.5 == 1
+assert 0.1 * 0.1 == 0.01
+assert 1.5 - 0.5 == 1
+assert 7 / 2 == 3.5
+assert 6 / 2 == 3
+
+# `//`, `%` and `**` stay exact, too
+assert 1.5 // 1 == 1
+assert 1.5 % 1 == 0.5
+assert 1.5 ** 2 == 2.25
+
+# comparisons are exact rather than rounded through f64
+assert 1.5 > 1
+assert not (0.1 + 0.2 > 0.3)
+
+# exponent literals
+assert 1e+3 == 1000
+assert 1e-3 == 0.001
+
+# `int` truncates towards zero, as Python does for `Fraction`
+assert int(0.1 + 0.2) == 0
+assert int(1.5) == 1
+assert int(-1.5) == -1
+
+# a folded rational has no literal text to emit, so it is rebuilt as `Fraction(n/d)`
+Folded = 0.1 + 0.2
+assert Folded == 0.3
+Lit = 0.1
+assert Lit == 0.1

@@ -3371,6 +3371,7 @@ impl Context {
             ValueObj::DataClass { .. }
             | ValueObj::Int(_)
             | ValueObj::Nat(_)
+            | ValueObj::Ratio(..)
             | ValueObj::Bool(_)
             | ValueObj::Float(_)
             | ValueObj::Code(_)

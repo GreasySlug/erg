@@ -124,3 +124,6 @@ IntBasePrefixed = int("0xff", base := 16)
 assert IntBasePrefixed == 255
 IntSeparator = int "1_0"
 assert IntSeparator == 10
+# `_` digit separators are accepted by `float`, too
+FloatSeparator = float "1_0.5"
+assert FloatSeparator.nearly_eq(float "10.5")

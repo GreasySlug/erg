@@ -169,6 +169,59 @@ impl Deserializer {
                 let bytes = Self::consume::<4>(v);
                 Ok(ValueObj::Int(i32::from_le_bytes(bytes)))
             }
+            // a signed digit count followed by that many 15-bit digits,
+            // least significant first (see `long_into_bytes`)
+            DataTypePrefix::Long => {
+                let size = i32::from_le_bytes(Self::consume::<4>(v));
+                let ndigits = size.unsigned_abs() as usize;
+                if v.len() < ndigits * 2 {
+                    return Err(DeserializeError::new(
+                        0,
+                        fn_name!(),
+                        switch_lang!(
+                            "japanese" => "long値が途中で終了しています".to_string(),
+                            "simplified_chinese" => "long值意外结束".to_string(),
+                            "traditional_chinese" => "long值意外結束".to_string(),
+                            "english" => "unexpected end of a long value".to_string(),
+                        ),
+                    ));
+                }
+                let mut mag: i128 = 0;
+                for i in 0..ndigits {
+                    let digit = u16::from_le_bytes(Self::consume::<2>(v)) as i128;
+                    mag = match digit
+                        .checked_shl(15 * i as u32)
+                        .and_then(|d| mag.checked_add(d))
+                    {
+                        Some(mag) => mag,
+                        None => {
+                            return Err(DeserializeError::new(
+                                0,
+                                fn_name!(),
+                                switch_lang!(
+                                    "japanese" => "long値が大きすぎます".to_string(),
+                                    "simplified_chinese" => "long值过大".to_string(),
+                                    "traditional_chinese" => "long值過大".to_string(),
+                                    "english" => "a long value is too large".to_string(),
+                                ),
+                            ));
+                        }
+                    };
+                }
+                let value = if size < 0 { -mag } else { mag };
+                ValueObj::from_i128(value).ok_or_else(|| {
+                    DeserializeError::new(
+                        0,
+                        fn_name!(),
+                        switch_lang!(
+                            "japanese" => "long値が大きすぎます".to_string(),
+                            "simplified_chinese" => "long值过大".to_string(),
+                            "traditional_chinese" => "long值過大".to_string(),
+                            "english" => "a long value is too large".to_string(),
+                        ),
+                    )
+                })
+            }
             DataTypePrefix::BinFloat => {
                 let bytes = Self::consume::<8>(v);
                 Ok(ValueObj::from(f64::from_le_bytes(bytes)))

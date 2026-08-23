@@ -1651,17 +1651,17 @@ fn py_str(val: &ValueObj) -> Option<String> {
 
 /// The integral value of `val` under Python's `int()`: `Float`s truncate towards
 /// zero and `Str`s are parsed as decimal. `None` if `int(val)` would raise.
-fn py_int(val: &ValueObj) -> Option<i64> {
+fn py_int(val: &ValueObj) -> Option<i128> {
     match val {
-        ValueObj::Int(i) => Some(*i as i64),
-        ValueObj::Nat(n) => i64::try_from(*n).ok(),
-        ValueObj::Bool(b) => Some(*b as i64),
+        ValueObj::Int(i) => Some(*i as i128),
+        ValueObj::Nat(n) => Some(*n as i128),
+        ValueObj::Bool(b) => Some(*b as i128),
         ValueObj::Float(f) if f.is_finite() => {
             let t = f.trunc();
             // `i64::MAX as f64` rounds up to 2**63, which `as i64` would saturate
             (-9223372036854775808.0..9223372036854775808.0)
                 .contains(&t)
-                .then_some(t as i64)
+                .then_some(t as i128)
         }
         ValueObj::Str(s) => match parse_py_int(s, 10) {
             IntParse::Parsed(i) => Some(i),
@@ -1671,10 +1671,29 @@ fn py_int(val: &ValueObj) -> Option<i64> {
     }
 }
 
+/// Remove Python's `_` digit separators, or `None` if they are misplaced
+/// (Python only allows one between two digits).
+fn strip_py_separators(s: &str) -> Option<String> {
+    if !s.contains('_') {
+        return Some(s.to_string());
+    }
+    let bytes = s.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'_'
+            && !(i > 0
+                && bytes[i - 1].is_ascii_digit()
+                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+        {
+            return None;
+        }
+    }
+    Some(s.replace('_', ""))
+}
+
 /// Outcome of parsing a string the way Python's `int(s, base)` does.
 enum IntParse {
-    Parsed(i64),
-    /// The digits are valid, but the value does not fit `i64`.
+    Parsed(i128),
+    /// The digits are valid, but the value does not fit `i128`.
     TooLarge,
     /// `int()` would raise `ValueError`.
     Invalid,
@@ -1725,7 +1744,7 @@ fn parse_py_int(src: &str, base: u32) -> IntParse {
     if digits.starts_with(['+', '-']) {
         return IntParse::Invalid;
     }
-    match i64::from_str_radix(&digits, base) {
+    match i128::from_str_radix(&digits, base) {
         Ok(i) => IntParse::Parsed(if neg { -i } else { i }),
         Err(e)
             if matches!(
@@ -1784,7 +1803,7 @@ pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
             None => return Err(type_mismatch("Int-convertible", obj, "obj")),
         },
     };
-    Ok(ValueObj::from_i128(parsed as i128)
+    Ok(ValueObj::from_i128(parsed)
         .ok_or_else(|| todo("int (out of range)"))?
         .into())
 }
@@ -1796,7 +1815,10 @@ pub(crate) fn nat_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         .ok_or_else(|| not_passed("obj"))?;
     match py_int(&obj) {
         Some(i) if i < 0 => Err(value_error(format!("Nat can't be negative: {i}"))),
-        Some(i) => Ok(ValueObj::Nat(i as u64).into()),
+        Some(i) => Ok(u64::try_from(i)
+            .map(ValueObj::Nat)
+            .map_err(|_| todo("nat (out of range)"))?
+            .into()),
         None => Err(type_mismatch("Nat-convertible", obj, "obj")),
     }
 }
@@ -1812,10 +1834,7 @@ pub(crate) fn float_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
         ValueObj::Int(i) => Some(*i as f64),
         ValueObj::Nat(n) => Some(*n as f64),
         ValueObj::Bool(b) => Some(*b as u8 as f64),
-        ValueObj::Str(s) => {
-            let s = s.trim();
-            (!s.contains('_')).then(|| s.parse::<f64>().ok()).flatten()
-        }
+        ValueObj::Str(s) => strip_py_separators(s.trim()).and_then(|s| s.parse::<f64>().ok()),
         _ => None,
     };
     match f {

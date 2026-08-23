@@ -1,15 +1,26 @@
 # Constant folding must not be limited to `Int` (an `i32`): results that only fit
-# `Nat` have to be folded exactly rather than truncated or rejected.
-#
-# This file is only compiled, not executed: integer literals above `i32` are not
-# emitted correctly yet, so the folded values cannot be compared at run time.
-# The singleton type ascriptions below check them at compile time instead.
-WideSub: {9999999999} = 10000000000 - 1
-WideAdd: {10000000000} = 5000000000 + 5000000000
-WideMul: {10000000000} = 100000 * 100000
-WideFloorDiv: {3333333333} = 10000000000 // 3
-WideMod: {1} = 10000000000 % 3
-WidePow: {4294967296} = 2 ** 32
-WideShl: {1099511627776} = 1 << 40
-IntStr: {10000000000} = int "10000000000"
-NatStr: {10000000000} = nat "10000000000"
+# `Nat` have to be folded exactly rather than truncated or rejected, and such
+# values have to survive serialization into the code object (`TYPE_LONG`).
+WideSub = 10000000000 - 1
+assert WideSub == 9999999999
+WideAdd = 5000000000 + 5000000000
+assert WideAdd == 10000000000
+WideMul = 100000 * 100000
+assert WideMul == 10000000000
+WideFloorDiv = 10000000000 // 3
+assert WideFloorDiv == 3333333333
+WideMod = 10000000000 % 3
+assert WideMod == 1
+WidePow = 2 ** 32
+assert WidePow == 4294967296
+WideShl = 1 << 40
+assert WideShl == 1099511627776
+IntStr = int "10000000000"
+assert IntStr == 10000000000
+NatStr = nat "10000000000"
+assert NatStr == 10000000000
+
+# large literals themselves must round-trip through the code object
+assert 2147483647 == 2147483647
+assert 2147483648 > 2147483647
+assert 18446744073709551615 > 0

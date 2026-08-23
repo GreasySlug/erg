@@ -1604,12 +1604,12 @@ impl ValueObj {
     pub fn into_bytes(self, python_ver: PythonVersion) -> Vec<u8> {
         match self {
             Self::Int(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
-            // TODO: Natとしてシリアライズ
-            Self::Nat(n) => [
-                vec![DataTypePrefix::Int32 as u8],
-                (n as i32).to_le_bytes().to_vec(),
-            ]
-            .concat(),
+            // `Nat` is a `u64`: anything past `i32` must go out as `TYPE_LONG`,
+            // otherwise it is silently truncated (`1099511627776` would load as 0)
+            Self::Nat(n) => match i32::try_from(n) {
+                Ok(i) => [vec![DataTypePrefix::Int32 as u8], i.to_le_bytes().to_vec()].concat(),
+                Err(_) => long_into_bytes(n as i128),
+            },
             Self::Float(f) => [
                 vec![DataTypePrefix::BinFloat as u8],
                 f.to_le_bytes().to_vec(),

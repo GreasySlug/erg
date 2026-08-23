@@ -117,3 +117,10 @@ assert IntBase2 == 5
 # `obj` is a default parameter of `float`
 FloatDefault = float()
 assert FloatDefault.nearly_eq(float 0)
+# `base` follows Python: 0 detects the prefix, and `0x`/`0o`/`0b` are accepted
+IntBase0 = int("0x10", base := 0)
+assert IntBase0 == 16
+IntBasePrefixed = int("0xff", base := 16)
+assert IntBasePrefixed == 255
+IntSeparator = int "1_0"
+assert IntSeparator == 10

@@ -156,6 +156,26 @@ pub fn strs_into_bytes(names: Vec<Str>) -> Vec<u8> {
     tuple
 }
 
+/// Serialize an integer that does not fit CPython's `TYPE_INT` (a signed 32-bit
+/// value) as `TYPE_LONG`: a signed digit count followed by that many 15-bit
+/// digits, least significant first.
+pub fn long_into_bytes(i: i128) -> Vec<u8> {
+    let mut bytes = vec![DataTypePrefix::Long as u8];
+    let mut rest = i.unsigned_abs();
+    let mut digits = vec![];
+    while rest > 0 {
+        digits.push((rest & 0x7FFF) as u16);
+        rest >>= 15;
+    }
+    let size = digits.len() as i32;
+    let size = if i < 0 { -size } else { size };
+    bytes.extend(size.to_le_bytes());
+    for digit in digits {
+        bytes.extend(digit.to_le_bytes());
+    }
+    bytes
+}
+
 pub fn str_into_bytes(cont: Str, is_interned: bool) -> Vec<u8> {
     let mut bytes = vec![];
     if cont.is_ascii() && cont.len() <= u8::MAX as usize {

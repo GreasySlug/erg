@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::mem;
+use std::num::IntErrorKind;
 use std::path::Path;
 
 use erg_common::dict::Dict;
@@ -1662,12 +1663,79 @@ fn py_int(val: &ValueObj) -> Option<i64> {
                 .contains(&t)
                 .then_some(t as i64)
         }
-        ValueObj::Str(s) => {
-            let s = s.trim();
-            // `_` digit separators are valid in Python but not for `from_str_radix`
-            (!s.contains('_')).then(|| s.parse::<i64>().ok()).flatten()
-        }
+        ValueObj::Str(s) => match parse_py_int(s, 10) {
+            IntParse::Parsed(i) => Some(i),
+            _ => None,
+        },
         _ => None,
+    }
+}
+
+/// Outcome of parsing a string the way Python's `int(s, base)` does.
+enum IntParse {
+    Parsed(i64),
+    /// The digits are valid, but the value does not fit `i64`.
+    TooLarge,
+    /// `int()` would raise `ValueError`.
+    Invalid,
+}
+
+/// Python's `int(s, base)`. `base` 0 means "detect from the `0x`/`0o`/`0b` prefix".
+fn parse_py_int(src: &str, base: u32) -> IntParse {
+    if base != 0 && !(2..=36).contains(&base) {
+        return IntParse::Invalid;
+    }
+    let src = src.trim();
+    let (neg, body) = match src.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, src.strip_prefix('+').unwrap_or(src)),
+    };
+    let lower = body.to_ascii_lowercase();
+    let (base, digits, prefixed) = match base {
+        16 | 0 if lower.starts_with("0x") => (16, &body[2..], true),
+        8 | 0 if lower.starts_with("0o") => (8, &body[2..], true),
+        2 | 0 if lower.starts_with("0b") => (2, &body[2..], true),
+        // without a prefix, base 0 means base 10 -- but then redundant leading
+        // zeros are rejected (`int("010", 0)` raises, `int("00", 0)` is 0)
+        0 => {
+            if body.starts_with('0') && !body.trim_start_matches(['0', '_']).is_empty() {
+                return IntParse::Invalid;
+            }
+            (10, body, false)
+        }
+        b => (b, body, false),
+    };
+    // `_` may only separate digits (Python also allows one right after a prefix)
+    let mut prev_underscore = !prefixed;
+    for c in digits.chars() {
+        if c == '_' {
+            if prev_underscore {
+                return IntParse::Invalid;
+            }
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+        }
+    }
+    if prev_underscore {
+        return IntParse::Invalid;
+    }
+    let digits = digits.replace('_', "");
+    // `from_str_radix` accepts a sign, which would make `int("--1")` parse
+    if digits.starts_with(['+', '-']) {
+        return IntParse::Invalid;
+    }
+    match i64::from_str_radix(&digits, base) {
+        Ok(i) => IntParse::Parsed(if neg { -i } else { i }),
+        Err(e)
+            if matches!(
+                e.kind(),
+                IntErrorKind::PosOverflow | IntErrorKind::NegOverflow
+            ) =>
+        {
+            IntParse::TooLarge
+        }
+        Err(_) => IntParse::Invalid,
     }
 }
 
@@ -1682,7 +1750,7 @@ fn value_error(msg: String) -> EvalValueError {
     .into()
 }
 
-/// `int obj`. The runtime `int__` takes no `base`, so neither does this.
+/// `int obj` / `int(obj, base)`, following Python's `int()`.
 pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let obj = args
         .remove_left_or_key("obj")
@@ -1691,21 +1759,25 @@ pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         // `int(s, base)` only accepts a string, exactly as in Python
         Some(base) => {
             let Some(radix) = py_int(&base).and_then(|b| u32::try_from(b).ok()) else {
-                return Err(type_mismatch("2..36", base, "base"));
+                return Err(type_mismatch("0 or 2..36", base, "base"));
             };
-            if !(2..=36).contains(&radix) {
-                return Err(value_error("int() base must be >= 2 and <= 36".to_string()));
+            if radix != 0 && !(2..=36).contains(&radix) {
+                return Err(value_error(
+                    "int() base must be >= 2 and <= 36, or 0".to_string(),
+                ));
             }
             let Some(s) = obj.as_str() else {
                 return Err(type_mismatch("Str", obj, "obj"));
             };
-            let s = s.trim();
-            if s.contains('_') {
-                return Err(todo("int(_, base) with digit separators"));
+            match parse_py_int(s, radix) {
+                IntParse::Parsed(i) => i,
+                IntParse::TooLarge => return Err(todo("int (out of range)")),
+                IntParse::Invalid => {
+                    return Err(value_error(format!(
+                        "invalid literal for int() with base {radix}: {s}"
+                    )))
+                }
             }
-            i64::from_str_radix(s, radix).map_err(|_| {
-                value_error(format!("invalid literal for int() with base {radix}: {s}"))
-            })?
         }
         None => match py_int(&obj) {
             Some(i) => i,

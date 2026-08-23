@@ -442,8 +442,7 @@ fn exec_const_kw_args() -> Result<(), ()> {
 
 #[test]
 fn exec_const_wide_int() -> Result<(), ()> {
-    // not executed: integer literals above `i32` are not emitted correctly yet
-    expect_compile_success("tests/should_ok/const_wide_int.er", 9)
+    expect_success("tests/should_ok/const_wide_int.er", 0)
 }
 
 #[test]

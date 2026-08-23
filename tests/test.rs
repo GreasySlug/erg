@@ -250,6 +250,11 @@ fn exec_inherit() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_ratio_num() -> Result<(), ()> {
+    expect_success("tests/should_ok/ratio_num.er", 0)
+}
+
+#[test]
 fn exec_infer_class() -> Result<(), ()> {
     expect_success("tests/should_ok/infer_class.er", 0)
 }

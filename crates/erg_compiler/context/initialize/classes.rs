@@ -204,6 +204,20 @@ impl Context {
             Some(FUNDAMENTAL_INT),
             0,
         );
+        let f_abs = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ABS,
+            num_abs,
+            fn0_met(Float, Float),
+            None,
+        )));
+        float.register_py_builtin_const(
+            FUNC_ABS,
+            Visibility::BUILTIN_PUBLIC,
+            Some(fn0_met(Float, Float)),
+            f_abs,
+            Some(OP_ABS),
+            None,
+        );
         float.register_py_builtin(OP_GT, fn1_met(Float, Float, Bool), Some(OP_GT), 0);
         float.register_py_builtin(OP_GE, fn1_met(Float, Float, Bool), Some(OP_GE), 0);
         float.register_py_builtin(OP_LT, fn1_met(Float, Float, Bool), Some(OP_LT), 0);
@@ -391,6 +405,23 @@ impl Context {
             Const,
             Visibility::BUILTIN_PUBLIC,
             Some(DENOMINATOR),
+        );
+        // `Ratio.abs` keeps the class (`Int.abs` narrows to `Nat` instead).
+        // The free `abs` dispatches structurally on this method, so every numeric
+        // class must declare one whose return type matches `__abs__`.
+        let r_abs = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ABS,
+            num_abs,
+            fn0_met(Ratio, Ratio),
+            None,
+        )));
+        ratio.register_py_builtin_const(
+            FUNC_ABS,
+            Visibility::BUILTIN_PUBLIC,
+            Some(fn0_met(Ratio, Ratio)),
+            r_abs,
+            Some(OP_ABS),
+            None,
         );
         // Concrete comparison methods (mirroring `Float`), so subclasses
         // `Int`/`Nat` inherit `__gt__`/`__lt__`/... directly (needed e.g. for

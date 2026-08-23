@@ -747,8 +747,11 @@ impl fmt::Debug for ValueObj {
                 }
             }
             Self::Float(fl) => {
-                // In Rust, .0 is shown omitted.
-                if fl.fract() < 1e-10 {
+                // Rust omits the `.0` of an integral float, so add it back. The
+                // test has to be exact: `fract()` is negative for a negative
+                // float and tiny for a small one, so a tolerance here would
+                // print -1.75 as -1.8 and 6.6e-34 as 0.0.
+                if fl.fract() == 0.0 {
                     write!(f, "{fl:.1}")?;
                 } else {
                     write!(f, "{fl}")?;
@@ -834,8 +837,11 @@ impl fmt::Display for ValueObj {
                 }
             }
             Self::Float(fl) => {
-                // In Rust, .0 is shown omitted.
-                if fl.fract() < 1e-10 {
+                // Rust omits the `.0` of an integral float, so add it back. The
+                // test has to be exact: `fract()` is negative for a negative
+                // float and tiny for a small one, so a tolerance here would
+                // print -1.75 as -1.8 and 6.6e-34 as 0.0.
+                if fl.fract() == 0.0 {
                     write!(f, "{fl:.1}")?;
                 } else {
                     write!(f, "{fl}")?;

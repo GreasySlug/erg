@@ -1,0 +1,54 @@
+# `abs`/`round`/`str` on a `Ratio` (a `fractions.Fraction` at run time).
+# `abs` used to be declared `Num -> Nat`, so codegen wrapped it in `Nat(...)`
+# and `abs(-1.5)` silently became 1.
+
+assert abs(-1.5) == 1.5
+assert abs(-0.25) == 0.25
+assert abs(0.1 - 0.3) == 0.2
+# the overload keeps `Nat` for `Int` and `Float` for `Float`
+assert abs(-3) == 3
+assert abs(float(-1.5)).nearly_eq float(1.5)
+narrowed: Nat = abs(-3)
+assert narrowed == 3
+
+# through a function, where the argument's class comes from the annotation
+f(x: Ratio) = abs x
+assert f(-1.5) == 1.5
+g(x: Int) = abs x
+assert g(-3) == 3
+
+# `.abs()` as a method, which `Ratio`/`Float` did not have at all
+neg = -0.25
+assert neg.abs() == 0.25
+fneg = float(-1.5)
+assert fneg.abs().nearly_eq float(1.5)
+
+# `round` rejected `Ratio` outright (it was declared `Float -> Int`).
+# CPython rounds halves to even, and does it exactly for a `Fraction`.
+assert round(0.5) == 0
+assert round(1.5) == 2
+assert round(2.5) == 2
+assert round(-0.5) == 0
+assert round(-1.5) == -2
+assert round(2 / 3) == 1
+assert round(float(2.5)) == 2
+
+# `str` of a `Ratio` is its `Fraction` form
+assert str(1.5) == "3/2"
+assert str(-1.5) == "-3/2"
+assert str(3.0) == "3"
+
+# the same values, folded at compile time (the annotations are singleton types,
+# so they only check if the constant folded to exactly that value)
+Abs: {1.5} = abs(-1.5)
+AbsInt: {3} = abs(-3)
+Rounded: {2} = round(1.5)
+RoundedEven: {2} = round(2.5)
+StrOf: {"3/2"} = str(1.5)
+assert Abs == 1.5
+assert AbsInt == 3
+assert Rounded == 2
+assert RoundedEven == 2
+assert StrOf == "3/2"
+
+print! "OK"

@@ -94,6 +94,20 @@ const CASES: &[&str] = &[
     "str(\"ab\")",
     // numeric builtins
     "abs(-3)",
+    // `abs`/`round`/`str` on a `Ratio` -- `abs` used to fold to a truncated
+    // `Nat`, and `round`/`str` did not accept a `Ratio` at all
+    "abs(-1.5)",
+    "abs(-0.25)",
+    "abs(0.1 - 0.3)",
+    "round(0.5)",
+    "round(1.5)",
+    "round(2.5)",
+    "round(-0.5)",
+    "round(-1.5)",
+    "round(2 / 3)",
+    "str(1.5)",
+    "str(-1.5)",
+    "str(3.0)",
     "round(float(2.5))",
     "round(float(1.5))",
     "round(float(2.4))",

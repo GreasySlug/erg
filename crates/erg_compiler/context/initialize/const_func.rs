@@ -1310,14 +1310,28 @@ pub(crate) fn abs_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     let num = args
         .remove_left_or_key("n")
         .ok_or_else(|| not_passed("n"))?;
+    abs_of(num, "n")
+}
+
+/// `x.abs()` on a `Ratio` or a `Float`. `Int.abs` (`int_abs`) narrows to `Nat`;
+/// these keep the receiver's class, so the declared return type matches what
+/// CPython's `__abs__` actually returns.
+pub(crate) fn num_abs(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    let slf = args
+        .remove_left_or_key("self")
+        .ok_or_else(|| not_passed("self"))?;
+    abs_of(slf, "self")
+}
+
+fn abs_of(num: ValueObj, param: &str) -> EvalValueResult<TyParam> {
     match num {
         ValueObj::Nat(n) => Ok(ValueObj::Nat(n).into()),
         ValueObj::Int(n) => Ok(ValueObj::Nat(n.unsigned_abs()).into()),
         ValueObj::Bool(b) => Ok(ValueObj::Nat(b as u64).into()),
+        ValueObj::Ratio(n, d) => Ok(ValueObj::Ratio(n.abs(), d).into()),
         ValueObj::Float(n) => Ok(ValueObj::from(n.abs()).into()),
-        ValueObj::Inf => Ok(ValueObj::Inf.into()),
-        ValueObj::NegInf => Ok(ValueObj::Inf.into()),
-        _ => Err(type_mismatch("Num", num, "n")),
+        ValueObj::Inf | ValueObj::NegInf => Ok(ValueObj::Inf.into()),
+        _ => Err(type_mismatch("Num", num, param)),
     }
 }
 
@@ -1646,6 +1660,9 @@ fn py_str(val: &ValueObj) -> Option<String> {
         ValueObj::Nat(n) => Some(n.to_string()),
         ValueObj::Bool(b) => Some(if *b { "True" } else { "False" }.to_string()),
         ValueObj::None => Some("None".to_string()),
+        // `str(Fraction(3, 2)) == "3/2"`, but an integral one drops the denominator
+        ValueObj::Ratio(n, 1) => Some(n.to_string()),
+        ValueObj::Ratio(n, d) => Some(format!("{n}/{d}")),
         _ => None,
     }
 }
@@ -1852,6 +1869,27 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     let number = args
         .remove_left_or_key("number")
         .ok_or_else(|| not_passed("number"))?;
+    // A `Ratio` is a `Fraction` at run time, which rounds exactly -- going
+    // through `f64` would round the wrong way for a fraction that is only just
+    // off the halfway point.
+    if let Some((num, den)) = number.as_ratio() {
+        let (Some(q), Some(rest)) = (num.checked_div(den), num.checked_rem(den)) else {
+            return Err(todo("round (out of range)"));
+        };
+        // `floor` the quotient, so `rest` is the non-negative distance above it
+        let (q, rest) = if rest < 0 {
+            (q - 1, rest + den)
+        } else {
+            (q, rest)
+        };
+        let twice = rest * 2;
+        let round_up = twice > den || (twice == den && q % 2 != 0);
+        let rounded = if round_up { q + 1 } else { q };
+        return match i64::try_from(rounded) {
+            Ok(i) => Ok(ValueObj::Int(i).into()),
+            Err(_) => Err(todo("round (out of range)")),
+        };
+    }
     let Some(f) = number.as_float().filter(|f| f.is_finite()) else {
         // `round` of NaN/inf raises at run time, so it must not fold to a value
         return Err(type_mismatch("finite Float", number, "number"));

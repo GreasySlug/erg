@@ -23,7 +23,21 @@ impl Context {
         let T = mono_q(TY_T, instanceof(Type));
         let U = mono_q(TY_U, instanceof(Type));
         let Path = mono_q_tp(PATH, instanceof(Str));
-        let t_abs = nd_func(vec![kw(KW_N, mono(NUM))], None, Nat);
+        // `abs` returns whatever the argument's `.abs()` returns, so it stays
+        // `Nat` for an `Int` but is `Ratio` for a `Ratio`. Declaring a flat `Nat`
+        // made codegen wrap the call in `Nat(...)` (see `emit_expr`), which
+        // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. Binding the
+        // return to the argument's own type instead would be unsound: the
+        // argument is often a singleton (`{-3}`), and `abs` is not the identity.
+        // Overloaded, because `abs` keeps its argument's class: declaring a flat
+        // `Nat` made codegen wrap the call in `Nat(...)` (see `emit_expr`), which
+        // truncated `abs(-1.5)` -- a `Fraction` at run time -- to 1. `Int` comes
+        // first (it is the most specific), and `Ratio` is the fallback for an
+        // argument whose type is still unresolved at the call site.
+        let t_abs = (nd_func(vec![kw(KW_N, Int)], None, Nat)
+            & nd_func(vec![kw(KW_N, Ratio)], None, Ratio)
+            & nd_func(vec![kw(KW_N, Float)], None, Float))
+        .with_default_intersec_index(1);
         let abs = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
             FUNC_ABS,
             abs_func,
@@ -383,7 +397,10 @@ impl Context {
             t_reversed.clone(),
             None,
         )));
-        let t_round = nd_func(vec![kw(KW_NUMBER, Float)], None, Int);
+        // CPython's `round` takes any `__round__`, and a decimal literal is a
+        // `Ratio` (a `Fraction`), not a `Float` -- so `round(1.5)` has to be
+        // accepted. `Int`/`Nat` come along as subclasses of `Ratio`.
+        let t_round = nd_func(vec![kw(KW_NUMBER, Float | Ratio)], None, Int);
         let t_set = no_var_func(
             vec![],
             vec![kw(KW_ITERABLE, poly(ITERABLE, vec![ty_tp(T.clone())]))],

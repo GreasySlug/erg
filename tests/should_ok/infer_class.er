@@ -1,7 +1,10 @@
-_abs x =
-    x.abs() # currently this method only implemented for integers
+# `.bit_length` is implemented for `Int` only, so the class of `x` follows from
+# the method name alone. (`.abs` used to be the example, but `Ratio` and `Float`
+# have one too now, which leaves the name ambiguous.)
+_bit_len x =
+    x.bit_length()
 
-assert _abs(-1) == 1
+assert _bit_len(5) == 3
 
 #[
 push! a, elem =

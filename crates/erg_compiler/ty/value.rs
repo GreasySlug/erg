@@ -1894,6 +1894,15 @@ impl ValueObj {
     ///
     /// `None` if the denominator is zero or the reduced value does not fit,
     /// in which case it must not be folded.
+    ///
+    /// The denominator is stored as a `u128` but built from an `i128`, so the
+    /// real ceiling is `i128::MAX`: adding `a/b` and `c/d` needs the signed
+    /// products `a*d` and `c*b`, so a denominator past `i128::MAX` could be
+    /// parsed and then never computed with. Widening it would move the boundary
+    /// by a factor of two (`5e-39` folds, `2e-39` still does not) without
+    /// removing it. Past the boundary the literal keeps its plain `Ratio` type
+    /// and codegen builds it exactly from its source text; only binding it to a
+    /// constant is refused (`EvalError::inexact_ratio_literal`).
     pub fn ratio(num: i128, den: i128) -> Option<Self> {
         if den == 0 {
             return None;

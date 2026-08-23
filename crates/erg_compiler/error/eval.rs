@@ -119,6 +119,44 @@ impl EvalError {
         )
     }
 
+    /// A decimal literal whose exact value does not fit `ValueObj::Ratio`
+    /// (`6.62607015e-34` needs a denominator of 10^42). Folding it as the nearest
+    /// `f64` would make the constant differ from the same literal written inline,
+    /// which is built exactly from its source text.
+    pub fn inexact_ratio_literal(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        lit: String,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(
+                    loc,
+                    vec![],
+                    Some(switch_lang!(
+                        "japanese" => "実行時の値と一致しなくなるため畳み込めません。小文字の名前(実行時変数)に束縛してください".to_string(),
+                        "simplified_chinese" => "无法折叠，因为它与运行时的值不一致。请绑定到小写名称(运行时变量)".to_string(),
+                        "traditional_chinese" => "無法摺疊，因為它與執行時的值不一致。請繫結到小寫名稱(執行時變數)".to_string(),
+                        "english" => "folding it would not match the run-time value; bind it to a lowercase name (a run-time variable) instead".to_string(),
+                    )),
+                )],
+                switch_lang!(
+                    "japanese" => format!("`{lit}`はコンパイル時に正確に表現できません"),
+                    "simplified_chinese" => format!("`{lit}`无法在编译时精确表示"),
+                    "traditional_chinese" => format!("`{lit}`無法在編譯時精確表示"),
+                    "english" => format!("`{lit}` cannot be represented exactly at compile time"),
+                ),
+                errno,
+                NotConstExpr,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn index_out_of_range(
         input: Input,
         errno: usize,

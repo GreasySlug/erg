@@ -51,4 +51,11 @@ assert Rounded == 2
 assert RoundedEven == 2
 assert StrOf == "3/2"
 
+# A decimal whose exact rational does not fit `Ratio` is still a `Ratio`, and is
+# built exactly from its source text -- it just cannot be a compile-time constant
+# (see tests/should_err/const_op.er).
+planck = 6.62607015e-34
+typed: Ratio = planck
+assert typed * 2 == 1.32521403e-33
+
 print! "OK"

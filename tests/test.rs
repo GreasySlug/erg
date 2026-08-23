@@ -936,7 +936,7 @@ fn exec_const_nonconst_call_err() -> Result<(), ()> {
 
 #[test]
 fn exec_const_op_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/const_op.er", 0, 4)
+    expect_compile_failure("tests/should_err/const_op.er", 0, 5)
 }
 
 #[test]

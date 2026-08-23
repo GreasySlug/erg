@@ -73,7 +73,14 @@ impl TryFrom<Token> for Literal {
         // `Ratio` literals are stored as `Float` values, so type them as `Ratio`
         // explicitly (otherwise their singleton would refine `Float`).
         let t = if token.is(TokenKind::RatioLit) {
-            data.ratio_t()
+            match &data {
+                // The exact rational does not fit `ValueObj::Ratio` (`6.62607015e-34`
+                // needs a denominator of 10^42), so there is no value to refine
+                // with. It is still a `Ratio`: codegen builds it from the source
+                // text, so the program itself stays exact.
+                ValueObj::Float(_) => Type::Ratio,
+                _ => data.ratio_t(),
+            }
         } else {
             data.t()
         };

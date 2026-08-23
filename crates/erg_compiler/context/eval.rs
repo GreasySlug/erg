@@ -1649,7 +1649,22 @@ impl Context {
 
     pub(crate) fn eval_lit(&self, lit: &Literal) -> EvalResult<ValueObj> {
         let t = type_from_token_kind(lit.token.kind);
-        ValueObj::from_str(t, lit.token.content.clone()).ok_or_else(|| {
+        let value = ValueObj::from_str(t, lit.token.content.clone());
+        // A decimal whose exact rational does not fit falls back to `f64`. Codegen
+        // builds an inline literal from its source text, so folding the `f64` here
+        // would make `C = 6.62607015e-34; print! C` and `print! 6.62607015e-34`
+        // print different values.
+        if lit.token.is(TokenKind::RatioLit) && matches!(value, Some(ValueObj::Float(_))) {
+            return Err(EvalError::inexact_ratio_literal(
+                self.cfg.input.clone(),
+                line!() as usize,
+                lit.token.loc(),
+                self.caused_by(),
+                lit.token.content.to_string(),
+            )
+            .into());
+        }
+        value.ok_or_else(|| {
             EvalError::invalid_literal(
                 self.cfg.input.clone(),
                 line!() as usize,

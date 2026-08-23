@@ -5,3 +5,8 @@ ZeroFloorDiv = 1 // 0 # ERR
 ZeroMod = 1 % 0 # ERR
 ZeroDiv = 1 / 0 # ERR
 Overflow = 2 ** 100 # ERR
+
+# A decimal whose exact rational does not fit `Ratio` (this needs a denominator
+# of 10^42). Folding it as the nearest `f64` would make the constant differ from
+# the same literal written inline, which codegen builds from its source text.
+Planck = 6.62607015e-34 # ERR

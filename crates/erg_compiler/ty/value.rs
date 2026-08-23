@@ -1330,7 +1330,8 @@ impl HasType for ValueObj {
 
 /// Upper bound on the length of a string built by constant folding `s * n`,
 /// so that a typo like `"x" * 10_000_000_000` cannot exhaust memory at compile time.
-const STR_REPEAT_LIMIT: usize = 1 << 20;
+/// Set well above any plausible literal, so real code still folds.
+const STR_REPEAT_LIMIT: usize = 1 << 26;
 
 /// `floor(l / r)`, i.e. Python's `//`. `None` if `r == 0`.
 fn floor_div(l: i128, r: i128) -> Option<i128> {
@@ -1752,7 +1753,7 @@ impl ValueObj {
     }
 
     /// `None` if `i` is not representable (`Nat` is a `u64`, `Int` an `i32`).
-    fn from_i128(i: i128) -> Option<Self> {
+    pub(crate) fn from_i128(i: i128) -> Option<Self> {
         if let Ok(n) = u64::try_from(i) {
             Some(Self::Nat(n))
         } else {
@@ -1848,13 +1849,11 @@ impl ValueObj {
     // REVIEW: allow_divergenceオプションを付けるべきか?
     pub fn try_add(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => l.checked_add(r).map(Self::Int),
-            (Self::Nat(l), Self::Nat(r)) => l.checked_add(r).map(Self::Nat),
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 + r as i128),
+            (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 + r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l + r)),
             (Self::Int(l), Self::Nat(r)) => Self::from_i128(l as i128 + r as i128),
-            (Self::Nat(l), Self::Int(r)) => {
-                i32::try_from(l as i128 + r as i128).ok().map(Self::Int)
-            }
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(l as i128 + r as i128),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l + r as f64)),
             (Self::Int(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 + *r)),
@@ -1874,10 +1873,8 @@ impl ValueObj {
 
     pub fn try_sub(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => l.checked_sub(r).map(Self::Int),
-            (Self::Nat(l), Self::Nat(r)) => {
-                i32::try_from(l as i128 - r as i128).ok().map(Self::Int)
-            }
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 - r as i128),
+            (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l - r)),
             (Self::Int(l), Self::Nat(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Nat(l), Self::Int(r)) => Self::from_i128(l as i128 - r as i128),
@@ -1901,14 +1898,10 @@ impl ValueObj {
     pub fn try_mul(self, other: Self) -> Option<Self> {
         match (self, other) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 * r as i128),
-            (Self::Nat(l), Self::Nat(r)) => l.checked_mul(r).map(Self::Nat),
+            (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 * r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l * r)),
-            (Self::Int(l), Self::Nat(r)) => {
-                i32::try_from(l as i128 * r as i128).ok().map(Self::Int)
-            }
-            (Self::Nat(l), Self::Int(r)) => {
-                i32::try_from(l as i128 * r as i128).ok().map(Self::Int)
-            }
+            (Self::Int(l), Self::Nat(r)) => Self::from_i128(l as i128 * r as i128),
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(l as i128 * r as i128),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(*l * r as f64)),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(l as f64 * *r)),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(*l * r as f64)),
@@ -1951,17 +1944,11 @@ impl ValueObj {
             return None;
         }
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_div(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l / r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from((l / r).floor())),
-            (Self::Int(l), Self::Nat(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
-            (Self::Nat(l), Self::Int(r)) => i32::try_from(floor_div(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
+            (Self::Int(l), Self::Nat(r)) => Self::from_i128(floor_div(l as i128, r as i128)?),
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(floor_div(l as i128, r as i128)?),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from((*l / r as f64).floor())),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64 / *r).floor())),
             (Self::Float(l), Self::Int(r)) => Some(Self::from((*l / r as f64).floor())),
@@ -1973,23 +1960,15 @@ impl ValueObj {
 
     pub fn try_pow(self, other: Self) -> Option<Self> {
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => {
-                i32::try_from(int_pow(l as i128, r)?).ok().map(Self::Int)
-            }
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(int_pow(l as i128, r)?),
             (Self::Nat(l), Self::Nat(r)) => {
-                u64::try_from(int_pow(l as i128, i32::try_from(r).ok()?)?)
-                    .ok()
-                    .map(Self::Nat)
+                Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
             }
             (Self::Float(l), Self::Float(r)) => Some(Self::from(l.powf(*r))),
             (Self::Int(l), Self::Nat(r)) => {
-                i32::try_from(int_pow(l as i128, i32::try_from(r).ok()?)?)
-                    .ok()
-                    .map(Self::Int)
+                Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
             }
-            (Self::Nat(l), Self::Int(r)) => {
-                u64::try_from(int_pow(l as i128, r)?).ok().map(Self::Nat)
-            }
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(int_pow(l as i128, r)?),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(l.powf(r as f64))),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from((l as f64).powf(*r))),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(l.powi(r))),
@@ -2004,17 +1983,11 @@ impl ValueObj {
             return None;
         }
         match (self, other) {
-            (Self::Int(l), Self::Int(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
+            (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_mod(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l % r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(*l, *r))),
-            (Self::Int(l), Self::Nat(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
-            (Self::Nat(l), Self::Int(r)) => i32::try_from(floor_mod(l as i128, r as i128)?)
-                .ok()
-                .map(Self::Int),
+            (Self::Int(l), Self::Nat(r)) => Self::from_i128(floor_mod(l as i128, r as i128)?),
+            (Self::Nat(l), Self::Int(r)) => Self::from_i128(floor_mod(l as i128, r as i128)?),
             (Self::Float(l), Self::Nat(r)) => Some(Self::from(floor_mod_f64(*l, r as f64))),
             (Self::Nat(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(l as f64, *r))),
             (Self::Float(l), Self::Int(r)) => Some(Self::from(floor_mod_f64(*l, r as f64))),

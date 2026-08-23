@@ -1655,9 +1655,12 @@ fn py_int(val: &ValueObj) -> Option<i64> {
         ValueObj::Int(i) => Some(*i as i64),
         ValueObj::Nat(n) => i64::try_from(*n).ok(),
         ValueObj::Bool(b) => Some(*b as i64),
-        ValueObj::Float(f) => {
+        ValueObj::Float(f) if f.is_finite() => {
             let t = f.trunc();
-            (t >= i64::MIN as f64 && t <= i64::MAX as f64).then_some(t as i64)
+            // `i64::MAX as f64` rounds up to 2**63, which `as i64` would saturate
+            (-9223372036854775808.0..9223372036854775808.0)
+                .contains(&t)
+                .then_some(t as i64)
         }
         ValueObj::Str(s) => {
             let s = s.trim();
@@ -1684,15 +1687,34 @@ pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     let obj = args
         .remove_left_or_key("obj")
         .ok_or_else(|| not_passed("obj"))?;
-    if args.remove_left_or_key("base").is_some() {
-        return Err(todo("int(_, base)"));
-    }
-    match py_int(&obj) {
-        Some(i) => i32::try_from(i)
-            .map(|i| ValueObj::Int(i).into())
-            .map_err(|_| todo("int (out of range)")),
-        None => Err(type_mismatch("Int-convertible", obj, "obj")),
-    }
+    let parsed = match args.remove_left_or_key("base") {
+        // `int(s, base)` only accepts a string, exactly as in Python
+        Some(base) => {
+            let Some(radix) = py_int(&base).and_then(|b| u32::try_from(b).ok()) else {
+                return Err(type_mismatch("2..36", base, "base"));
+            };
+            if !(2..=36).contains(&radix) {
+                return Err(value_error("int() base must be >= 2 and <= 36".to_string()));
+            }
+            let Some(s) = obj.as_str() else {
+                return Err(type_mismatch("Str", obj, "obj"));
+            };
+            let s = s.trim();
+            if s.contains('_') {
+                return Err(todo("int(_, base) with digit separators"));
+            }
+            i64::from_str_radix(s, radix).map_err(|_| {
+                value_error(format!("invalid literal for int() with base {radix}: {s}"))
+            })?
+        }
+        None => match py_int(&obj) {
+            Some(i) => i,
+            None => return Err(type_mismatch("Int-convertible", obj, "obj")),
+        },
+    };
+    Ok(ValueObj::from_i128(parsed as i128)
+        .ok_or_else(|| todo("int (out of range)"))?
+        .into())
 }
 
 /// `nat obj`. `Nat(_)` raises at run time for negative inputs, so this rejects them too.
@@ -1709,9 +1731,10 @@ pub(crate) fn nat_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
 
 /// `float obj`
 pub(crate) fn float_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
-    let obj = args
-        .remove_left_or_key("obj")
-        .ok_or_else(|| not_passed("obj"))?;
+    // `obj` is a default parameter: `float() == 0.0`
+    let Some(obj) = args.remove_left_or_key("obj") else {
+        return Ok(ValueObj::from(0.0).into());
+    };
     let f = match &obj {
         ValueObj::Float(f) => Some(**f),
         ValueObj::Int(i) => Some(*i as f64),
@@ -1734,8 +1757,9 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     let number = args
         .remove_left_or_key("number")
         .ok_or_else(|| not_passed("number"))?;
-    let Some(f) = number.as_float() else {
-        return Err(type_mismatch("Float", number, "number"));
+    let Some(f) = number.as_float().filter(|f| f.is_finite()) else {
+        // `round` of NaN/inf raises at run time, so it must not fold to a value
+        return Err(type_mismatch("finite Float", number, "number"));
     };
     let lower = f.floor();
     let diff = f - lower;

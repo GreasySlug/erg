@@ -441,6 +441,12 @@ fn exec_const_kw_args() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_wide_int() -> Result<(), ()> {
+    // not executed: integer literals above `i32` are not emitted correctly yet
+    expect_compile_success("tests/should_ok/const_wide_int.er", 9)
+}
+
+#[test]
 fn exec_recursive_multi_arm() -> Result<(), ()> {
     expect_success("tests/should_ok/recursive_multi_arm.er", 0)
 }

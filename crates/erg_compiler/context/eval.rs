@@ -1703,19 +1703,16 @@ impl Context {
     ) -> EvalResult<ValueObj> {
         if let Some(v) = prim {
             Ok(v)
+        } else if let Some(v) = self.eval_user_binop(op, lhs.clone(), rhs.clone()) {
+            Ok(v)
         } else {
-            let repr = format!("{lhs} {op} {rhs}");
-            if let Some(v) = self.eval_user_binop(op, lhs, rhs) {
-                Ok(v)
-            } else {
-                Err(EvalErrors::from(EvalError::uncomputable_op(
-                    self.cfg.input.clone(),
-                    line!() as usize,
-                    loc,
-                    self.caused_by(),
-                    repr,
-                )))
-            }
+            Err(EvalErrors::from(EvalError::uncomputable_op(
+                self.cfg.input.clone(),
+                line!() as usize,
+                loc,
+                self.caused_by(),
+                format!("{lhs} {op} {rhs}"),
+            )))
         }
     }
 

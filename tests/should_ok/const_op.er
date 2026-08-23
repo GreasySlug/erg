@@ -66,3 +66,7 @@ total = !0
 for! RightOpen, i =>
     total.inc! i
 assert total == 10
+
+# NOTE: constant folding beyond the `Int` (i32) range is covered by
+# tests/should_ok/const_wide_int.er (integer literals above i32 are not emitted
+# correctly yet, so such values cannot be compared at run time).

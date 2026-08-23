@@ -12,7 +12,4 @@ D|<: MyTr(Int)|.
         _ = self
         x # ERR: the type of f is mismatched
 
-# `MyTr T = Trait ...` (parameter syntax) is not supported
-MyTr2 T = Trait { .g = (self: Self) -> T } # ERR
-
 print! "ng"

@@ -13,15 +13,15 @@ use erg_common::{enum_unwrap, get_hash, log, set};
 
 use crate::ast::{
     Accessor, Args, BinOp, Block, Call, ClassAttr, ClassAttrs, ClassDef, Compound, ConstExpr,
-    DataPack, Def, DefBody, DefId, DefaultParamSignature, Dict, DictComprehension, Dummy, Expr,
-    GuardClause, Identifier, InlineModule, KeyValue, KwArg, Lambda, LambdaSignature, List,
+    DataPack, Def, DefBody, DefId, DefaultParamSignature, DefKind, Dict, DictComprehension, Dummy,
+    Expr, GuardClause, Identifier, InlineModule, KeyValue, KwArg, Lambda, LambdaSignature, List,
     ListComprehension, ListTypeSpec, ListWithLength, Literal, Methods, MixedRecord, Module,
     NonDefaultParamSignature, NormalDict, NormalList, NormalRecord, NormalSet, NormalTuple,
     ParamPattern, ParamRecordAttr, ParamTuplePattern, Params, PatchDef, PosArg, ReDef, Record,
     RecordAttrOrIdent, RecordAttrs, RecordTypeSpec, Set as astSet, SetComprehension, SetWithLength,
     Signature, SubrSignature, Tuple, TupleComprehension, TupleTypeSpec, TypeAppArgs,
-    TypeAppArgsKind, TypeBoundSpecs, TypeSpec, TypeSpecWithOp, UnaryOp, VarName, VarPattern,
-    VarRecordAttr, VarSignature, VisModifierSpec, AST,
+    TypeAppArgsKind, TypeBoundSpec, TypeBoundSpecs, TypeSpec, TypeSpecWithOp, UnaryOp, VarName,
+    VarPattern, VarRecordAttr, VarSignature, VisModifierSpec, AST,
 };
 use crate::token::{Token, TokenKind, COLON, DOT};
 
@@ -142,6 +142,65 @@ impl Desugarer {
                 obj.type_app(type_args)
             }
         }
+    }
+
+    /// Convert `C T = Class ...` / `Tr T = Trait ...` into `C|T|` / `Tr|T|`.
+    ///
+    /// The parser treats the former as a subroutine (`SubrSignature`) rather than
+    /// a type with bounds (`VarSignature` + `TypeBoundSpecs`). For class/trait/patch
+    /// definitions the parameter list is open universal-type syntax, not a function.
+    fn desugar_open_poly_type_def(def: Def) -> Def {
+        if !(def.def_kind().is_class_or_trait() || matches!(def.def_kind(), DefKind::Patch)) {
+            return def;
+        }
+        let Signature::Subr(subr) = def.sig else {
+            return def;
+        };
+        if !subr.bounds.is_empty()
+            || subr.params.var_params.is_some()
+            || !subr.params.defaults.is_empty()
+            || subr.params.kw_var_params.is_some()
+            || !subr.params.guards.is_empty()
+            || subr.params.non_defaults.is_empty()
+            || subr
+                .params
+                .non_defaults
+                .iter()
+                .any(|p| !matches!(p.pat, ParamPattern::VarName(_)))
+        {
+            return Def::new(Signature::Subr(subr), def.body);
+        }
+        let bounds = TypeBoundSpecs::new(
+            subr.params
+                .non_defaults
+                .into_iter()
+                .map(|p| {
+                    let ParamPattern::VarName(name) = p.pat else {
+                        unreachable!()
+                    };
+                    match p.t_spec {
+                        Some(t_spec) => TypeBoundSpec::non_default(name, t_spec),
+                        None => TypeBoundSpec::Omitted(name),
+                    }
+                })
+                .collect(),
+        );
+        let mut block = def.body.block;
+        if let Some(mut last) = block.pop() {
+            for deco in subr.decorators {
+                last = deco
+                    .into_expr()
+                    .call_expr(Args::single(PosArg::new(last)));
+            }
+            block.push(last);
+        }
+        let var = VarSignature::new(
+            VarPattern::Ident(subr.ident),
+            subr.return_t_spec.map(|t| *t),
+            Some(bounds),
+        );
+        let body = DefBody::new(def.body.op, block, def.body.id);
+        Def::new(Signature::Var(var), body)
     }
 
     fn perform_desugar(mut desugar: impl FnMut(Expr) -> Expr, expr: Expr) -> Expr {
@@ -349,7 +408,7 @@ impl Desugarer {
                     def.sig = Signature::Subr(subr);
                 }
                 let body = DefBody::new(def.body.op, Block::new(chunks), def.body.id);
-                Expr::Def(Def::new(def.sig, body))
+                Expr::Def(Self::desugar_open_poly_type_def(Def::new(def.sig, body)))
             }
             Expr::ClassDef(class_def) => {
                 let Expr::Def(def) = desugar(Expr::Def(class_def.def)) else {

@@ -851,7 +851,7 @@ fn exec_or_err() -> Result<(), ()> {
 
 #[test]
 fn exec_poly_trait_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/poly_trait.er", 0, 4)
+    expect_compile_failure("tests/should_err/poly_trait.er", 0, 3)
 }
 
 #[test]

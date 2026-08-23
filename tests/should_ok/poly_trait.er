@@ -33,4 +33,13 @@ C2|<: Conv(Int, Str)|.
 c3 = C2.new()
 assert c3.conv(42) == "42"
 
+# parameter syntax `Tr T = Trait ...`
+MyTr2 T = Trait { .g = (self: Self, x: T) -> T }
+E = Class()
+E|<: MyTr2(Nat)|.
+    g(self, x: Nat): Nat =
+        _ = self
+        x
+assert E.new().g(1) == 1
+
 print! "poly trait test passed"

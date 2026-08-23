@@ -36,4 +36,20 @@ pair = Pair.new { first = 1; second = "a" }
 assert pair.fst() == 1
 assert pair.snd() == "a"
 
+# === Phase 8: parameter syntax `C T = Class ...` ===
+Packet T = Class { .payload = T }
+Packet.
+    get(self): T = self.payload
+p = Packet.new { .payload = 7 }
+assert p.get() == 7
+
+# multiple parameters
+Pair2 T, U = Class { .left = T; .right = U }
+Pair2.
+    fst(self): T = self.left
+    snd(self): U = self.right
+pair2 = Pair2.new { .left = 1; .right = "a" }
+assert pair2.fst() == 1
+assert pair2.snd() == "a"
+
 print! "All polymorphic class tests passed!"

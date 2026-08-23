@@ -6,3 +6,10 @@ id|Int, Str|(1) # ERR: too many type arguments
 
 mono x: Int = x
 mono|Int|(1) # ERR: not a polymorphic type
+
+v = 1
+v|<: Int| # ERR: trait ascription is not a type application
+undefined_fn|Int|(1) # ERR: NameError only (no cascading type-arg error)
+
+bounded|T <: Int|(x: T): T = x
+bounded|Str|("a") # ERR: Str is not a subtype of Int (x2: the type arg and the value arg)

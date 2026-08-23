@@ -18,3 +18,13 @@ close_add|A <: Add(A)| x: A, y: A =
     x + y
 assert close_add|Int|(1, 2) == 3
 assert close_add|Str|("a", "b") == "ab"
+
+# partially applied type arguments must stay polymorphic
+pair|T, U|(x: T, y: U): (T, U) = (x, y)
+pair_int = pair|Int|
+assert pair_int(1, "a") == (1, "a")
+assert pair_int(1, 2) == (1, 2)
+
+# bounded type variables
+bounded|T <: Int|(x: T): T = x
+assert bounded|Nat|(1) == 1

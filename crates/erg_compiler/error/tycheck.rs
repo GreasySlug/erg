@@ -507,6 +507,66 @@ impl TyCheckError {
         Self::new(ErrorCore::unreachable(fn_name, line), input, "".to_owned())
     }
 
+    /// Explicit type application (`f|Int|`) was given more type arguments than the callee has
+    /// type variables (`params_len == 0` means the callee is not polymorphic at all).
+    pub fn too_many_type_args_error(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        callee_name: &str,
+        caused_by: String,
+        params_len: usize,
+        args_len: usize,
+    ) -> Self {
+        let name = readable_name(callee_name);
+        let expect = format!("{params_len}").with_color_and_attr(HINT, ATTR);
+        let args_len = format!("{args_len}").with_color_and_attr(ERR, ATTR);
+        let hint = (params_len == 0).then(|| {
+            switch_lang!(
+                "japanese" => format!("{name}は多相型ではないので、型引数を適用できません"),
+                "simplified_chinese" => format!("{name}不是多态类型，无法应用类型实参"),
+                "traditional_chinese" => format!("{name}不是多型型別，無法套用型別引數"),
+                "english" => format!("{name} is not a polymorphic type, so type arguments cannot be applied"),
+            )
+        });
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(loc, vec![], hint)],
+                switch_lang!(
+                    "japanese" => format!(
+                        "{name}に渡された型引数の数が多すぎます
+
+必要な型引数の数: {expect}個
+渡された型引数の数: {args_len}個"
+                    ),
+                    "simplified_chinese" => format!(
+                        "传递给{name}的类型实参过多
+
+预期的类型参数: {expect}
+传递的类型实参: {args_len}"
+                    ),
+                    "traditional_chinese" => format!(
+                        "傳遞給{name}的型別引數過多
+
+預期的型別參數: {expect}
+傳遞的型別引數: {args_len}"
+                    ),
+                    "english" => format!(
+                        "too many type arguments for {name}
+
+expected type params: {expect}
+passed type args:     {args_len}"
+                    ),
+                ),
+                errno,
+                TypeError,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn too_many_args_error(
         input: Input,

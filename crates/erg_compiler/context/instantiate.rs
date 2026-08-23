@@ -1175,7 +1175,12 @@ impl Context {
 
     /// Specialize a quantified type with explicit type arguments (`id|Int|` → `Int -> Int`).
     ///
-    /// Remaining unapplied type variables stay as free vars so later calls can still infer them.
+    /// Type variables that are not applied explicitly are re-quantified, so that a partially
+    /// applied type (`f|Int|` of `f|T, U|`) is still polymorphic in the remaining variables.
+    ///
+    /// FIXME: positional type arguments are matched in the order the type variables first appear
+    /// in the signature, which is not necessarily the declaration order of `|T, U|`
+    /// (`Type::Quantified` does not keep it). Use `f|T := Int|` when the order matters.
     pub(crate) fn instantiate_type_app(
         &self,
         quantified: Type,
@@ -1183,20 +1188,24 @@ impl Context {
         callee_name: &str,
         loc: &impl Locational,
     ) -> TyCheckResult<Type> {
-        let inner = Self::peel_quantified(quantified);
+        // e.g. an erroneous `f|<: T|`: keep the type as it is (the error is reported by the caller)
         if args.is_empty() {
-            return Ok(inner.quantify());
+            return Ok(quantified);
+        }
+        let inner = Self::peel_quantified(quantified);
+        // the callee is already erroneous: do not report a second, misleading error
+        if inner.is_failure() {
+            return Ok(inner);
         }
         if !inner.has_qvar() {
-            return Err(TyCheckErrors::from(TyCheckError::too_many_args_error(
+            return Err(TyCheckErrors::from(TyCheckError::too_many_type_args_error(
                 self.cfg.input.clone(),
                 line!() as usize,
                 loc.loc(),
                 callee_name,
                 self.caused_by(),
                 0,
-                args.iter().filter(|a| a.name.is_none()).count(),
-                args.iter().filter(|a| a.name.is_some()).count(),
+                args.len(),
             )));
         }
         let mut tmp_tv_cache = TyVarCache::new(self.level, self);
@@ -1209,15 +1218,14 @@ impl Context {
             } else {
                 loop {
                     let Some(next) = tmp_tv_cache.ordered_names.get(pos_cursor) else {
-                        return Err(TyCheckErrors::from(TyCheckError::too_many_args_error(
+                        return Err(TyCheckErrors::from(TyCheckError::too_many_type_args_error(
                             self.cfg.input.clone(),
                             line!() as usize,
                             arg.loc,
                             callee_name,
                             self.caused_by(),
                             tmp_tv_cache.ordered_names.len(),
-                            args.iter().filter(|a| a.name.is_none()).count(),
-                            args.iter().filter(|a| a.name.is_some()).count(),
+                            args.len(),
                         )));
                     };
                     pos_cursor += 1;
@@ -1256,7 +1264,38 @@ impl Context {
                 )));
             }
         }
-        Ok(inst)
+        Ok(self.requantify_rest(inst, &tmp_tv_cache, &assigned))
+    }
+
+    /// Generalize the type variables that were not given explicitly and re-quantify the type.
+    /// Without this, `g = f|Int|` (`f|T, U|`) would leak `?U` and get fixed at the first call.
+    fn requantify_rest(&self, inst: Type, tv_cache: &TyVarCache, assigned: &Set<Str>) -> Type {
+        let mut generalized = false;
+        for name in tv_cache.ordered_names.iter() {
+            if assigned.contains(name.inspect()) {
+                continue;
+            }
+            if let Some(tv) = tv_cache.get_tyvar(name.inspect()) {
+                if let Ok(fv) = <&FreeTyVar>::try_from(tv) {
+                    if !fv.is_linked() && !fv.is_generalized() {
+                        fv.generalize();
+                        generalized = true;
+                    }
+                }
+            } else if let Some(tp) = tv_cache.get_typaram(name.inspect()) {
+                if let Ok(fv) = <&FreeTyParam>::try_from(tp) {
+                    if !fv.is_linked() && !fv.is_generalized() {
+                        fv.generalize();
+                        generalized = true;
+                    }
+                }
+            }
+        }
+        if generalized && inst.is_subr() && inst.has_qvar() {
+            inst.quantify()
+        } else {
+            inst
+        }
     }
 
     fn peel_quantified(t: Type) -> Type {
@@ -1276,6 +1315,24 @@ impl Context {
         name: &str,
     ) -> TyCheckResult<()> {
         let name = Str::rc(name);
+        // `sub_unify` would report the bound as the (unresolved) type variable itself,
+        // so check a concrete bound (`|T <: Int|`) here to name the expected type.
+        if let Some(sup) = instance.get_super() {
+            if sup != Obj && !sup.has_unbound_var() && !self.subtype_of(provided, &sup) {
+                return Err(TyCheckErrors::from(TyCheckError::type_mismatch_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc.loc(),
+                    self.caused_by(),
+                    &name,
+                    None,
+                    &sup,
+                    provided,
+                    None,
+                    None,
+                )));
+            }
+        }
         self.sub_unify(provided, instance, loc, Some(&name))?;
         if instance.is_unbound_var() {
             instance.destructive_link(provided);

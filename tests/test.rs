@@ -981,7 +981,7 @@ fn exec_quantified_err() -> Result<(), ()> {
 
 #[test]
 fn exec_type_app_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/type_app.er", 0, 3)
+    expect_compile_failure("tests/should_err/type_app.er", 0, 7)
 }
 
 #[test]

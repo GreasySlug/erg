@@ -739,7 +739,7 @@ impl Context {
     }
 
     fn eval_attr(&self, obj: ValueObj, ident: &Identifier) -> SingleEvalResult<ValueObj> {
-        self.eval_attr_of(obj, ident).map(|(val, _)| val)
+        self.eval_attr_and_recv(obj, ident).map(|(val, _)| val)
     }
 
     /// An attribute, and whether the receiver is its first argument.
@@ -748,7 +748,7 @@ impl Context {
     /// is an argument. `C.Twice(3)` is not: `Twice` is a constant *of* the class,
     /// found on the class rather than taken by it, and passing the class along
     /// bound it to `Twice`'s first parameter.
-    fn eval_attr_of(
+    fn eval_attr_and_recv(
         &self,
         obj: ValueObj,
         ident: &Identifier,
@@ -905,10 +905,10 @@ impl Context {
                     };
                 }
                 Ok(obj) => {
-                    let (callee, takes_recv) = self
-                        .eval_attr_of(obj, attr)
+                    let (callee, recv_is_arg) = self
+                        .eval_attr_and_recv(obj, attr)
                         .map_err(|err| (TyParam::Failure, err.into()))?;
-                    is_method = takes_recv;
+                    is_method = recv_is_arg;
                     callee
                 }
                 Err((_val, errs)) => {

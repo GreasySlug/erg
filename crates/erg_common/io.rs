@@ -53,7 +53,7 @@ impl DummyStdin {
 
     pub fn reread_lines(&self, ln_begin: usize, ln_end: usize) -> Vec<String> {
         let end = ln_end.min(self.lines.len());
-        if ln_begin > end {
+        if ln_begin == 0 || ln_begin > end {
             return vec![];
         }
         self.lines[ln_begin - 1..=end - 1].to_vec()

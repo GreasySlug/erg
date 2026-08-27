@@ -1875,7 +1875,9 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                     match self.module.context.current_control_flow() {
                         Some(kind) if nth == 0 && kind.is_conditional() => {
                             self.push_guard(expr.ref_t());
-                            cond_t = Some(expr.t());
+                            if kind.is_if() && has_else {
+                                cond_t = Some(expr.t());
+                            }
                         }
                         // only once the `then` block is out of the way, and only
                         // if there is an `else` block to narrow -- a guard nobody

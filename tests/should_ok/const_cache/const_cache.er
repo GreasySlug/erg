@@ -1,6 +1,11 @@
-# The const-call cache must key a call by the scope that *defined* the
-# function, not the scope that evaluated it: three functions named `F`,
-# defined in three modules, all folded here.
+# Two things about the scope a const call runs in.
+#
+# The cache must key a call by the scope that *defined* the function, not the
+# scope that evaluated it: three functions named `F`, defined in three places,
+# all folded here.
+#
+# And the body resolves its free names there too. `mod_x.F` reads `mod_x.K`,
+# which does not exist in this module -- it used to be a `NameError`.
 x = import "mod_x"
 y = import "mod_y"
 F(N: Int): Int = N * 2

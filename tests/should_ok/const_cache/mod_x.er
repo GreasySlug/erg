@@ -1,1 +1,4 @@
-.F(N: Int): Int = N + 1
+.K = 1
+# reads a name from *this* module: the body must resolve free names in the
+# scope it was written in, not in whichever module calls it
+.F(N: Int): Int = N + .K

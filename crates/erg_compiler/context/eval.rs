@@ -7,6 +7,7 @@ use erg_common::error::Location;
 #[allow(unused)]
 use erg_common::log;
 use erg_common::macros::RecursionCounter;
+use erg_common::pathutil::NormalizedPathBuf;
 use erg_common::set::Set;
 use erg_common::shared::Shared;
 use erg_common::traits::{Locational, Stream};
@@ -1020,12 +1021,13 @@ impl Context {
                 );
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
+                let def_ctx = self.const_def_ctx(&user);
                 let mut subr_ctx = Context::instant(
                     user.name.clone(),
-                    self.cfg.clone(),
+                    def_ctx.map_or_else(|| self.cfg.clone(), |ctx| ctx.cfg.clone()),
                     2,
                     self.shared.clone(),
-                    self.clone(),
+                    def_ctx.cloned().unwrap_or_else(|| self.clone()),
                 );
                 let mut pos_args = args.pos_args.into_iter();
                 let mut kw_args = args.kw_args;
@@ -1111,6 +1113,29 @@ impl Context {
                 .call(args, self)
                 .map_err(|e| self.const_call_error(e, loc.loc())),
         }
+    }
+
+    /// The scope a const subroutine's body resolves its free names in: the one
+    /// it was written in, not the one calling it.
+    ///
+    /// `None` means the caller's own chain is already the right one -- either
+    /// the definition lives in the module being evaluated, or it is synthetic
+    /// (a lambda, an `if` branch), which really does read what surrounds the
+    /// call. Otherwise the body would look its own module's names up in the
+    /// importer's scope and not find them.
+    fn const_def_ctx(&self, user: &UserConstSubr) -> Option<&Context> {
+        let (module, _scope) = user.def_scope.as_ref()?;
+        // the module being lowered is not in the cache yet, and is `self`'s
+        // own chain anyway
+        if module == &NormalizedPathBuf::from(self.module_path()) {
+            return None;
+        }
+        let shared = self.shared.as_ref()?;
+        shared
+            .mod_cache
+            .raw_ref_ctx(module)
+            .or_else(|| shared.py_mod_cache.raw_ref_ctx(module))
+            .map(|mod_ctx| &mod_ctx.context)
     }
 
     /// What identifies this call for [`SharedConstCallCache`], or `None` when it

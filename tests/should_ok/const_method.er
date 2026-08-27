@@ -38,3 +38,16 @@ assert Stri[0] == "a"
 assert Stri[2] == "c"
 Rng = 1..5
 assert Rng[0] == 1
+
+# A constant *of* a class, called through the class.
+#
+# The receiver used to be passed along as the first argument whichever way the
+# attribute was found, so `C.Twice(3)` bound `N` to the class and folded to
+# `<module>::C * 2`.
+C = Class {}
+C.
+    Twice(N: Int): Int = N * 2
+    Sq(N: Int): Int = N * N
+Six: {6} = C.Twice(3)
+assert Six == 6
+assert C.Sq(7) == 49

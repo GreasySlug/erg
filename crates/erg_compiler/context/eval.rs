@@ -739,21 +739,35 @@ impl Context {
     }
 
     fn eval_attr(&self, obj: ValueObj, ident: &Identifier) -> SingleEvalResult<ValueObj> {
+        self.eval_attr_of(obj, ident).map(|(val, _)| val)
+    }
+
+    /// An attribute, and whether the receiver is its first argument.
+    ///
+    /// `"abc".replace("a", "z")` calls `Str.replace(self, ...)`, so the receiver
+    /// is an argument. `C.Twice(3)` is not: `Twice` is a constant *of* the class,
+    /// found on the class rather than taken by it, and passing the class along
+    /// bound it to `Twice`'s first parameter.
+    fn eval_attr_of(
+        &self,
+        obj: ValueObj,
+        ident: &Identifier,
+    ) -> SingleEvalResult<(ValueObj, bool)> {
         let field = self
             .instantiate_field(ident)
             .map_err(|(_, mut errs)| errs.remove(0))?;
         if let Some(val) = obj.try_get_attr(&field) {
-            return Ok(val);
+            return Ok((val, false));
         }
         if let ValueObj::Type(t) = &obj {
             if let Some(sups) = self.get_nominal_super_type_ctxs(t.typ()) {
                 for ctx in sups {
                     if let Some(val) = ctx.consts.get(ident.inspect()) {
-                        return Ok(val.clone());
+                        return Ok((val.clone(), false));
                     }
                     for methods in ctx.methods_list.iter() {
                         if let Some(v) = methods.consts.get(ident.inspect()) {
-                            return Ok(v.clone());
+                            return Ok((v.clone(), false));
                         }
                     }
                 }
@@ -763,7 +777,7 @@ impl Context {
         // on the type. This is the same lookup the binary operators do, so every
         // const method registered on a builtin class is reachable both ways.
         if let Some(subr) = self.get_const_op_subr(&obj.class(), ident.inspect()) {
-            return Ok(ValueObj::Subr(subr));
+            return Ok((ValueObj::Subr(subr), true));
         }
         Err(EvalError::no_attr_error(
             self.cfg.input.clone(),
@@ -890,9 +904,13 @@ impl Context {
                         Err((TyParam::Value(val), errs))
                     };
                 }
-                Ok(obj) => self
-                    .eval_attr(obj, attr)
-                    .map_err(|err| (TyParam::Failure, err.into()))?,
+                Ok(obj) => {
+                    let (callee, takes_recv) = self
+                        .eval_attr_of(obj, attr)
+                        .map_err(|err| (TyParam::Failure, err.into()))?;
+                    is_method = takes_recv;
+                    callee
+                }
                 Err((_val, errs)) => {
                     let acc = Accessor::attr(*call.obj.clone(), attr.clone());
                     self.eval_const_acc(&acc)

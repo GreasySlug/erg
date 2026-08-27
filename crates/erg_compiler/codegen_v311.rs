@@ -5,8 +5,6 @@
 //! [`erg_common::opcode_set::OpcodeSetVersion`] instead.
 
 use erg_common::error::ErrorDisplay;
-use erg_common::opcode309::Opcode309;
-use erg_common::opcode311::Opcode311;
 use erg_common::traits::{Locational, Stream};
 use erg_common::{fn_name, log};
 
@@ -33,8 +31,30 @@ impl PyCodeGenerator {
         };
         let params = self.gen_param_names(&lambda.params);
         self.emit_expr(expr);
-        self.write_instr(Opcode311::BEFORE_WITH);
-        self.write_arg(0);
+        if self.opcode_set.is_3_14_plus() {
+            // 3.14 dropped BEFORE_WITH. Its replacement spells the same thing out:
+            // `LOAD_SPECIAL` pushes a dunder together with its receiver, so the
+            // two SWAPs bury the manager under `__exit__` before `__enter__` is
+            // called on it.
+            self.write_instr(self.opcode_set.copy());
+            self.write_arg(1);
+            self.write_instr(self.opcode_set.load_special());
+            self.write_arg(1); // __exit__
+            self.write_instr(self.opcode_set.swap());
+            self.write_arg(2);
+            self.write_instr(self.opcode_set.swap());
+            self.write_arg(3);
+            self.write_instr(self.opcode_set.load_special());
+            self.write_arg(0); // __enter__
+                               // three above the manager at the peak, back to one net -- the two
+                               // `stack_inc_n(2)` below covers, as it does for `BEFORE_WITH`
+            self.stack_inc_n(3);
+            self.emit_precall_and_call(0);
+            self.stack_dec_n(2);
+        } else {
+            self.write_instr(self.opcode_set.before_with());
+            self.write_arg(0);
+        }
         // push __exit__, __enter__() to the stack
         self.stack_inc_n(2);
         let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
@@ -44,27 +64,35 @@ impl PyCodeGenerator {
         self.emit_load_const(ValueObj::None);
         self.emit_load_const(ValueObj::None);
         self.emit_load_const(ValueObj::None);
-        self.emit_precall_and_call(2);
+        // `BEFORE_WITH` leaves a bound `__exit__`, so the first `None` stands in
+        // for the receiver; `LOAD_SPECIAL` leaves the receiver itself, and all
+        // three `None`s are arguments.
+        let exit_argc = if self.opcode_set.is_3_14_plus() { 3 } else { 2 };
+        self.emit_precall_and_call(exit_argc);
         self.emit_pop_top();
         let idx_jump_forward = self.lasti();
-        self.write_instr(Opcode311::JUMP_FORWARD);
+        self.write_instr(self.opcode_set.jump_forward());
         self.write_arg(0);
-        self.write_instr(Opcode311::PUSH_EXC_INFO);
+        self.write_instr(self.opcode_set.push_exc_info());
         self.write_arg(0);
-        self.write_instr(Opcode309::WITH_EXCEPT_START);
+        self.write_instr(self.opcode_set.with_except_start());
         self.write_arg(0);
-        self.write_instr(Opcode311::POP_JUMP_FORWARD_IF_TRUE);
+        self.emit_to_bool();
+        self.write_instr(self.opcode_set.pop_jump_if_true());
+        // skip the four instructions below; the jump counts from after the
+        // cache, which is why the argument does not change when there is one
         self.write_arg(4);
-        self.write_instr(Opcode311::RERAISE);
+        self.emit_pop_jump_cache();
+        self.write_instr(self.opcode_set.reraise());
         self.write_arg(0);
-        self.write_instr(Opcode311::COPY);
+        self.write_instr(self.opcode_set.copy());
         self.write_arg(3);
-        self.write_instr(Opcode311::POP_EXCEPT);
+        self.write_instr(self.opcode_set.pop_except());
         self.write_arg(0);
-        self.write_instr(Opcode311::RERAISE);
+        self.write_instr(self.opcode_set.reraise());
         self.write_arg(1);
         self.emit_pop_top();
-        self.write_instr(Opcode311::POP_EXCEPT);
+        self.write_instr(self.opcode_set.pop_except());
         self.write_arg(0);
         self.emit_pop_top();
         self.emit_pop_top();

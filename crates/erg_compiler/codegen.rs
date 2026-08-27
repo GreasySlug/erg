@@ -497,7 +497,9 @@ impl PyCodeGenerator {
     pub(crate) fn calc_edit_jump(&mut self, idx: usize, jump_to: usize) -> usize {
         let arg = jump_to / self.opcode_set.jump_unit_size();
         if idx == 0
-            || !CommonOpcode::is_jump_op(*self.cur_block_codeobj().code.get(idx - 1).unwrap())
+            || !self
+                .opcode_set
+                .is_jump_op(*self.cur_block_codeobj().code.get(idx - 1).unwrap())
         {
             self.crash(&format!("calc_edit_jump: not jump op: {idx} {jump_to}"));
         }
@@ -1318,7 +1320,7 @@ impl PyCodeGenerator {
 
     /// Emit TO_BOOL + 3 CACHE entries before POP_JUMP_IF_FALSE/TRUE (3.13+).
     /// Returns the number of bytes written (0 or 8).
-    fn emit_to_bool(&mut self) -> usize {
+    pub(crate) fn emit_to_bool(&mut self) -> usize {
         let to_bool = self.opcode_set.to_bool();
         if to_bool != 0 {
             self.write_instr(to_bool);
@@ -1333,7 +1335,7 @@ impl PyCodeGenerator {
 
     /// Emit CACHE entries after POP_JUMP_IF_FALSE/TRUE (1 entry for 3.13+).
     /// Returns the number of bytes written (0 or 2).
-    fn emit_pop_jump_cache(&mut self) -> usize {
+    pub(crate) fn emit_pop_jump_cache(&mut self) -> usize {
         let cache = self.opcode_set.cache_entries_pop_jump_if_false() * 2;
         if cache > 0 {
             self.write_bytes(&vec![0; cache]);

@@ -205,6 +205,24 @@ impl OpcodeSetVersion {
         }
     }
 
+    /// Whether `byte` is one of this version's jump opcodes.
+    ///
+    /// A sanity check for the places that patch a jump argument after the fact:
+    /// `CommonOpcode::is_jump_op` reads the 3.7-3.12 numbering, which 3.13
+    /// renumbered out from under it.
+    pub fn is_jump_op(&self, byte: u8) -> bool {
+        [
+            self.jump_forward(),
+            self.jump_backward(),
+            self.pop_jump_if_false(),
+            self.pop_jump_if_true(),
+            self.pop_jump_forward_if_false(),
+            self.jump_if_true_or_pop(),
+            self.jump_if_false_or_pop(),
+        ]
+        .contains(&byte)
+    }
+
     pub fn jump_forward(&self) -> u8 {
         match self {
             Self::V308 => Opcode308::JUMP_FORWARD as u8,
@@ -318,6 +336,16 @@ impl OpcodeSetVersion {
             Self::V313 => Opcode313::BEFORE_WITH as u8,
             // 3.14: BEFORE_WITH removed; use LOAD_SPECIAL pattern
             Self::V314 => 0,
+        }
+    }
+
+    /// `LOAD_SPECIAL` (3.14+), which replaced `BEFORE_WITH`: it looks a dunder up
+    /// on the type and pushes it with its receiver, the way `LOAD_ATTR` does for
+    /// a method. Oparg 0 is `__enter__`, 1 is `__exit__`.
+    pub fn load_special(&self) -> u8 {
+        match self {
+            Self::V314 => Opcode314::LOAD_SPECIAL as u8,
+            _ => 0,
         }
     }
 

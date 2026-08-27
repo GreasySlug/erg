@@ -498,17 +498,14 @@ ELS のためにモジュール再コンパイル時は `SharedCompilerResource:
 
 ### 残っている既知の不一致
 
-`tests/const_diff.rs` の `KNOWN_DIVERGENT` が現状の負債そのもの。
-
-| 式 | 内容 | フェーズ |
-| --- | --- | --- |
-| `{"a": 1, "b": 2}` | `ValueObj::Dict` がハッシュマップなので挿入順を保たない | 5 |
+`tests/const_diff.rs` の `KNOWN_DIVERGENT` が現状の負債そのもの。**現在は空**。
 
 `reversed` / `zip` / `map` / `filter` / `.keys()` / `.values()` / `.items()` は
 定数として畳み込めなくなった（`tests/should_err/stateful_const.er`）ので一覧から外した。
-Dict の順序は**表示だけ**の差（dict の等価比較は順序非依存で、順序が漏れるビューは畳み込まない）。
-直すには `erg_common::Dict` を挿入順保持にする必要があり、コンパイラ全体が使う基盤データ構造なので
-独立した判断として扱う。
+最後まで残っていた Dict の挿入順は `erg_common::Dict` の背骨を `FxHashMap` から
+insertion-order 保持の `indexmap`（同じ FxHasher）に替えて解消。等価とハッシュは
+順序非依存のまま、`remove` は順序を守るため shift（`O(n)`）。表示・畳み込み・
+レコードのフィールド順・エラー一覧の順序が決定的になった。
 
 ---
 

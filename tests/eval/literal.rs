@@ -158,3 +158,12 @@ fn eval_assert_inequality_2() {
 fn eval_ratio() {
     assert_eq!(eval("print! 0.1234"), successful_output("0.1234\n"));
 }
+
+#[test]
+#[ignore]
+fn eval_dict_insertion_order() {
+    assert_eq!(
+        eval("print! {2: \"two\", 1: \"one\"}"),
+        successful_output("{2: 'two', 1: 'one'}\n")
+    );
+}

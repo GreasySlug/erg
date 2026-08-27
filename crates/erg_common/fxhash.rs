@@ -40,6 +40,10 @@ use std::collections::{HashMap, HashSet};
 /// Type alias for a hashmap using the `fx` hash algorithm.
 pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 pub type FxHashSet<T> = HashSet<T, BuildHasherDefault<FxHasher>>;
+/// An insertion-order-preserving map with the same fast hasher.
+/// [`crate::dict::Dict`] is backed by this: an Erg dict is a Python dict,
+/// and a Python dict remembers the order things were put in.
+pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<FxHasher>>;
 
 /// A speedy hash algorithm for use within rustc. The hashmap in liballoc
 /// by default uses SipHash which isn't quite as speedy as we want. In the

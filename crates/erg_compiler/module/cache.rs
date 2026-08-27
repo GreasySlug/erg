@@ -134,7 +134,7 @@ impl fmt::Display for ModuleCache {
 
 impl IntoIterator for ModuleCache {
     type Item = (NormalizedPathBuf, ModuleEntry);
-    type IntoIter = std::collections::hash_map::IntoIter<NormalizedPathBuf, ModuleEntry>;
+    type IntoIter = <Dict<NormalizedPathBuf, ModuleEntry> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         self.cache.into_iter()

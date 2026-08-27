@@ -233,6 +233,11 @@ const CASES: &[&str] = &[
     "-3000000000 + 1",
     "int(\"-9223372036854775808\")",
     "-2147483648 - 1",
+    // `Dict` keeps insertion order now, the way Python's does (numeric keys:
+    // `print!` shows Python's repr, which quotes strings differently)
+    "{2: 20, 1: 10}",
+    "{3: 1, 1: 3, 2: 2}",
+    "{1: 2, 3: 4}",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.
@@ -240,14 +245,8 @@ const CASES: &[&str] = &[
 /// Each entry must still diverge: fixing one makes this test fail, which is the
 /// reminder to delete the entry. See docs/const-eval-plan.md (phases 3 and 5).
 const KNOWN_DIVERGENT: &[(&str, &str)] = &[
-    // `ValueObj::Dict` is an `FxHashMap`, so it does not keep insertion order the
-    // way Python's dict does. Only the printed form differs -- dicts compare
-    // equal regardless of order, and the order-exposing views (`.keys()` and
-    // friends) are no longer folded at all (tests/should_err/stateful_const.er)
-    (
-        "{\"a\": 1, \"b\": 2}",
-        "folds unordered, but Python keeps insertion order",
-    ),
+    // empty since `Dict` learned to keep insertion order; the shape stays for
+    // the next divergence found
 ];
 
 /// Unique per call: the tests run in parallel in one process.

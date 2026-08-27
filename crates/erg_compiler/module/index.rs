@@ -1,4 +1,4 @@
-use std::collections::hash_map::{Iter, Keys, Values};
+use erg_common::dict::{Iter, Keys, Values};
 use std::fmt;
 
 use erg_common::dict::Dict;

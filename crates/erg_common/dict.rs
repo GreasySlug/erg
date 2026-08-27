@@ -1,13 +1,14 @@
 use std::borrow::Borrow;
-use std::collections::hash_map::{
-    Entry, IntoKeys, IntoValues, Iter, IterMut, Keys, Values, ValuesMut,
-};
+
+use indexmap::map::{Entry, IntoKeys, IntoValues, IterMut, ValuesMut};
+// the iterator types are part of `Dict`'s public API
+pub use indexmap::map::{IntoIter, Iter, Keys, Values};
 use std::fmt::{self, Write};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::ops::{Index, IndexMut};
 
-use crate::fxhash::FxHashMap;
+use crate::fxhash::FxIndexMap;
 use crate::get_hash;
 use crate::traits::Immutable;
 
@@ -21,9 +22,16 @@ macro_rules! dict {
     }};
 }
 
+/// A hash map that iterates in insertion order, like Python's `dict`.
+///
+/// A folded Erg dict *is* a Python dict, so the order things were written in
+/// is part of the value; and everything else built on this -- record fields,
+/// error listings -- gets a deterministic order for free. Equality and the
+/// hash stay order-insensitive. `remove` shifts (`O(n)`) rather than swap the
+/// last entry in, because swapping would trade the order away again.
 #[derive(Debug, Clone)]
 pub struct Dict<K, V> {
-    dict: FxHashMap<K, V>,
+    dict: FxIndexMap<K, V>,
 }
 
 impl<K: Hash + Eq + Immutable, V: Hash + Eq> PartialEq for Dict<K, V> {
@@ -134,7 +142,7 @@ impl<K, V> Dict<K, V> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            dict: FxHashMap::default(),
+            dict: FxIndexMap::default(),
         }
     }
 
@@ -152,7 +160,7 @@ impl<K, V> Dict<K, V> {
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            dict: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            dict: FxIndexMap::with_capacity_and_hasher(capacity, Default::default()),
         }
     }
 
@@ -235,7 +243,7 @@ impl<K, V> Dict<K, V> {
 
 impl<K, V> IntoIterator for Dict<K, V> {
     type Item = (K, V);
-    type IntoIter = <FxHashMap<K, V> as IntoIterator>::IntoIter;
+    type IntoIter = <FxIndexMap<K, V> as IntoIterator>::IntoIter;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.dict.into_iter()
@@ -333,7 +341,9 @@ impl<K: Hash + Eq + Immutable, V> Dict<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.dict.remove(k)
+        // shift, not swap: a swap would hand the removed slot to the last
+        // entry, and the order this map exists to keep would be gone
+        self.dict.shift_remove(k)
     }
 
     pub fn remove_entry<Q>(&mut self, k: &Q) -> Option<(K, V)>
@@ -341,7 +351,7 @@ impl<K: Hash + Eq + Immutable, V> Dict<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.dict.remove_entry(k)
+        self.dict.shift_remove_entry(k)
     }
 
     pub fn remove_entries<'q, Q>(&mut self, keys: impl IntoIterator<Item = &'q Q>)
@@ -390,7 +400,7 @@ impl<K: Hash + Eq, V> Dict<K, V> {
     #[inline]
     pub fn diff(mut self, other: &Self) -> Self {
         for k in other.dict.keys() {
-            self.dict.remove(k);
+            self.dict.shift_remove(k);
         }
         self
     }

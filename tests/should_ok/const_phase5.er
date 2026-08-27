@@ -41,4 +41,17 @@ assert IsAny
 assert SubNat
 assert SubInt == False
 
+# chained comparison: `a < b < c` is `a < b and b < c`, not `(a < b) < c`,
+# which used to compare `True < c` and quietly say `1 < 3 < 2` is true
+ChainUp: {True} = 1 < 2 < 3
+ChainBad: {False} = 1 < 3 < 2
+ChainDown: {True} = 3 > 2 > 1
+ChainFour: {False} = 1 < 2 < 3 < 0
+assert ChainUp
+assert ChainBad == False
+assert ChainDown
+assert ChainFour == False
+i = 5
+assert 0 <= i < 10
+
 print! "OK"

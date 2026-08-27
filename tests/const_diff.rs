@@ -205,6 +205,14 @@ const CASES: &[&str] = &[
     "(1, \"a\") == (1, \"a\")",
     "(1,) != (2,)",
     "None == None",
+    // phase 5: chained comparison
+    "1 < 2 < 3",
+    "1 < 3 < 2",
+    "3 > 2 > 1",
+    "1 <= 1 < 2",
+    "1 == 1 == 1",
+    "1 < 2 < 3 < 4",
+    "1 < 2 < 3 < 0",
     // phase 5: type predicates
     "isinstance(1, Int)",
     "isinstance(-1, Nat)",

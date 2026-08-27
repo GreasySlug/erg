@@ -1,0 +1,15 @@
+# `a < b < c` compares its middle operand against both neighbours, and an
+# expression here has nowhere to bind a temporary, so it has to be written twice.
+# CPython evaluates it once; rather than differ, refuse the ones that would.
+f x = x
+
+_ = 1 < f(2) < 3          # ERR
+_ = f(1) < f(2) < f(3)    # ERR
+_ = 1 < [1, 2].sum() < 5  # ERR
+
+# a variable, a literal or an attribute is fine
+x = 2
+r = {.v = 3}
+assert 1 < x < 3
+assert 1 < 2 < 3
+assert 1 < r.v < 5

@@ -551,6 +551,79 @@ impl Parser {
 
     /// Errors when an operator/expression would be silently discarded
     /// (e.g. the `1 +` in `1 + x = 2`)
+    /// The comparisons Python chains: `a < b < c` means `a < b and b < c`, not
+    /// `(a < b) < c`. `contains` is left out -- it is Erg's own, and the
+    /// desugarer generates it.
+    const fn is_chainable_comparison(kind: TokenKind) -> bool {
+        matches!(
+            kind,
+            Less | Gre | LessEq | GreEq | DblEq | NotEq | InOp | NotInOp | IsOp | IsNotOp
+        )
+    }
+
+    /// The operand a chain would compare next: the right-hand side of the
+    /// rightmost comparison. The `and` case is one this function built -- `and`
+    /// binds looser than a comparison, so a user's own cannot be the left-hand
+    /// side here.
+    fn chain_tail(expr: &Expr) -> Option<&Expr> {
+        match expr {
+            Expr::BinOp(bin) if Self::is_chainable_comparison(bin.op.kind) => {
+                Some(bin.args[1].as_ref())
+            }
+            Expr::BinOp(bin) if bin.op.is(AndOp) => Self::chain_tail(bin.args[1].as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Whether `expr` can be written twice without changing what the program
+    /// does. The middle operand of a chain is compared against both of its
+    /// neighbours, and an expression here has nowhere to bind a temporary.
+    fn is_duplicable(expr: &Expr) -> bool {
+        match expr {
+            Expr::Literal(_) => true,
+            Expr::Accessor(Accessor::Ident(_)) => true,
+            Expr::Accessor(Accessor::Attr(attr)) => Self::is_duplicable(&attr.obj),
+            Expr::UnaryOp(unary) => Self::is_duplicable(unary.args[0].as_ref()),
+            _ => false,
+        }
+    }
+
+    /// `a < b` then `< c` becomes `a < b and b < c`, as it reads and as Python
+    /// evaluates it. Without this the comparison is left-associative and
+    /// `1 < 3 < 2` quietly compares `True < 2`, which is true.
+    fn chain_comparison(&mut self, op: Token, lhs: Expr, rhs: Expr) -> ParseResult<Expr> {
+        let Some(mid) = Self::chain_tail(&lhs) else {
+            return Ok(Expr::BinOp(BinOp::new(op, lhs, rhs)));
+        };
+        if !Self::is_duplicable(mid) {
+            let err = ParseError::syntax_error(
+                line!() as usize,
+                mid.loc(),
+                switch_lang!(
+                    "japanese" => "連鎖比較の中央の被演算子は二回評価されるため、変数かリテラルでなければなりません",
+                    "simplified_chinese" => "链式比较的中间操作数会被求值两次，因此必须是变量或字面量",
+                    "traditional_chinese" => "鏈式比較的中間運算元會被求值兩次，因此必須是變數或字面量",
+                    "english" => "the middle operand of a chained comparison is evaluated twice, so it must be a variable or a literal",
+                ),
+                Some(
+                    switch_lang!(
+                        "japanese" => "一度変数に束縛してから比較してください",
+                        "simplified_chinese" => "请先绑定到变量再比较",
+                        "traditional_chinese" => "請先繫結到變數再比較",
+                        "english" => "bind it to a variable first, then compare",
+                    )
+                    .to_string(),
+                ),
+            );
+            self.errs.push(err);
+            return Err(());
+        }
+        let mid = mid.clone();
+        let and = Token::new_fake(AndOp, "and", op.lineno, op.col_begin, op.col_end);
+        let right = Expr::BinOp(BinOp::new(op, mid, rhs));
+        Ok(Expr::BinOp(BinOp::new(and, lhs, right)))
+    }
+
     fn extra_operator_err(&mut self, errno: u32, loc: Location) {
         let err = ParseError::syntax_error(
             errno as usize,
@@ -2319,7 +2392,17 @@ impl Parser {
                         }
                         self.stack_dec(fn_name!())
                     })?;
-                    lhs = Expr::BinOp(BinOp::new(op, lhs, rhs));
+                    lhs = if Self::is_chainable_comparison(op.kind) {
+                        match self.chain_comparison(op, lhs, rhs) {
+                            Ok(expr) => expr,
+                            Err(()) => {
+                                debug_exit_info!(self);
+                                return Err(());
+                            }
+                        }
+                    } else {
+                        Expr::BinOp(BinOp::new(op, lhs, rhs))
+                    };
                 }
                 Some(t) if t.is(DblColon) && ctx.chunk => {
                     let dcolon = self.lpop();

@@ -621,9 +621,15 @@ scoped thread + `Builder::stack_size`）。依存は増えない。`Str` は `Ar
 
 これで「深さ = 1 つのスタックに何段収まるか」が「深さ = こちらが決めた予算」になった。
 予算は `CONST_CALL_LIMIT`（1 スタックあたりの tick 数）× `CONST_CALL_STACKS`（スタック数）で、
-**ユーザーから見える再帰は 31 段 → 約 1000 段**（`Countdown(900)` 可、`Countdown(1000)` は
-`RecursionError`）。超過はクラッシュではなくエラーとして報告される。これは段 2 が
-欲しかったもの（予算をこちらで決める）そのものである。
+**ユーザーから見える再帰は 31 段 → 約 1000 段**。超過はクラッシュではなくエラーとして
+報告される。これは段 2 が欲しかったもの（予算をこちらで決める）そのものである。
+
+測り方に注意: `print!` して実行すると **CPython 側の `RecursionError`**（既定上限 1000）が
+出るので、コンパイル時の畳み込み深さを測っていることにならない。`Deep: {0} = Countdown(N)`
+のように singleton 型注釈を付けて `--mode check` する（畳めなければ型エラーになる）。
+この方法で測ると変更前は `Countdown(31)` 可 / `Countdown(32)` で `RecursionError`、
+変更後は `Countdown(1000)` 可 / `Countdown(1100)` で `RecursionError`
+（予算 = `CONST_CALL_LIMIT` 64 × `CONST_CALL_STACKS` 32 = 2048 tick、1 段 2 tick）。
 
 **その過程で見つかったもの: フレームが呼び出し元フレームにぶら下がっていた**。
 同一モジュールの呼び出しではフレームの親が `self`（= 直前のフレーム）だったので、

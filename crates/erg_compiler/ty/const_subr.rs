@@ -7,7 +7,7 @@ use erg_common::log;
 use erg_common::pathutil::NormalizedPathBuf;
 use erg_common::Str;
 
-use erg_parser::ast::{Block, ConstBlock, Params};
+use erg_parser::ast::{Block, ConstBlock, ConstExpr, Params};
 
 use super::constructors::subr_t;
 use super::value::{EvalValueResult, ValueObj};
@@ -47,6 +47,15 @@ impl UserConstSubr {
 
     pub fn block(self) -> Block {
         self.block.downgrade()
+    }
+
+    /// Whether the body defines a name, which needs a scope of its own to
+    /// define into and so cannot be evaluated in the scope that is already
+    /// there.
+    pub fn defines_name(&self) -> bool {
+        self.block
+            .iter()
+            .any(|expr| matches!(expr, ConstExpr::Def(_)))
     }
 }
 

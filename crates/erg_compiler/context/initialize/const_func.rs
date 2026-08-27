@@ -1445,29 +1445,22 @@ pub(crate) fn if_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyP
         else_.unwrap_or(ValueObj::None)
     };
     match branch {
-        ValueObj::Subr(subr) => {
-            // A branch is a `do` block: no arguments, and it reads the scope the
-            // `if` is being evaluated in. Calling it would clone that scope into
-            // a frame and spend a second level of the recursion limit for every
-            // level the user wrote -- which is why a const function could only
-            // recurse 32 deep out of a limit of 64.
-            if let ConstSubr::User(user) = &subr {
-                if user.params.is_empty() {
-                    if let Some(res) = ctx.eval_const_do_block(&user.clone().block()) {
-                        return match res {
-                            Ok(val) => Ok(val.into()),
-                            Err((_val, mut errs)) => {
-                                Err(EvalValueError::from(*errs.remove(0).core))
-                            }
-                        };
-                    }
-                }
-            }
-            match ctx.call(subr, ValueArgs::empty(), Location::Unknown) {
-                Ok(tp) => Ok(tp),
-                Err((_tp, mut err)) => Err(EvalValueError::from(*err.remove(0).core)),
+        // A branch is a `do` block: no arguments, and it reads the scope the
+        // `if` is being evaluated in. Calling it would clone that scope into a
+        // frame and spend a second level of the recursion limit for every level
+        // the user wrote -- which is why a const function could only recurse 32
+        // deep out of a limit of 64. A block that defines a name does need a
+        // scope of its own, and falls through to the call below.
+        ValueObj::Subr(ConstSubr::User(user)) if user.params.is_empty() && !user.defines_name() => {
+            match ctx.eval_const_do_block(&user.block()) {
+                Ok(val) => Ok(val.into()),
+                Err((_val, mut errs)) => Err(EvalValueError::from(*errs.remove(0).core)),
             }
         }
+        ValueObj::Subr(subr) => match ctx.call(subr, ValueArgs::empty(), Location::Unknown) {
+            Ok(tp) => Ok(tp),
+            Err((_tp, mut err)) => Err(EvalValueError::from(*err.remove(0).core)),
+        },
         other => Ok(other.into()),
     }
 }

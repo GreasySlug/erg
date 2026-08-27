@@ -1022,7 +1022,9 @@ impl Context {
                 // fresh one rather than let how deep a const function may
                 // recurse be decided by how much stack happens to be left.
                 if CONST_EVAL_DEPTH.with(|d| d.get()) >= erg_common::spawn::CONST_CALL_LIMIT {
-                    return self.call_on_new_stack(ConstSubr::User(user), args, loc.loc());
+                    let loc = loc.loc();
+                    return self
+                        .on_new_stack(loc, move || self.call(ConstSubr::User(user), args, loc));
                 }
                 // Guard against infinitely recursive constant evaluation,
                 // e.g. `F n = F n; X = F 1` (self- or mutually-recursive const functions)
@@ -1124,24 +1126,24 @@ impl Context {
         }
     }
 
-    /// Continue a const call on a stack of its own.
+    /// Continue evaluating on a stack of its own.
     ///
     /// Compile-time evaluation recurses on the host stack, so without this the
-    /// depth a const function may reach is whatever fits in one stack -- 32
+    /// depth a const function may reach is whatever fits in one stack -- 31
     /// levels of what the user wrote, against CPython's 1000. Each stack is
-    /// worth [`erg_common::spawn::CONST_CALL_LIMIT`] levels and there may be
-    /// [`erg_common::spawn::CONST_CALL_STACKS`] of them, which is what now
-    /// bounds a runaway recursion.
-    fn call_on_new_stack(
+    /// worth [`erg_common::spawn::CONST_CALL_LIMIT`] of the levels counted by
+    /// `CONST_EVAL_DEPTH` and there may be
+    /// [`erg_common::spawn::CONST_CALL_STACKS`] of them, which together are
+    /// what bounds a runaway recursion.
+    fn on_new_stack<T: Send + Default>(
         &self,
-        subr: ConstSubr,
-        args: ValueArgs,
         loc: Location,
-    ) -> Failable<TyParam> {
+        f: impl FnOnce() -> Failable<T> + Send,
+    ) -> Failable<T> {
         let used = CONST_EVAL_STACKS.with(|s| s.get());
         if used >= erg_common::spawn::CONST_CALL_STACKS {
             return Err((
-                TyParam::Failure,
+                T::default(),
                 EvalErrors::from(EvalError::recursion_error(
                     self.cfg.input.clone(),
                     line!() as usize,
@@ -1154,7 +1156,7 @@ impl Context {
             // a fresh thread starts with a fresh depth; the number of stacks is
             // what carries over
             CONST_EVAL_STACKS.with(|s| s.set(used + 1));
-            self.call(subr, args, loc)
+            f()
         })
     }
 
@@ -1955,26 +1957,33 @@ impl Context {
     /// An `if` branch takes no arguments and reads the scope it was written
     /// in, which is the scope evaluating the `if` -- so a frame for it would
     /// only clone that scope and spend a second level of the recursion limit
-    /// per level the user wrote. `None` when the block defines a name, which
-    /// does need a scope of its own to define into.
-    pub(crate) fn eval_const_do_block(&self, block: &Block) -> Option<Failable<ValueObj>> {
-        if block.iter().any(|chunk| matches!(chunk, Expr::Def(_))) {
-            return None;
+    /// per level the user wrote. The block must define no name: see
+    /// [`UserConstSubr::defines_name`], which is what the caller checks.
+    pub(crate) fn eval_const_do_block(&self, block: &Block) -> Failable<ValueObj> {
+        // These are Rust frames like any other, so they are counted, and this
+        // stack is replaced when they spend it. Blocks nest only as deeply as
+        // the source does, but a source nesting them deeply enough would
+        // otherwise walk past the budget a call had left.
+        if CONST_EVAL_DEPTH.with(|d| d.get()) >= erg_common::spawn::CONST_CALL_LIMIT {
+            return self.on_new_stack(block.loc(), || self.eval_const_do_block(block));
         }
-        // Counted, because these are Rust frames like any other, but never
-        // refused here: unbounded recursion always goes through a call, which
-        // is where a spent stack is replaced. Blocks nest only as deeply as the
-        // source does.
         let _counter =
             RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
         let mut last = None;
         for chunk in block.iter() {
-            match self.eval_const_chunk_ref(chunk) {
-                Ok(val) => last = Some(val),
-                Err(e) => return Some(Err(e)),
-            }
+            last = Some(self.eval_const_chunk_ref(chunk)?);
         }
-        Some(Ok(last?))
+        last.ok_or_else(|| {
+            (
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::not_const_expr(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    block.loc(),
+                    self.caused_by(),
+                )),
+            )
+        })
     }
 
     /// Inclusion comparison on type objects (`Nat < Int`, `{=} > {x = Int}`, ...).

@@ -29,6 +29,20 @@ pub const CONST_CALL_LIMIT: usize = STACK_SIZE / (128 * 1024);
 /// function the user wrote, in the region of CPython's own limit.
 pub const CONST_CALL_STACKS: usize = 32;
 
+#[macro_export]
+macro_rules! enable_overflow_stacktrace {
+    () => {
+        #[cfg(all(unix, feature = "backtrace"))]
+        unsafe {
+            $crate::spawn::backtrace_on_stack_overflow::enable()
+        };
+        #[cfg(all(windows, feature = "backtrace"))]
+        unsafe {
+            $crate::spawn::w_boson::enable()
+        };
+    };
+}
+
 /// Run `f` on a thread of its own with a full [`STACK_SIZE`], and wait for it.
 ///
 /// Compile-time evaluation recurses on the host stack, so how deep a const
@@ -45,25 +59,14 @@ where
         thread::Builder::new()
             .stack_size(STACK_SIZE)
             .name("erg_const_eval".to_string())
-            .spawn_scoped(scope, f)
+            .spawn_scoped(scope, || {
+                enable_overflow_stacktrace!();
+                f()
+            })
             .expect("failed to spawn a thread for compile-time evaluation")
             .join()
             .unwrap_or_else(|e| std::panic::resume_unwind(e))
     })
-}
-
-#[macro_export]
-macro_rules! enable_overflow_stacktrace {
-    () => {
-        #[cfg(all(unix, feature = "backtrace"))]
-        unsafe {
-            $crate::spawn::backtrace_on_stack_overflow::enable()
-        };
-        #[cfg(all(windows, feature = "backtrace"))]
-        unsafe {
-            $crate::spawn::w_boson::enable()
-        };
-    };
 }
 
 /// Execute the function in a new thread.

@@ -362,6 +362,10 @@ pub struct Parser {
     counter: DefId,
     pub(super) level: usize, // nest level (for debugging)
     tokens: TokenStream,
+    /// spans that were written inside their own parentheses. The AST keeps no
+    /// trace of grouping parens, and `chain_comparison` must not re-group
+    /// `(a < b) == c` -- the writer already grouped it.
+    parenthesized: HashSet<Location>,
     warns: ParseErrors,
     pub(crate) errs: ParseErrors,
 }
@@ -374,11 +378,12 @@ impl Parsable for Parser {
 }
 
 impl Parser {
-    pub const fn new(ts: TokenStream) -> Self {
+    pub fn new(ts: TokenStream) -> Self {
         Self {
             counter: DefId(0),
             level: 0,
             tokens: ts,
+            parenthesized: HashSet::new(),
             warns: ParseErrors::empty(),
             errs: ParseErrors::empty(),
         }
@@ -592,6 +597,11 @@ impl Parser {
     /// evaluates it. Without this the comparison is left-associative and
     /// `1 < 3 < 2` quietly compares `True < 2`, which is true.
     fn chain_comparison(&mut self, op: Token, lhs: Expr, rhs: Expr) -> ParseResult<Expr> {
+        // `(a < b) == c` is the writer grouping on purpose. Python, too, only
+        // chains comparisons that are written bare.
+        if self.parenthesized.contains(&lhs.loc()) {
+            return Ok(Expr::BinOp(BinOp::new(op, lhs, rhs)));
+        }
         let Some(mid) = Self::chain_tail(&lhs) else {
             return Ok(Expr::BinOp(BinOp::new(op, lhs, rhs)));
         };
@@ -2900,6 +2910,8 @@ impl Parser {
                 };
                 if let Expr::Tuple(Tuple::Normal(tup)) = &mut expr {
                     tup.elems.paren = Some((lparen.loc(), rparen.loc()));
+                } else {
+                    self.parenthesized.insert(expr.loc());
                 }
                 // Float suffix on a parenthesized expression: `(1/2)f64` => `Float(1/2)`
                 if let Some(tk) = self.peek() {

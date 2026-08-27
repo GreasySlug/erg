@@ -53,5 +53,10 @@ assert ChainDown
 assert ChainFour == False
 i = 5
 assert 0 <= i < 10
+# parentheses are the writer grouping on purpose -- no chain across them
+ParenEq: {True} = (1 == 2) == False
+ParenCmp: {True} = (1 < 3) == True
+assert ParenEq
+assert ParenCmp
 
 print! "OK"

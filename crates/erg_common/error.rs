@@ -389,6 +389,8 @@ impl PartialOrd for Location {
     }
 }
 
+impl crate::traits::Immutable for Location {}
+
 impl Locational for Location {
     fn loc(&self) -> Self {
         *self

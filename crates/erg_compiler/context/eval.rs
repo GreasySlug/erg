@@ -1125,7 +1125,10 @@ impl Context {
     /// A synthetic subroutine (a lambda, an `if` branch) has no `def_scope`
     /// and is never cached: it reads the scope it was written in.
     fn const_call_key(&self, user: &UserConstSubr, args: &ValueArgs) -> Option<ConstCallKey> {
-        if matches!(user.sig_t, Type::Quantified(_)) {
+        // not only `Quantified`: a method of a polymorphic class can mention the
+        // class's type variable without being quantified itself, and its result
+        // then depends on an instantiation the arguments do not carry
+        if matches!(user.sig_t, Type::Quantified(_)) || user.sig_t.has_qvar() {
             return None;
         }
         let (module, scope) = user.def_scope.clone()?;

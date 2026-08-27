@@ -750,6 +750,11 @@ macro_rules! mono_value_pattern {
 /// once even that overflows, which `_erg_ratio.py` mirrors so that a folded
 /// constant prints exactly like the expression it was folded from.
 fn ratio_decimal(num: i128, den: u128) -> Option<String> {
+    // `ratio()` never builds a zero denominator, but a hand-built value would
+    // loop below forever, so refuse it rather than trust every caller
+    if den == 0 {
+        return None;
+    }
     let mut rest = den;
     let mut twos = 0;
     while rest.is_multiple_of(2) {

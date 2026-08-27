@@ -2682,11 +2682,18 @@ impl PyCodeGenerator {
             self.stack_dec();
             for pop_jump_point in pop_jump_points {
                 let idx = if self.opcode_set.is_3_11_plus() {
-                    self.lasti() - pop_jump_point
+                    // The arm to jump to starts after the EXTENDED_ARG + JUMP_FORWARD
+                    // written just below, so the target is `lasti + 4`; a relative
+                    // jump counts from after POP_JUMP_IF_FALSE *and its cache*, at
+                    // `pop_jump_point + 4 + cache`. The two fours cancel; the cache
+                    // does not, and 3.13 is where it stopped being zero.
+                    self.lasti()
+                        - pop_jump_point
+                        - self.opcode_set.cache_entries_pop_jump_if_false() * 2
                 } else {
                     self.lasti() + 4
                 };
-                self.fill_jump(pop_jump_point + 1, idx); // jump to POP_TOP
+                self.fill_jump(pop_jump_point + 1, idx); // jump to the next arm
             }
             jump_forward_points.push(self.lasti());
             self.write_opcode(EXTENDED_ARG);

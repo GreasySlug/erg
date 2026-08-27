@@ -534,6 +534,16 @@ thread_local! {
     static LAMBDA_BODY_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// How deep compile-time evaluation is nested on this thread.
+    ///
+    /// This bounds the *host stack*, so it has to count every nesting that
+    /// costs Rust frames: calling a const function, and evaluating an `if`
+    /// branch in place. One counter, not one per site -- separate counters
+    /// would each get the whole budget and together overrun the stack.
+    static CONST_EVAL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Context {
     fn try_get_op_kind_from_token(&self, token: &Token) -> EvalResult<OpKind> {
         match token.kind {
@@ -1007,8 +1017,10 @@ impl Context {
                 }
                 // Guard against infinitely recursive constant evaluation,
                 // e.g. `F n = F n; X = F 1` (self- or mutually-recursive const functions)
-                set_recursion_limit!(
-                    Err((
+                let _counter =
+                    RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
+                if _counter.limit_reached() {
+                    return Err((
                         TyParam::Failure,
                         EvalErrors::from(EvalError::recursion_error(
                             self.cfg.input.clone(),
@@ -1016,9 +1028,8 @@ impl Context {
                             loc.loc(),
                             self.caused_by(),
                         )),
-                    )),
-                    erg_common::spawn::CONST_CALL_LIMIT
-                );
+                    ));
+                }
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
                 let def_ctx = self.const_def_ctx(&user);
@@ -1847,6 +1858,15 @@ impl Context {
         match expr {
             // TODO: ClassDef, PatchDef
             Expr::Def(def) => self.eval_const_def(def),
+            other => self.eval_const_chunk_ref(other),
+        }
+    }
+
+    /// Every chunk but a definition, which is the only one that needs a scope
+    /// to define into. Split out so that a block which defines nothing -- an
+    /// `if` branch, say -- can be evaluated in the scope that is already there.
+    fn eval_const_chunk_ref(&self, expr: &Expr) -> Failable<ValueObj> {
+        match expr {
             Expr::Literal(lit) => self.eval_lit(lit).map_err(|e| (ValueObj::Failure, e)),
             Expr::Accessor(acc) => self.eval_const_acc(acc),
             Expr::BinOp(bin) => self.eval_const_bin(bin),
@@ -1893,6 +1913,39 @@ impl Context {
             self.eval_const_chunk(chunk)?;
         }
         self.eval_const_chunk(block.last().unwrap())
+    }
+
+    /// A `do` block evaluated in *this* scope, with no frame of its own.
+    ///
+    /// An `if` branch takes no arguments and reads the scope it was written
+    /// in, which is the scope evaluating the `if` -- so a frame for it would
+    /// only clone that scope and spend a second level of the recursion limit
+    /// per level the user wrote. `None` when the block defines a name, which
+    /// does need a scope of its own to define into.
+    pub(crate) fn eval_const_do_block(&self, block: &Block) -> Option<Failable<ValueObj>> {
+        if block.iter().any(|chunk| matches!(chunk, Expr::Def(_))) {
+            return None;
+        }
+        let counter = RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
+        if counter.limit_reached() {
+            return Some(Err((
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::recursion_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    block.loc(),
+                    self.caused_by(),
+                )),
+            )));
+        }
+        let mut last = None;
+        for chunk in block.iter() {
+            match self.eval_const_chunk_ref(chunk) {
+                Ok(val) => last = Some(val),
+                Err(e) => return Some(Err(e)),
+            }
+        }
+        Some(Ok(last?))
     }
 
     /// Inclusion comparison on type objects (`Nat < Int`, `{=} > {x = Int}`, ...).

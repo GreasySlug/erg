@@ -1,0 +1,13 @@
+# `a and b` being false says only that one of them was, so the block that runs
+# when the condition does not hold narrows neither of them.
+both(x: Int or NoneType, y: Int or NoneType): Int =
+    if x != None and y != None:
+        do: x + y
+        do: x.abs() # ERR
+
+# An `if` with no `else` block has nothing to narrow on the negation, and the
+# guard must not outlive it either.
+after(x: Int or NoneType): Int =
+    _ = if x != None:
+        do: x.abs()
+    x.abs() # ERR

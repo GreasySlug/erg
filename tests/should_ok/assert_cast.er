@@ -70,3 +70,26 @@ bar x: C or D =
         do: x.bar
         do: "?"
 assert bar(C.new { .foo = 1; .bar = "bar" }) == "bar"
+
+# The block that runs when a condition does *not* hold is narrowed on its
+# negation. Only the block that runs when it holds used to be narrowed: the
+# negation was taken from the type of the `then` block rather than the condition.
+opt as Int or NoneType = 1
+eq_none = if opt == None, do 0, do opt.abs()
+assert eq_none == 1
+in_none = if opt in NoneType, do 0, do opt.abs()
+assert in_none == 1
+
+int_or_str(x: Int or Str): Str =
+    if x in Int:
+        do: str x
+        do: x
+assert int_or_str("a") == "a"
+
+# `n < 2` is stored as `n <= 2 and n != 2`, so negating it term by term would
+# give `n >= 2 or n == 2` -- true, but not a bound the arithmetic below can use.
+count_down(n: Nat): Nat =
+    if n < 2:
+        do: n
+        do: count_down(n - 2)
+assert count_down(7) == 1

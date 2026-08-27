@@ -1073,6 +1073,11 @@ fn exec_mut_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_narrowing_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/narrowing.er", 0, 2)
+}
+
+#[test]
 fn exec_mut_type_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/mut_type.er", 0, 3)
 }

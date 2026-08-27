@@ -44,7 +44,7 @@ use crate::ty::{
 use crate::context::eval::Substituter;
 use crate::context::instantiate::{ExplicitTypeArg, TyVarCache};
 use crate::context::{
-    ClassDefType, Context, ContextKind, ContextProvider, ControlKind, MethodContext, ModuleContext,
+    ClassDefType, Context, ContextKind, ContextProvider, MethodContext, ModuleContext,
     RegistrationMode, TypeContext,
 };
 use crate::error::{
@@ -1832,6 +1832,8 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         errs: &mut LowerErrors,
     ) -> hir::Args {
         let (pos_args, var_args, kw_args, kw_var, paren) = args.deconstruct();
+        let has_else =
+            pos_args.len() > 2 || kw_args.iter().any(|arg| &arg.keyword.content[..] == "else");
         let mut hir_args = hir::Args::new(
             Vec::with_capacity(pos_args.len()),
             None,
@@ -1862,13 +1864,28 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         }
         let mut hir_pos_args =
             vec![hir::PosArg::new(hir::Expr::Dummy(hir::Dummy::empty())); pos_args.len()];
+        // the condition's type, kept so that the `else` block can be narrowed on
+        // its negation
+        let mut cond_t = None;
         for (nth, (arg, param)) in pos_args {
             match self.lower_expr(arg.expr, param) {
                 Ok(expr) => {
                     // e.g. `if not isinstance(x, Int)`
                     // push {x in not Int}, not {x in Int}
-                    if let Some(kind) = self.module.context.current_control_flow() {
-                        self.push_guard(nth, kind, expr.ref_t());
+                    match self.module.context.current_control_flow() {
+                        Some(kind) if nth == 0 && kind.is_conditional() => {
+                            self.push_guard(expr.ref_t());
+                            cond_t = Some(expr.t());
+                        }
+                        // only once the `then` block is out of the way, and only
+                        // if there is an `else` block to narrow -- a guard nobody
+                        // consumes would go on to narrow whatever came next
+                        Some(kind) if nth == 1 && kind.is_if() && has_else => {
+                            if let Some(cond_t) = cond_t.take() {
+                                self.push_negated_guard(&cond_t);
+                            }
+                        }
+                        _ => {}
                     }
                     hir_pos_args[nth] = hir::PosArg::new(expr);
                 }
@@ -1922,34 +1939,80 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         hir_args
     }
 
+    /// Narrow what a condition says, for the block that runs when it holds.
+    ///
     /// ```erg
     /// x: Int or NoneType
     /// if x != None:
     ///     do: ... # x: Int (x != None)
     ///     do: ... # x: NoneType (complement(x != None))
     /// ```
-    fn push_guard(&mut self, nth: usize, kind: ControlKind, t: &Type) {
+    fn push_guard(&mut self, t: &Type) {
         match t {
-            Type::Guard(guard) => match nth {
-                0 if kind.is_conditional() => {
-                    self.replace_or_push_guard(guard.clone());
-                }
-                1 if kind.is_if() => {
-                    let guard = GuardType::new(
-                        guard.namespace.clone(),
-                        *guard.target.clone(),
-                        self.module.context.complement(&guard.to),
-                    );
-                    self.replace_or_push_guard(guard);
-                }
-                _ => {}
-            },
+            Type::Guard(guard) => {
+                self.replace_or_push_guard(guard.clone());
+            }
             Type::And(tys, _) => {
                 for ty in tys {
-                    self.push_guard(nth, kind, ty);
+                    self.push_guard(ty);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Narrow what a condition says, for the block that runs when it does not hold.
+    ///
+    /// The condition's own type is what carries the narrowing, so this takes it
+    /// rather than the `then` block's -- by the time the `else` block is reached,
+    /// the `then` block has already consumed the guards.
+    fn push_negated_guard(&mut self, cond_t: &Type) {
+        let Some(guard) = Self::negatable_guard(cond_t) else {
+            return;
+        };
+        let guard = GuardType::new(
+            guard.namespace.clone(),
+            *guard.target.clone(),
+            self.module.context.complement(&guard.to),
+        );
+        // Narrowing on a negation is inferred rather than written, so it stays a
+        // best effort: a target that cannot take the cast -- one whose type is
+        // still an inference variable, say -- is simply left alone. Pushing the
+        // guard anyway would report a failed cast the source never asked for.
+        match guard.target.as_ref() {
+            CastTarget::Var { name, .. } | CastTarget::Arg { name, .. } => {
+                let castable = self.module.context.get_var_kv(name).is_some_and(|(_, vi)| {
+                    self.module.context.recover_typarams(&vi.t, &guard).is_ok()
+                });
+                if !castable {
+                    return;
+                }
+            }
+            CastTarget::Expr(_) => {}
+        }
+        self.replace_or_push_guard(guard);
+    }
+
+    /// The one thing a condition guards on, if negating it narrows anything.
+    ///
+    /// `a and b` being false says only that one of them was, so a condition that
+    /// guards on two things narrows neither.
+    fn negatable_guard(t: &Type) -> Option<&GuardType> {
+        match t {
+            Type::Guard(guard) => Some(guard),
+            Type::And(tys, _) => {
+                let mut only = None;
+                for ty in tys {
+                    if let Some(guard) = Self::negatable_guard(ty) {
+                        if only.is_some() {
+                            return None;
+                        }
+                        only = Some(guard);
+                    }
+                }
+                only
+            }
+            _ => None,
         }
     }
 

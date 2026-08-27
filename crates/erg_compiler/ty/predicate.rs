@@ -894,6 +894,31 @@ impl Predicate {
             Self::GreaterEqual { lhs, rhs } => Self::lt(lhs, rhs),
             Self::LessEqual { lhs, rhs } => Self::gt(lhs, rhs),
             Self::NotEqual { lhs, rhs } => Self::eq(lhs, rhs),
+            // `<` and `>` are each stored as a pair of the other two, and
+            // inverting a pair term by term gives `x >= n or x == n` where what
+            // narrowing wants is the `x >= n` the pair came from -- so undo the
+            // pair rather than pushing the negation through it.
+            Self::And(lhs, rhs) => match (*lhs, *rhs) {
+                // NOT(x <= n and x != n) == NOT(x < n) == x >= n
+                (Self::LessEqual { lhs, rhs }, Self::NotEqual { lhs: l2, rhs: r2 })
+                | (Self::NotEqual { lhs: l2, rhs: r2 }, Self::LessEqual { lhs, rhs })
+                    if lhs == l2 && rhs == r2 =>
+                {
+                    Self::ge(lhs, rhs)
+                }
+                // NOT(x >= n and x != n) == NOT(x > n) == x <= n
+                (Self::GreaterEqual { lhs, rhs }, Self::NotEqual { lhs: l2, rhs: r2 })
+                | (Self::NotEqual { lhs: l2, rhs: r2 }, Self::GreaterEqual { lhs, rhs })
+                    if lhs == l2 && rhs == r2 =>
+                {
+                    Self::le(lhs, rhs)
+                }
+                (lhs, rhs) => Self::or(lhs.invert(), rhs.invert()),
+            },
+            Self::Or(preds) => preds
+                .into_iter()
+                .map(Self::invert)
+                .fold(Self::TRUE, Self::and),
             Self::GeneralEqual { lhs, rhs } => Self::GeneralNotEqual { lhs, rhs },
             // NOT(A <= B) = A > B = (A >= B) and (A != B)
             Self::GeneralLessEqual { lhs, rhs } => Self::and(

@@ -40,3 +40,14 @@ IsOdd(N: Int): Bool = if N == 0, do False, do IsEven(N - 1)
 assert IsEven(6)
 assert not IsEven(7)
 
+
+# A `Nat` parameter, which only works if the branch that runs when `N < 2` is
+# false knows that `N >= 2` -- otherwise `N - 1` is an `Int` that may be -1.
+FibNat(N: Nat): Nat =
+    if N < 2:
+        do N
+        do FibNat(N - 1) + FibNat(N - 2)
+assert FibNat(0) == 0
+assert FibNat(10) == 55
+FibNat10: {55} = FibNat(10)
+assert FibNat10 == 55

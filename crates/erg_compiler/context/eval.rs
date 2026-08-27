@@ -1686,43 +1686,6 @@ impl Context {
         } else {
             None
         };
-        // HACK: should avoid cloning
-        let mut lambda_ctx = Context::instant(
-            Str::ever("<lambda>"),
-            self.cfg.clone(),
-            0,
-            self.shared.clone(),
-            self.clone(),
-        );
-        for non_default in non_default_params.iter() {
-            let name = non_default
-                .name()
-                .map(|name| VarName::from_str(name.clone()));
-            let vi = VarInfo::nd_parameter(
-                non_default.typ().clone(),
-                AbsLocation::unknown(),
-                lambda_ctx.name.clone(),
-            );
-            lambda_ctx.params.push((name, vi));
-        }
-        if let Some(var_param) = var_params.as_ref() {
-            let name = var_param.name().map(|name| VarName::from_str(name.clone()));
-            let vi = VarInfo::nd_parameter(
-                var_param.typ().clone(),
-                AbsLocation::unknown(),
-                lambda_ctx.name.clone(),
-            );
-            lambda_ctx.params.push((name, vi));
-        }
-        for default in default_params.iter() {
-            let name = default.name().map(|name| VarName::from_str(name.clone()));
-            let vi = VarInfo::d_parameter(
-                default.typ().clone(),
-                AbsLocation::unknown(),
-                lambda_ctx.name.clone(),
-            );
-            lambda_ctx.params.push((name, vi));
-        }
         // The body is evaluated only to give the lambda a precise (singleton)
         // return type. Doing that for a *nested* lambda would run both branches of
         // an inner `if`, so a recursive const function could never reach its base
@@ -1733,6 +1696,45 @@ impl Context {
         let return_t = if counter.limit_reached() {
             Type::Obj
         } else {
+            // Building this copies the enclosing scope, and a recursive const
+            // function makes two of these per level (one per `if` branch), so
+            // it is built only when there is a body to evaluate in it.
+            let mut lambda_ctx = Context::instant(
+                Str::ever("<lambda>"),
+                self.cfg.clone(),
+                0,
+                self.shared.clone(),
+                self.clone(),
+            );
+            for non_default in non_default_params.iter() {
+                let name = non_default
+                    .name()
+                    .map(|name| VarName::from_str(name.clone()));
+                let vi = VarInfo::nd_parameter(
+                    non_default.typ().clone(),
+                    AbsLocation::unknown(),
+                    lambda_ctx.name.clone(),
+                );
+                lambda_ctx.params.push((name, vi));
+            }
+            if let Some(var_param) = var_params.as_ref() {
+                let name = var_param.name().map(|name| VarName::from_str(name.clone()));
+                let vi = VarInfo::nd_parameter(
+                    var_param.typ().clone(),
+                    AbsLocation::unknown(),
+                    lambda_ctx.name.clone(),
+                );
+                lambda_ctx.params.push((name, vi));
+            }
+            for default in default_params.iter() {
+                let name = default.name().map(|name| VarName::from_str(name.clone()));
+                let vi = VarInfo::d_parameter(
+                    default.typ().clone(),
+                    AbsLocation::unknown(),
+                    lambda_ctx.name.clone(),
+                );
+                lambda_ctx.params.push((name, vi));
+            }
             v_enum(set! {lambda_ctx.eval_const_block(&lambda.body)?})
         };
         drop(counter);

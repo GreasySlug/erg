@@ -1445,13 +1445,18 @@ pub(crate) fn if_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyP
         else_.unwrap_or(ValueObj::None)
     };
     match branch {
-        // A branch is a `do` block: no arguments, and it reads the scope the
-        // `if` is being evaluated in. Calling it would clone that scope into a
-        // frame and spend a second level of the recursion limit for every level
-        // the user wrote -- which is why a const function could only recurse 32
-        // deep out of a limit of 64. A block that defines a name does need a
-        // scope of its own, and falls through to the call below.
-        ValueObj::Subr(ConstSubr::User(user)) if user.params.is_empty() && !user.defines_name() => {
+        // A branch is a `do` block: no arguments, no definition scope of its own,
+        // and it reads the scope the `if` is being evaluated in. Calling it would
+        // clone that scope into a frame and spend a second level of the recursion
+        // limit for every level the user wrote -- which is why a const function
+        // could only recurse 31 deep out of a limit of 64.
+        //
+        // Anything else falls through to the call below: a named subroutine
+        // resolves its names where it was defined rather than here, and a block
+        // that defines a name needs a scope of its own to define into.
+        ValueObj::Subr(ConstSubr::User(user))
+            if user.params.is_empty() && user.def_scope.is_none() && !user.defines_name() =>
+        {
             match ctx.eval_const_do_block(&user.block()) {
                 Ok(val) => Ok(val.into()),
                 Err((_val, mut errs)) => Err(EvalValueError::from(*errs.remove(0).core)),

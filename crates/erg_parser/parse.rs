@@ -1984,9 +1984,19 @@ impl Parser {
                 self.errs.push(err);
                 return Err(());
             }
-            let body = self
-                .try_reduce_block()
-                .map_err(|_| self.stack_dec(fn_name!()))?;
+            // On one line, `do:` is still a lambda, and a lambda binds tighter
+            // than `,` (precedence: `->` > `,`). Reading the body as a block
+            // would let it take a paren-less tuple, so `if c, do: a, do: b` came
+            // out as `if(c, do: (a, do: b))` -- one branch holding both.
+            let body = if self.cur_is(Newline) {
+                self.try_reduce_block()
+                    .map_err(|_| self.stack_dec(fn_name!()))?
+            } else {
+                let expr = self
+                    .try_reduce_expr(false, false, false, false)
+                    .map_err(|_| self.stack_dec(fn_name!()))?;
+                Block::new(vec![expr])
+            };
             self.counter.inc();
             debug_exit_info!(self);
             Ok(Lambda::new(sig, op, body, self.counter))

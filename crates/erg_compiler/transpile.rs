@@ -821,7 +821,14 @@ impl PyScriptGenerator {
                 out.push('(');
                 self.write_expr(*bin.lhs, out);
                 out.push(' ');
-                out.push_str(&bin.op.content);
+                // `is!`/`isnot!` are procedures in Erg -- comparing identity is
+                // observing something the program did not compute -- but Python
+                // spells them without the bang, and `isnot` is two words.
+                out.push_str(match bin.op.kind {
+                    TokenKind::IsOp => "is",
+                    TokenKind::IsNotOp => "is not",
+                    _ => &bin.op.content,
+                });
                 out.push(' ');
                 self.write_expr(*bin.rhs, out);
                 out.push(')');

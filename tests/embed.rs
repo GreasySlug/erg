@@ -119,6 +119,28 @@ print!(2 ** -1, end:=\"\")
     Ok(())
 }
 
+/// `is!`/`isnot!` keep Erg's spelling in the AST; Python has neither bang.
+#[test]
+fn test_transpiler_identity() -> Result<(), ()> {
+    let mut trans = Transpiler::default();
+    let res = trans
+        .transpile(
+            "
+print!(None is! None, end:=\" \")
+print!(1 isnot! 2, end:=\"\")
+"
+            .into(),
+            "exec",
+        )
+        .map_err(|es| {
+            es.errors.write_all_stderr();
+        })?;
+    let res = exec_py_code_with_output(res.object.code(), &[]).map_err(|_| ())?;
+    assert!(res.status.success());
+    assert_eq!(res.stdout, b"True True");
+    Ok(())
+}
+
 #[test]
 fn test_transpiler_embedding4() -> Result<(), ()> {
     if env_python_version().unwrap().minor < Some(10) {

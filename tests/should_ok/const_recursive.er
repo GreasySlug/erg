@@ -15,6 +15,14 @@ Fib(N: Int): Int = if N <= 1, do N, do Fib(N - 1) + Fib(N - 2)
 assert Fib(0) == 0
 assert Fib(1) == 1
 assert Fib(10) == 55
+# Memoized: `Fib(25)` is exponentially many calls of a handful of distinct ones,
+# and each of them used to clone the caller's `Context`. The values still have
+# to be right -- an anonymous subroutine reads the scope it was written in
+# rather than only its arguments, so `if`'s branches are never cached.
+assert Fib(20) == 6765
+assert Fib(25) == 75025
+Fib25: {75025} = Fib(25)
+assert Fib25 == 75025
 
 # tail-recursive shape
 Countdown(N: Int): Int = if N <= 0, do 0, do Countdown(N - 1)
@@ -25,3 +33,4 @@ IsEven(N: Int): Bool = if N == 0, do True, do IsOdd(N - 1)
 IsOdd(N: Int): Bool = if N == 0, do False, do IsEven(N - 1)
 assert IsEven(6)
 assert not IsEven(7)
+

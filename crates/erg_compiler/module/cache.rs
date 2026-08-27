@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::Hash;
+use std::path::{Path, PathBuf};
 
 use erg_common::config::ErgConfig;
 use erg_common::dict::Dict;
@@ -16,6 +17,7 @@ use erg_parser::ast::Module;
 use crate::build_package::CheckStatus;
 use crate::context::ModuleContext;
 use crate::hir::HIR;
+use crate::ty::ValueObj;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModId(usize);
@@ -415,6 +417,54 @@ impl SharedModuleCache {
 pub struct GeneralizationResult {
     pub impl_trait: bool,
     pub is_subtype: bool,
+}
+
+/// A call of a user-defined const function, by everything that decides its
+/// result: which module defined it, its name (const names cannot be shadowed,
+/// so the two identify it) and the arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConstCallKey {
+    pub module: PathBuf,
+    pub name: Str,
+    pub pos_args: Vec<ValueObj>,
+    /// sorted by name, because `Dict`'s order is a hash order
+    pub kw_args: Vec<(Str, ValueObj)>,
+}
+
+/// Results of user-defined const calls.
+///
+/// A const function is pure -- that is what makes it const -- so the same
+/// arguments give the same value, and `Fib(20)` is otherwise exponentially many
+/// evaluations of the same handful of calls. Each one clones the caller's
+/// `Context`, which costs on the order of a millisecond and grows with the
+/// module, so this is not a small constant factor.
+#[derive(Debug, Clone, Default)]
+pub struct SharedConstCallCache(Shared<Dict<ConstCallKey, ValueObj>>);
+
+/// The key is built from values, never mutated in place.
+impl erg_common::traits::Immutable for ConstCallKey {}
+
+impl SharedConstCallCache {
+    pub fn new() -> Self {
+        Self(Shared::new(Dict::new()))
+    }
+
+    pub fn get(&self, key: &ConstCallKey) -> Option<ValueObj> {
+        self.0.borrow().get(key).cloned()
+    }
+
+    pub fn insert(&self, key: ConstCallKey, value: ValueObj) {
+        self.0.borrow_mut().insert(key, value);
+    }
+
+    pub fn initialize(&self) {
+        self.0.borrow_mut().clear();
+    }
+
+    /// Drop what a module defined, for when it is recompiled.
+    pub fn remove_module(&self, path: &Path) {
+        self.0.borrow_mut().retain(|key, _| key.module != path);
+    }
 }
 
 #[derive(Debug, Clone, Default)]

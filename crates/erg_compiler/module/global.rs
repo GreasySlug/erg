@@ -5,7 +5,9 @@ use erg_common::spawn::safe_yield;
 
 use crate::context::{Context, ModuleContext};
 
-use super::cache::{ModuleEntry, SharedGeneralizationCache, SharedModuleCache};
+use super::cache::{
+    ModuleEntry, SharedConstCallCache, SharedGeneralizationCache, SharedModuleCache,
+};
 use super::errors::{SharedCompileErrors, SharedCompileWarnings};
 use super::graph::SharedModuleGraph;
 use super::impls::SharedTraitImpls;
@@ -35,6 +37,7 @@ pub struct SharedCompilerResource {
     pub errors: SharedCompileErrors,
     pub warns: SharedCompileWarnings,
     pub gen_cache: SharedGeneralizationCache,
+    pub const_calls: SharedConstCallCache,
 }
 
 impl SharedCompilerResource {
@@ -52,6 +55,7 @@ impl SharedCompilerResource {
             errors: SharedCompileErrors::new(),
             warns: SharedCompileWarnings::new(),
             gen_cache: SharedGeneralizationCache::new(),
+            const_calls: SharedConstCallCache::new(),
         };
         Context::init_builtins(cfg, self_.clone());
         self_
@@ -73,6 +77,7 @@ impl SharedCompilerResource {
         self.promises.initialize();
         self.errors.clear();
         self.warns.clear();
+        self.const_calls.initialize();
     }
 
     /// Clear all information about the module.
@@ -82,6 +87,9 @@ impl SharedCompilerResource {
         for child in self.graph.children(path) {
             self.clear(&child);
         }
+        // the module's const functions are about to be redefined, so what they
+        // returned last time says nothing about what they will return now
+        self.const_calls.remove_module(path);
         try_forever(|| {
             if let Some(ent) = self.mod_cache.try_remove(path)? {
                 old = Some(ent);

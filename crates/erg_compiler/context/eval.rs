@@ -20,6 +20,7 @@ use erg_parser::ast::*;
 use erg_parser::desugar::Desugarer;
 use erg_parser::token::{Token, TokenKind};
 
+use crate::module::ConstCallKey;
 use crate::ty::constructors::{
     bounded, callable, dict_t, func, guard, interval, list_t, mono, mono_q, named_free_var, poly,
     proj, proj_call, ref_, ref_mut, refinement, set_t, subr_t, subtypeof, tp_enum, try_v_enum,
@@ -996,6 +997,13 @@ impl Context {
     ) -> Failable<TyParam> {
         match subr {
             ConstSubr::User(user) => {
+                let key = self.const_call_key(&user, &args);
+                if let Some(cached) = key
+                    .as_ref()
+                    .and_then(|key| self.shared.as_ref()?.const_calls.get(key))
+                {
+                    return Ok(TyParam::Value(cached));
+                }
                 // Guard against infinitely recursive constant evaluation,
                 // e.g. `F n = F n; X = F 1` (self- or mutually-recursive const functions)
                 set_recursion_limit!(
@@ -1084,6 +1092,13 @@ impl Context {
                     }
                 };
                 if errs.is_empty() {
+                    // only a call that produced a value: an error depends on the
+                    // diagnostics around it, not on the arguments alone
+                    if let (Some(key), Some(shared), TyParam::Value(val)) =
+                        (key, self.shared.as_ref(), &tp)
+                    {
+                        shared.const_calls.insert(key, val.clone());
+                    }
                     Ok(tp)
                 } else {
                     Err((tp, errs))
@@ -1096,6 +1111,38 @@ impl Context {
                 .call(args, self)
                 .map_err(|e| self.const_call_error(e, loc.loc())),
         }
+    }
+
+    /// What identifies this call for [`SharedConstCallCache`], or `None` when it
+    /// must not be cached.
+    ///
+    /// A const function is pure and a const name cannot be shadowed, so the
+    /// module it was defined in, its name and the arguments decide the result --
+    /// with one exception: a quantified signature means the body can read type
+    /// variables bound by the caller, which are not part of the arguments.
+    fn const_call_key(&self, user: &UserConstSubr, args: &ValueArgs) -> Option<ConstCallKey> {
+        if matches!(user.sig_t, Type::Quantified(_)) {
+            return None;
+        }
+        // A synthetic name is not a const definition: `<lambda>` is the body of
+        // an `if` branch, which reads the scope it was written in and takes no
+        // arguments, so every one of them would share a key.
+        if user.name.starts_with('<') {
+            return None;
+        }
+        let mut kw_args = args
+            .kw_args
+            .iter()
+            .map(|(name, val)| (name.clone(), val.clone()))
+            .collect::<Vec<_>>();
+        // `Dict` iterates in hash order, which is not the same twice
+        kw_args.sort_by(|(l, _), (r, _)| l.cmp(r));
+        Some(ConstCallKey {
+            module: self.module_path().to_path_buf(),
+            name: user.name.clone(),
+            pos_args: args.pos_args.clone(),
+            kw_args,
+        })
     }
 
     /// A const function's failure, placed at `loc`.

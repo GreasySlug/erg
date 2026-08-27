@@ -1,0 +1,12 @@
+# `Inherit`ing a Python class whose `__init__` takes only default parameters makes
+# the compiler generate `super(type(self), self).__init__(*args, **kwargs)`. 3.13
+# moved the slot `CALL_FUNCTION_EX` reserves for `self` to after the callable, and
+# without it the keyword dict landed in the callable slot.
+{main!; TestCase!} = pyimport "unittest"
+
+Test! = Inherit TestCase!
+Test!.
+    'test_one' self =
+        self.assertEqual 1, 1
+
+main!()

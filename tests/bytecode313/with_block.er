@@ -1,0 +1,13 @@
+# 3.13 renumbered every opcode and this sequence was written with 3.11's values,
+# so CPython segfaulted on it; 3.14 dropped BEFORE_WITH for LOAD_SPECIAL.
+C = Class()
+C|<: ContextManager|.
+    __enter__ self = self
+    __exit__ self, _, _, _ = False
+
+r = !0
+with! C.new(), _c =>
+    r.inc!()
+assert r == 1
+
+print! "ok"

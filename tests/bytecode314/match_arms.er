@@ -1,0 +1,15 @@
+# A guard that fails jumps to the next arm, which begins by storing the tuple in
+# the arm's own parameter. 3.13 gave POP_JUMP_IF_FALSE an inline cache, and the
+# jump skipped that store: `NameError: name '%v_desugar_5' is not defined`.
+g(0, x) = x
+g(n: Int, x) = x + n
+
+assert g(0, 10) == 10
+assert g(2, 10) == 12
+
+iterate(_, 0, x) = x
+iterate(f, n: Int, x) = iterate f, n - 1, f x
+
+assert iterate((x -> x + 1), 5, 0) == 5
+
+print! "ok"

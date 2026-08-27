@@ -1,6 +1,8 @@
 use erg_common::config::ErgConfig;
 use erg_common::dict::Dict;
+use erg_common::levenshtein::get_similar_name;
 use erg_common::log;
+use erg_common::switch_lang;
 use erg_common::traits::{Locational, Stream};
 use erg_common::Str;
 
@@ -84,18 +86,8 @@ impl ASTLinker {
                             if let Some(ident) = spec.ident() {
                                 self.link_methods(ident.into(), &mut new, methods, mode)
                             } else {
-                                let similar_name = self
-                                    .def_root_pos_map
-                                    .keys()
-                                    .fold("".to_string(), |acc, key| acc + &key[..] + ",");
-                                self.errs.push(TyCheckError::no_var_error(
-                                    self.cfg.input.clone(),
-                                    line!() as usize,
-                                    methods.class.loc(),
-                                    "".into(),
-                                    &methods.class.to_string(),
-                                    Some(&Str::from(similar_name)),
-                                ));
+                                let name = methods.class.to_string();
+                                self.errs.push(self.undefined_class_error(&name, &methods));
                             }
                         }
                         other => todo!("{other}"),
@@ -179,18 +171,36 @@ impl ASTLinker {
         } else if mode == "declare" {
             self.flatten_method_decls(new, methods);
         } else {
-            let similar_name = self
-                .def_root_pos_map
-                .keys()
-                .fold("".to_string(), |acc, key| acc + &key[..] + ",");
-            self.errs.push(TyCheckError::no_var_error(
-                self.cfg.input.clone(),
-                line!() as usize,
-                methods.class.loc(),
-                "".into(),
-                &name,
-                Some(&Str::from(similar_name)),
-            ));
+            self.errs.push(self.undefined_class_error(&name, &methods));
         }
+    }
+
+    /// The class a method block names is not defined in this chunk.
+    ///
+    /// A method block is attached to its class here, while the AST is still
+    /// whole, so the definition has to be in the same chunk -- which in the
+    /// REPL means the same cell. The hint says so, because the class may well
+    /// exist and simply have been defined a cell ago.
+    fn undefined_class_error(&self, name: &str, methods: &Methods) -> TyCheckError {
+        let similar = get_similar_name(self.def_root_pos_map.keys().map(|k| &k[..]), name);
+        let mut err = TyCheckError::no_var_error(
+            self.cfg.input.clone(),
+            line!() as usize,
+            methods.class.loc(),
+            "".into(),
+            name,
+            similar,
+        );
+        if similar.is_none() {
+            if let Some(sub) = err.core.sub_messages.first_mut() {
+                sub.set_hint(switch_lang!(
+                    "japanese" => format!("`{name}` のメソッドは `{name}` の定義と同じチャンク（REPL では同じセル）に書いてください"),
+                    "simplified_chinese" => format!("`{name}` 的方法必须与 `{name}` 的定义写在同一块中（在 REPL 中即同一单元格）"),
+                    "traditional_chinese" => format!("`{name}` 的方法必須與 `{name}` 的定義寫在同一塊中（在 REPL 中即同一儲存格）"),
+                    "english" => format!("methods of `{name}` must be written in the same chunk as its definition (in the REPL, the same cell)"),
+                ));
+            }
+        }
+        err
     }
 }

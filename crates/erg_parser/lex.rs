@@ -235,7 +235,7 @@ impl Lexer /*<'a>*/ {
     /// reaches them. Only tools that have to reproduce the source -- `erg fmt`
     /// -- should turn this on.
     ///
-    /// ```ignore
+    /// ```text
     /// let ts = Lexer::from_str(src).keep_comments().lex()?;
     /// ```
     pub fn keep_comments(mut self) -> Self {

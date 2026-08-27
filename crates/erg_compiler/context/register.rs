@@ -1829,8 +1829,8 @@ impl Context {
                             }
                         }
                     };
-                    // before `grow`, which replaces `self.kind` with the
-                    // definition's own
+                    // before `grow`, after which `self` is the definition's own
+                    // scope rather than the one it is being defined in
                     let per_call = self.kind.is_subr() && self.has_const_param();
                     self.grow(__name__, kind, vis, tv_cache);
                     let (obj, const_t) = match self.eval_const_block(&def.body.block) {

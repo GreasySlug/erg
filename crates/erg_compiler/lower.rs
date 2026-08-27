@@ -2634,6 +2634,10 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
         } else {
             Str::ever("<lambda>")
         };
+        let this_def = def.sig.ident().and_then(|ident| {
+            (ident.name.loc() != Location::Unknown)
+                .then(|| self.module.context.absolutize(ident.name.loc()))
+        });
         if ERG_MODE && (&name[..] == "module" || &name[..] == "global") {
             let err = LowerError::shadow_special_namespace_error(
                 self.cfg.input.clone(),
@@ -2643,12 +2647,15 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 &name,
             );
             errors.push(err);
-        } else if self
-            .module
-            .context
-            .registered_info(&name, def.sig.is_const())
-            .is_some()
-            && def.sig.vis().is_private()
+        } else if def.sig.vis().is_private()
+            && self
+                .module
+                .context
+                .registered_info(&name, def.sig.is_const())
+                // A constant registers itself before its body is lowered, so the
+                // name being taken is not by itself a reassignment -- what it has
+                // to be is a *different* definition than this one.
+                .is_some_and(|(_, vi)| this_def.as_ref() != Some(&vi.def_loc))
         {
             let err = LowerError::reassign_error(
                 self.cfg.input.clone(),

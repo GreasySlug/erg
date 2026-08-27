@@ -394,6 +394,20 @@ impl Parser {
         self.tokens.first()
     }
 
+    /// Whether the source ends here, with only the indentation the lexer has to
+    /// close left in between.
+    ///
+    /// `cur_is(EOF)` is not enough after an operator that introduces a block:
+    /// `f x =` at the top level is followed by `EOF` directly, but the same
+    /// thing one block in is followed by `Dedent, EOF`, and the REPL needs both
+    /// to say "waiting for the block" rather than "syntax error".
+    fn at_eof(&self) -> bool {
+        self.tokens
+            .iter()
+            .find(|tk| !tk.is(Newline) && !tk.is(Dedent))
+            .is_none_or(|tk| tk.is(EOF))
+    }
+
     pub fn peek_kind(&self) -> Option<TokenKind> {
         self.peek().map(|tok| tok.kind)
     }
@@ -1965,7 +1979,7 @@ impl Parser {
         };
         if self.cur_is(Colon) {
             self.lpop();
-            if self.cur_is(EOF) {
+            if self.at_eof() {
                 let err = ParseError::expect_next_line_error(line!() as usize, op.loc(), "Lambda");
                 self.errs.push(err);
                 return Err(());
@@ -2245,7 +2259,7 @@ impl Parser {
                 }
                 Some(op) if ctx.chunk && op.category_is(TC::DefOp) => {
                     let op = self.lpop();
-                    if self.cur_is(EOF) {
+                    if self.at_eof() {
                         let err = ParseError::expect_next_line_error(
                             line!() as usize,
                             op.loc(),
@@ -2292,7 +2306,7 @@ impl Parser {
                 }
                 Some(op) if op.category_is(TC::LambdaOp) => {
                     let op = self.lpop();
-                    if self.cur_is(EOF) {
+                    if self.at_eof() {
                         let err = ParseError::expect_next_line_error(
                             line!() as usize,
                             op.loc(),
@@ -2339,7 +2353,7 @@ impl Parser {
                         break;
                     }
                     let op = self.lpop();
-                    if self.cur_is(EOF) {
+                    if self.at_eof() {
                         let err = ParseError::expect_next_line_error(
                             line!() as usize,
                             op.loc(),

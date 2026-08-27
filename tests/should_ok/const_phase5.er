@@ -1,0 +1,44 @@
+# Folds added in phase 5 of docs/const-eval-plan.md. The annotations are
+# singleton types, so each only holds if the expression folded to that value;
+# `tests/const_diff.rs` separately checks each against its run-time value.
+
+# `Bool` is a `Nat` in both languages
+BoolAdd: {2} = True + True
+BoolMul: {3} = True * 3
+BoolSub: {-1} = False - True
+assert BoolAdd == 2
+assert BoolMul == 3
+assert BoolSub == -1
+
+# strings order lexicographically; only `==` used to fold
+StrLt: {True} = "a" < "b"
+StrGe: {False} = "abc" >= "abd"
+assert StrLt
+assert StrGe == False
+
+# element-wise, and `None` when a pair cannot be decided rather than a guess
+ListEq: {True} = [1] == [1]
+ListNe: {True} = [1] != [2]
+LenDiff: {False} = [1] == [1, 2]
+TupleEq: {True} = (1, "a") == (1, "a")
+NoneEq: {True} = None == None
+assert ListEq
+assert ListNe
+assert LenDiff == False
+assert TupleEq
+assert NoneEq
+
+# type predicates: the object's class is the one the emitted program builds, so
+# `isinstance(-1, Nat)` is false here exactly as it is at run time
+IsInt: {True} = isinstance(1, Int)
+IsNat: {False} = isinstance(-1, Nat)
+IsAny: {True} = isinstance(1, (Str, Int))
+SubNat: {True} = issubclass(Nat, Int)
+SubInt: {False} = issubclass(Int, Nat)
+assert IsInt
+assert IsNat == False
+assert IsAny
+assert SubNat
+assert SubInt == False
+
+print! "OK"

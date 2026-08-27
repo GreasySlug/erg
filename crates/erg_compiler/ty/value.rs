@@ -2117,6 +2117,16 @@ impl ValueObj {
         Self::ratio(n, d)
     }
 
+    /// `Bool` as the `Nat` it is: `Bool <: Nat`, and CPython agrees
+    /// (`True + True == 2`). The arithmetic below is written for the numeric
+    /// variants only, so a `Bool` would otherwise stop the fold.
+    fn widen_bool(self) -> Self {
+        match self {
+            Self::Bool(b) => Self::Nat(b as u64),
+            other => other,
+        }
+    }
+
     // REVIEW: allow_divergenceオプションを付けるべきか?
     pub fn try_add(self, other: Self) -> Option<Self> {
         if let Some(v) = self.try_ratio_binop(&other, |(a, b), (c, d)| {
@@ -2127,7 +2137,7 @@ impl ValueObj {
         }) {
             return Some(v);
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 + r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 + r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l + r)),
@@ -2159,7 +2169,7 @@ impl ValueObj {
         }) {
             return Some(v);
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 - r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l - r)),
@@ -2188,7 +2198,7 @@ impl ValueObj {
         }) {
             return Some(v);
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(l as i128 * r as i128),
             (Self::Nat(l), Self::Nat(r)) => Self::from_i128(l as i128 * r as i128),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l * r)),
@@ -2222,7 +2232,7 @@ impl ValueObj {
                 return Some(v);
             }
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Some(Self::from(l as f64 / r as f64)),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::from(l as f64 / r as f64)),
             (Self::Float(l), Self::Float(r)) => Some(Self::Float(l / r)),
@@ -2247,7 +2257,7 @@ impl ValueObj {
             let _ = d;
             return Self::from_i128(n);
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_div(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l / r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from((l / r).floor())),
@@ -2287,7 +2297,7 @@ impl ValueObj {
                 };
             }
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => {
                 Self::from_i128(int_pow(l as i128, i32::try_from(r).ok()?)?)
             }
@@ -2323,7 +2333,7 @@ impl ValueObj {
                 b.checked_mul(d)?,
             );
         }
-        match (self, other) {
+        match (self.widen_bool(), other.widen_bool()) {
             (Self::Int(l), Self::Int(r)) => Self::from_i128(floor_mod(l as i128, r as i128)?),
             (Self::Nat(l), Self::Nat(r)) => Some(Self::Nat(l % r)),
             (Self::Float(l), Self::Float(r)) => Some(Self::from(floor_mod_f64(*l, *r))),
@@ -2338,7 +2348,10 @@ impl ValueObj {
     }
 
     pub fn try_gt(self, other: Self) -> Option<Self> {
-        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+        if matches!(
+            (&self, &other),
+            (Self::Ratio(..), _) | (_, Self::Ratio(..)) | (Self::Str(_), Self::Str(_))
+        ) {
             return self.try_cmp(&other).map(|ord| Self::from(ord.is_gt()));
         }
         match (self, other) {
@@ -2365,7 +2378,10 @@ impl ValueObj {
     }
 
     pub fn try_ge(self, other: Self) -> Option<Self> {
-        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+        if matches!(
+            (&self, &other),
+            (Self::Ratio(..), _) | (_, Self::Ratio(..)) | (Self::Str(_), Self::Str(_))
+        ) {
             return self.try_cmp(&other).map(|ord| Self::from(ord.is_ge()));
         }
         match (self, other) {
@@ -2392,7 +2408,10 @@ impl ValueObj {
     }
 
     pub fn try_lt(self, other: Self) -> Option<Self> {
-        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+        if matches!(
+            (&self, &other),
+            (Self::Ratio(..), _) | (_, Self::Ratio(..)) | (Self::Str(_), Self::Str(_))
+        ) {
             return self.try_cmp(&other).map(|ord| Self::from(ord.is_lt()));
         }
         match (self, other) {
@@ -2419,7 +2438,10 @@ impl ValueObj {
     }
 
     pub fn try_le(self, other: Self) -> Option<Self> {
-        if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
+        if matches!(
+            (&self, &other),
+            (Self::Ratio(..), _) | (_, Self::Ratio(..)) | (Self::Str(_), Self::Str(_))
+        ) {
             return self.try_cmp(&other).map(|ord| Self::from(ord.is_le()));
         }
         match (self, other) {
@@ -2445,6 +2467,23 @@ impl ValueObj {
         }
     }
 
+    /// Element-wise equality for a sequence. `None` as soon as one pair cannot
+    /// be decided, so `[1] == [True]` -- which CPython says is true, and the
+    /// arms below do not cover -- stays unfolded rather than folding to false.
+    fn try_elems_eq(l: &[ValueObj], r: &[ValueObj]) -> Option<bool> {
+        if l.len() != r.len() {
+            return Some(false);
+        }
+        for (a, b) in l.iter().zip(r.iter()) {
+            match a.clone().try_eq(b.clone()) {
+                Some(Self::Bool(true)) => {}
+                Some(Self::Bool(false)) => return Some(false),
+                _ => return None,
+            }
+        }
+        Some(true)
+    }
+
     pub fn try_eq(self, other: Self) -> Option<Self> {
         if matches!((&self, &other), (Self::Ratio(..), _) | (_, Self::Ratio(..))) {
             return self.try_cmp(&other).map(|ord| Self::from(ord.is_eq()));
@@ -2463,7 +2502,15 @@ impl ValueObj {
             (Self::Bool(l), Self::Bool(r)) => Some(Self::from(l == r)),
             (Self::Type(l), Self::Type(r)) => Some(Self::from(l == r)),
             (Self::Inf, Self::Inf) | (Self::NegInf, Self::NegInf) => Some(Self::Bool(true)),
-            // TODO:
+            (Self::List(l), Self::List(r)) | (Self::Tuple(l), Self::Tuple(r)) => {
+                Self::try_elems_eq(&l, &r).map(Self::from)
+            }
+            (Self::None, Self::None)
+            | (Self::Ellipsis, Self::Ellipsis)
+            | (Self::NotImplemented, Self::NotImplemented) => Some(Self::Bool(true)),
+            // `Set` and `Dict` are deliberately absent: CPython hashes `1`, `1.0`
+            // and `True` alike, so `{1} == {True}` is true there and this
+            // representation cannot say so.
             _ => None,
         }
     }
@@ -2486,6 +2533,12 @@ impl ValueObj {
             (Self::Bool(l), Self::Bool(r)) => Some(Self::from(l != r)),
             (Self::Type(l), Self::Type(r)) => Some(Self::from(l != r)),
             (Self::Inf, Self::Inf) | (Self::NegInf, Self::NegInf) => Some(Self::Bool(false)),
+            (Self::List(l), Self::List(r)) | (Self::Tuple(l), Self::Tuple(r)) => {
+                Self::try_elems_eq(&l, &r).map(|eq| Self::from(!eq))
+            }
+            (Self::None, Self::None)
+            | (Self::Ellipsis, Self::Ellipsis)
+            | (Self::NotImplemented, Self::NotImplemented) => Some(Self::Bool(false)),
             _ => None,
         }
     }

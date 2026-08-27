@@ -211,6 +211,12 @@ impl Context {
             None,
             Bool,
         );
+        let isinstance_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ISINSTANCE,
+            isinstance_func,
+            t_isinstance.clone(),
+            None,
+        )));
         let t_issubclass = nd_func(
             vec![
                 kw(KW_SUBCLASS, ClassType),
@@ -222,6 +228,12 @@ impl Context {
             None,
             Bool,
         );
+        let issubclass_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_ISSUBCLASS,
+            issubclass_func,
+            t_issubclass.clone(),
+            None,
+        )));
         let I = mono_q(TY_I, subtypeof(poly(ITERABLE, vec![ty_tp(T.clone())])));
         let t_iter = nd_func(vec![kw(KW_OBJECT, I.clone())], None, proj(I, ITERATOR)).quantify();
         // Python : |L|(seq: Structural({ .__len__ = (L) -> Nat })) -> Nat
@@ -686,19 +698,21 @@ impl Context {
             Some(FUNC_HEX),
             None,
         );
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_ISINSTANCE,
-            t_isinstance,
-            Immutable,
             vis.clone(),
+            Some(t_isinstance),
+            isinstance_,
             Some(FUNC_ISINSTANCE),
+            None,
         );
-        self.register_builtin_py_impl(
+        self.register_py_builtin_const(
             FUNC_ISSUBCLASS,
-            t_issubclass,
-            Immutable,
             vis.clone(),
+            Some(t_issubclass),
+            issubclass_,
             Some(FUNC_ISSUBCLASS),
+            None,
         );
         self.register_builtin_py_impl(FUNC_ITER, t_iter, Immutable, vis.clone(), Some(FUNC_ITER));
         self.register_py_builtin_const(

@@ -740,6 +740,57 @@ fn _list_scalar_type(mut typ: Type, ctx: &Context) -> Result<Type, String> {
     }
 }
 
+/// `classinfo` as the list of classes it stands for: one class, or a tuple of
+/// them, as CPython's `isinstance`/`issubclass` accept.
+fn class_infos(value: ValueObj, ctx: &Context) -> Option<Vec<Type>> {
+    match value {
+        ValueObj::Tuple(ts) => ts
+            .iter()
+            .map(|t| ctx.convert_value_into_type(t.clone()).ok())
+            .collect(),
+        other => ctx.convert_value_into_type(other).ok().map(|t| vec![t]),
+    }
+}
+
+/// `isinstance(object, classinfo)`.
+///
+/// The object's class is the class the emitted program builds, so this asks the
+/// same question CPython will: `isinstance(-1, Nat)` is false both here (`Int`
+/// is not a subtype of `Nat`) and there (`Int` does not inherit `Nat` in
+/// `_erg_nat.py`).
+pub(crate) fn isinstance_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let object = args
+        .remove_left_or_key("object")
+        .ok_or_else(|| not_passed("object"))?;
+    let classinfo = args
+        .remove_left_or_key("classinfo")
+        .ok_or_else(|| not_passed("classinfo"))?;
+    let Some(classes) = class_infos(classinfo.clone(), ctx) else {
+        return Err(type_mismatch("ClassType", classinfo, "classinfo"));
+    };
+    let class = object.class();
+    let is = classes.iter().any(|t| ctx.subtype_of(&class, t));
+    Ok(ValueObj::Bool(is).into())
+}
+
+/// `issubclass(subclass, classinfo)`.
+pub(crate) fn issubclass_func(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
+    let subclass = args
+        .remove_left_or_key("subclass")
+        .ok_or_else(|| not_passed("subclass"))?;
+    let classinfo = args
+        .remove_left_or_key("classinfo")
+        .ok_or_else(|| not_passed("classinfo"))?;
+    let Ok(sub) = ctx.convert_value_into_type(subclass.clone()) else {
+        return Err(type_mismatch("ClassType", subclass, "subclass"));
+    };
+    let Some(classes) = class_infos(classinfo.clone(), ctx) else {
+        return Err(type_mismatch("ClassType", classinfo, "classinfo"));
+    };
+    let is = classes.iter().any(|t| ctx.subtype_of(&sub, t));
+    Ok(ValueObj::Bool(is).into())
+}
+
 pub(crate) fn list_scalar_type(mut args: ValueArgs, ctx: &Context) -> EvalValueResult<TyParam> {
     let slf = args
         .remove_left_or_key("Self")

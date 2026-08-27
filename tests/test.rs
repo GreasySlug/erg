@@ -457,6 +457,11 @@ fn exec_const_op() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_phase5() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_phase5.er", 0)
+}
+
+#[test]
 fn exec_const_recursive() -> Result<(), ()> {
     expect_success("tests/should_ok/const_recursive.er", 0)
 }

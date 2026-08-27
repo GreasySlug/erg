@@ -1,6 +1,7 @@
 // (type) getters & validators
 use std::option::Option; // conflicting to Type::Option
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use erg_common::consts::{DEBUG_MODE, ERG_MODE, PYTHON_MODE};
 use erg_common::error::{ErrorCore, Location, SubMessage};
@@ -4446,7 +4447,7 @@ impl Context {
             Some(ctx)
         } else if let Some(outer) = self.outer.as_mut() {
             // builtins cannot be got as mutable
-            outer.rec_get_mut_mono_type(name)
+            Arc::make_mut(outer).rec_get_mut_mono_type(name)
         } else {
             None
         }
@@ -4458,7 +4459,7 @@ impl Context {
         if let Some(ctx) = self.poly_types.get_mut(name) {
             Some(ctx)
         } else if let Some(outer) = self.outer.as_mut() {
-            outer.rec_get_mut_poly_type(name)
+            Arc::make_mut(outer).rec_get_mut_poly_type(name)
         } else {
             None
         }
@@ -4472,7 +4473,7 @@ impl Context {
         } else if let Some(ctx) = self.poly_types.get_mut(name) {
             Some(ctx)
         } else if let Some(outer) = self.outer.as_mut() {
-            outer.rec_get_mut_type(name)
+            Arc::make_mut(outer).rec_get_mut_type(name)
         } else {
             None
         }

@@ -2902,7 +2902,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                         ..existing_vi.unwrap_or_default()
                     }
                 } else {
-                    match self.module.context.outer.as_mut().unwrap().assign_var_sig(
+                    match self.module.context.get_mut_outer().unwrap().assign_var_sig(
                         &sig,
                         &found_body_t,
                         body.id,
@@ -2971,7 +2971,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 } else {
                     found_body_t.clone()
                 };
-                if let Err(errs) = self.module.context.outer.as_mut().unwrap().assign_var_sig(
+                if let Err(errs) = self.module.context.get_mut_outer().unwrap().assign_var_sig(
                     &sig,
                     &found_body_t,
                     ast::DefId(0),
@@ -3071,8 +3071,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 if let Err(es) = self
                     .module
                     .context
-                    .outer
-                    .as_mut()
+                    .get_mut_outer()
                     .unwrap()
                     .fake_subr_assign(&sig.ident, &sig.decorators, Type::Failure)
                 {
@@ -3169,7 +3168,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 for err_t in propagated.iter() {
                     found_body_t = self.module.context.union(&found_body_t, err_t);
                 }
-                let vi = match self.module.context.outer.as_mut().unwrap().assign_subr(
+                let vi = match self.module.context.get_mut_outer().unwrap().assign_subr(
                     &sig,
                     body.id,
                     &params,
@@ -3222,7 +3221,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             Err((block, errs)) => {
                 errors.extend(errs);
                 let found_body_t = self.module.context.squash_tyvar(block.t());
-                let vi = match self.module.context.outer.as_mut().unwrap().assign_subr(
+                let vi = match self.module.context.get_mut_outer().unwrap().assign_subr(
                     &sig,
                     ast::DefId(0),
                     &params,

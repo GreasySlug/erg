@@ -20,6 +20,7 @@ use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::option::Option; // conflicting to Type::Option
 use std::path::Path;
+use std::sync::Arc;
 
 use erg_common::config::ErgConfig;
 use erg_common::consts::DEBUG_MODE;
@@ -630,7 +631,13 @@ pub struct Context {
     pub(crate) cfg: ErgConfig,
     pub(crate) preds: Vec<Predicate>,
     /// for looking up the parent scope
-    pub(crate) outer: Option<Box<Context>>,
+    ///
+    /// `Arc` rather than `Box` so that a compile-time frame can share the copy
+    /// of the defining scope it reads with the frames it calls -- a recursion
+    /// `N` deep used to make `N` copies of the module. Every writer goes through
+    /// [`Context::get_mut_outer`], which copies on write, so the lowering scope
+    /// stack (where the parent is never shared) behaves exactly as before.
+    pub(crate) outer: Option<Arc<Context>>,
     // e.g. { "Add": [ConstObjTemplate::App("Self", vec![])])
     pub(crate) const_param_defaults: Dict<Str, Vec<ConstTemplate>>,
     // Superclasses/supertraits by a patch are not included here
@@ -906,7 +913,7 @@ impl Context {
             cfg,
             kind,
             preds: vec![],
-            outer: outer.map(Box::new),
+            outer: outer.map(Arc::new),
             super_classes: vec![],
             super_traits: vec![],
             methods_list: vec![],
@@ -1253,6 +1260,32 @@ impl Context {
         )
     }
 
+    /// A scope whose parent it shares rather than owns.
+    ///
+    /// Used for a compile-time frame: what a frame reads is a copy of the scope
+    /// its subroutine was defined in, and every frame of one call tree reads the
+    /// same copy.
+    pub(crate) fn instant_in(
+        name: Str,
+        cfg: ErgConfig,
+        capacity: usize,
+        shared: Option<SharedCompilerResource>,
+        outer: Arc<Context>,
+    ) -> Self {
+        let mut ctx = Self::with_capacity(
+            name,
+            cfg,
+            ContextKind::Instant,
+            vec![],
+            None,
+            shared,
+            capacity,
+            Self::TOP_LEVEL,
+        );
+        ctx.outer = Some(outer);
+        ctx
+    }
+
     pub(crate) fn module_path(&self) -> &Path {
         self.cfg.input.path()
     }
@@ -1268,7 +1301,7 @@ impl Context {
 
     /// use `get_outer_scope` for getting the outer scope
     pub(crate) fn get_outer(&self) -> Option<&Context> {
-        self.outer.as_ref().map(|x| x.as_ref())
+        self.outer.as_deref()
     }
 
     /// If both `self` and `outer` are modules, returns `None` because the outer namespace is different from the current context
@@ -1287,7 +1320,7 @@ impl Context {
     }
 
     pub(crate) fn get_mut_outer(&mut self) -> Option<&mut Context> {
-        self.outer.as_mut().map(|x| x.as_mut())
+        self.outer.as_mut().map(Arc::make_mut)
     }
 
     pub(crate) fn impl_of(&self) -> Option<Type> {
@@ -1416,7 +1449,7 @@ impl Context {
             format!("{parent}::{name}", parent = self.name)
         };
         log!(info "{}: current namespace: {name}", fn_name!());
-        self.outer = Some(Box::new(mem::take(self)));
+        self.outer = Some(Arc::new(mem::take(self)));
         // self.level += 1;
         self.cfg = self.get_outer().unwrap().cfg.clone();
         self.shared = self.get_outer().unwrap().shared.clone();
@@ -1429,7 +1462,7 @@ impl Context {
     pub(crate) fn replace(&mut self, new: Self) {
         let old = mem::take(self);
         *self = new;
-        self.outer = Some(Box::new(old));
+        self.outer = Some(Arc::new(old));
         self.cfg = self.get_outer().unwrap().cfg.clone();
         self.shared = self.get_outer().unwrap().shared.clone();
         self.higher_order_caller = self.get_outer().unwrap().higher_order_caller.clone();
@@ -1446,7 +1479,9 @@ impl Context {
         self.check_types();
         if let Some(parent) = self.outer.take() {
             let ctx = mem::take(self);
-            *self = *parent;
+            // the parent is shared only with compile-time frames, which are gone
+            // by the time a lowering scope is popped
+            *self = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
             log!(info "{}: current namespace: {}", fn_name!(), self.name);
             ctx
         } else {

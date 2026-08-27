@@ -1,5 +1,6 @@
 use std::mem;
 use std::ops::Drop;
+use std::sync::Arc;
 
 use erg_common::consts::DEBUG_MODE;
 use erg_common::dict::Dict;
@@ -1060,12 +1061,26 @@ impl Context {
                     Some((_, scope)) => scope.clone(),
                     None => def_ctx.map_or_else(|| self.name.clone(), |ctx| ctx.name.clone()),
                 };
-                let mut subr_ctx = Context::instant(
+                // What a frame reads is a copy of the defining scope. Frames of
+                // one call tree read the *same* copy: a recursion `N` deep used
+                // to copy the module `N` times, which is most of what a const
+                // call costs and all of what it costs in memory.
+                let parent = self
+                    .outer
+                    .as_ref()
+                    .filter(|outer| {
+                        def_ctx.is_some_and(|def| {
+                            outer.name == def.name && outer.module_path() == def.module_path()
+                        })
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| Arc::new(def_ctx.cloned().unwrap_or_else(|| self.clone())));
+                let mut subr_ctx = Context::instant_in(
                     Str::from(format!("{scope}::{}", user.name)),
                     def_ctx.map_or_else(|| self.cfg.clone(), |ctx| ctx.cfg.clone()),
                     2,
                     self.shared.clone(),
-                    def_ctx.cloned().unwrap_or_else(|| self.clone()),
+                    parent,
                 );
                 let mut pos_args = args.pos_args.into_iter();
                 let mut kw_args = args.kw_args;

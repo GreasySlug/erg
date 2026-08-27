@@ -27,6 +27,12 @@ assert Fib25 == 75025
 # tail-recursive shape
 Countdown(N: Int): Int = if N <= 0, do 0, do Countdown(N - 1)
 assert Countdown(20) == 0
+# Deeper than one host stack holds. Evaluation recurses on the host stack, so
+# this used to stop at 31 levels: the limit counted calls, but what it was
+# really rationing was stack. Past a point the evaluation is handed a new stack
+# and carries on, so what stops a runaway recursion is now a budget we chose.
+Deep: {0} = Countdown(200)
+assert Deep == 0
 
 # mutual recursion
 IsEven(N: Int): Bool = if N == 0, do True, do IsOdd(N - 1)

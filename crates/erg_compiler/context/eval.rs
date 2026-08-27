@@ -542,6 +542,9 @@ thread_local! {
     /// branch in place. One counter, not one per site -- separate counters
     /// would each get the whole budget and together overrun the stack.
     static CONST_EVAL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many stacks the evaluation has been handed so far. Unlike the depth,
+    /// this has to be carried into each new stack by hand.
+    static CONST_EVAL_STACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl Context {
@@ -1015,21 +1018,16 @@ impl Context {
                 {
                     return Ok(TyParam::Value(cached));
                 }
+                // This stack is nearly spent; give the rest of the evaluation a
+                // fresh one rather than let how deep a const function may
+                // recurse be decided by how much stack happens to be left.
+                if CONST_EVAL_DEPTH.with(|d| d.get()) >= erg_common::spawn::CONST_CALL_LIMIT {
+                    return self.call_on_new_stack(ConstSubr::User(user), args, loc.loc());
+                }
                 // Guard against infinitely recursive constant evaluation,
                 // e.g. `F n = F n; X = F 1` (self- or mutually-recursive const functions)
                 let _counter =
                     RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
-                if _counter.limit_reached() {
-                    return Err((
-                        TyParam::Failure,
-                        EvalErrors::from(EvalError::recursion_error(
-                            self.cfg.input.clone(),
-                            line!() as usize,
-                            loc.loc(),
-                            self.caused_by(),
-                        )),
-                    ));
-                }
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
                 let def_ctx = self.const_def_ctx(&user);
@@ -1126,6 +1124,40 @@ impl Context {
         }
     }
 
+    /// Continue a const call on a stack of its own.
+    ///
+    /// Compile-time evaluation recurses on the host stack, so without this the
+    /// depth a const function may reach is whatever fits in one stack -- 32
+    /// levels of what the user wrote, against CPython's 1000. Each stack is
+    /// worth [`erg_common::spawn::CONST_CALL_LIMIT`] levels and there may be
+    /// [`erg_common::spawn::CONST_CALL_STACKS`] of them, which is what now
+    /// bounds a runaway recursion.
+    fn call_on_new_stack(
+        &self,
+        subr: ConstSubr,
+        args: ValueArgs,
+        loc: Location,
+    ) -> Failable<TyParam> {
+        let used = CONST_EVAL_STACKS.with(|s| s.get());
+        if used >= erg_common::spawn::CONST_CALL_STACKS {
+            return Err((
+                TyParam::Failure,
+                EvalErrors::from(EvalError::recursion_error(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    loc,
+                    self.caused_by(),
+                )),
+            ));
+        }
+        erg_common::spawn::run_on_new_stack(move || {
+            // a fresh thread starts with a fresh depth; the number of stacks is
+            // what carries over
+            CONST_EVAL_STACKS.with(|s| s.set(used + 1));
+            self.call(subr, args, loc)
+        })
+    }
+
     /// The scope a const subroutine's body resolves its free names in: the one
     /// it was written in, not the one calling it.
     ///
@@ -1136,10 +1168,13 @@ impl Context {
     /// importer's scope and not find them.
     fn const_def_ctx(&self, user: &UserConstSubr) -> Option<&Context> {
         let (module, _scope) = user.def_scope.as_ref()?;
-        // the module being lowered is not in the cache yet, and is `self`'s
-        // own chain anyway
+        // The module being lowered is not in the cache yet -- it is the chain
+        // `self` sits in. Take the module scope itself and not `self`: `self`
+        // may be another frame of the same recursion, and hanging each frame
+        // off the last makes the chain grow with the depth, so a call at depth
+        // N copies N scopes.
         if module == &NormalizedPathBuf::from(self.module_path()) {
-            return None;
+            return self.get_module();
         }
         let shared = self.shared.as_ref()?;
         shared
@@ -1926,18 +1961,12 @@ impl Context {
         if block.iter().any(|chunk| matches!(chunk, Expr::Def(_))) {
             return None;
         }
-        let counter = RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
-        if counter.limit_reached() {
-            return Some(Err((
-                ValueObj::Failure,
-                EvalErrors::from(EvalError::recursion_error(
-                    self.cfg.input.clone(),
-                    line!() as usize,
-                    block.loc(),
-                    self.caused_by(),
-                )),
-            )));
-        }
+        // Counted, because these are Rust frames like any other, but never
+        // refused here: unbounded recursion always goes through a call, which
+        // is where a spent stack is replaced. Blocks nest only as deeply as the
+        // source does.
+        let _counter =
+            RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
         let mut last = None;
         for chunk in block.iter() {
             match self.eval_const_chunk_ref(chunk) {

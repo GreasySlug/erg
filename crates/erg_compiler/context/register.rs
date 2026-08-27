@@ -2260,11 +2260,28 @@ impl Context {
             return_t,
         );
         let sig_t = self.generalize_t(sig_t);
+        // Only a scope that exists once per module can identify a definition
+        // for the const-call cache. A body scope (a function being evaluated,
+        // a lambda) is re-entered with different surroundings, so a definition
+        // there gets no identity and its calls are never cached.
+        let def_scope = match self.kind {
+            ContextKind::Module
+            | ContextKind::Class
+            | ContextKind::Trait
+            | ContextKind::MethodDefs { .. }
+            | ContextKind::PatchMethodDefs(_)
+            | ContextKind::Patch(_) => Some((
+                NormalizedPathBuf::from(self.module_path()),
+                self.name.clone(),
+            )),
+            _ => None,
+        };
         let user_subr = UserConstSubr::new(
             sig.ident.inspect().clone(),
             sig.params.clone(),
             const_block,
             sig_t,
+            def_scope,
         );
         let subr = ValueObj::Subr(ConstSubr::User(user_subr));
         if errs.is_empty() {

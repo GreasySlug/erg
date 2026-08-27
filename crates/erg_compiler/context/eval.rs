@@ -1116,20 +1116,19 @@ impl Context {
     /// What identifies this call for [`SharedConstCallCache`], or `None` when it
     /// must not be cached.
     ///
-    /// A const function is pure and a const name cannot be shadowed, so the
-    /// module it was defined in, its name and the arguments decide the result --
+    /// A const function is pure and a const name cannot be shadowed within a
+    /// scope, so the scope it was defined in (baked into the subroutine at
+    /// registration -- the *evaluating* module may be a different one that
+    /// merely imported it), its name and the arguments decide the result --
     /// with one exception: a quantified signature means the body can read type
     /// variables bound by the caller, which are not part of the arguments.
+    /// A synthetic subroutine (a lambda, an `if` branch) has no `def_scope`
+    /// and is never cached: it reads the scope it was written in.
     fn const_call_key(&self, user: &UserConstSubr, args: &ValueArgs) -> Option<ConstCallKey> {
         if matches!(user.sig_t, Type::Quantified(_)) {
             return None;
         }
-        // A synthetic name is not a const definition: `<lambda>` is the body of
-        // an `if` branch, which reads the scope it was written in and takes no
-        // arguments, so every one of them would share a key.
-        if user.name.starts_with('<') {
-            return None;
-        }
+        let (module, scope) = user.def_scope.clone()?;
         let mut kw_args = args
             .kw_args
             .iter()
@@ -1138,7 +1137,8 @@ impl Context {
         // `Dict` iterates in hash order, which is not the same twice
         kw_args.sort_by(|(l, _), (r, _)| l.cmp(r));
         Some(ConstCallKey {
-            module: self.module_path().to_path_buf(),
+            module,
+            scope,
             name: user.name.clone(),
             pos_args: args.pos_args.clone(),
             kw_args,
@@ -1688,6 +1688,7 @@ impl Context {
             lambda.sig.params.clone(),
             block,
             sig_t,
+            None,
         ));
         let subr = ValueObj::Subr(subr);
         if errs.is_empty() {
@@ -3379,7 +3380,7 @@ impl Context {
                     Type::Obj,
                 );
                 Ok(ValueObj::Subr(ConstSubr::User(UserConstSubr::new(
-                    name, params, block, sig_t,
+                    name, params, block, sig_t, None,
                 ))))
             }
             TyParam::DataClass { name, fields } => {

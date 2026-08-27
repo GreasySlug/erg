@@ -123,6 +123,9 @@ impl SharedCompilerResource {
     }
 
     pub fn rename_path(&self, old: &NormalizedPathBuf, new: NormalizedPathBuf) {
+        // the definitions will re-register under the new path; keys under the
+        // old one would never be matched (or cleared) again
+        self.const_calls.remove_module(old);
         self.mod_cache.rename_path(old, new.clone());
         self.py_mod_cache.rename_path(old, new.clone());
         self.index.rename_path(old, new.clone());

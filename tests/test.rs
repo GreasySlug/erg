@@ -467,6 +467,11 @@ fn exec_const_recursive() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_cache() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_cache/const_cache.er", 0)
+}
+
+#[test]
 fn exec_const_method() -> Result<(), ()> {
     expect_success("tests/should_ok/const_method.er", 0)
 }

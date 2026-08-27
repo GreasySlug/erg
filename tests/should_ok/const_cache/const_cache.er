@@ -1,0 +1,12 @@
+# The const-call cache must key a call by the scope that *defined* the
+# function, not the scope that evaluated it: three functions named `F`,
+# defined in three modules, all folded here.
+x = import "mod_x"
+y = import "mod_y"
+F(N: Int): Int = N * 2
+A: {4} = x.F(3)
+B: {300} = y.F(3)
+C: {6} = F(3)
+assert A == 4
+assert B == 300
+assert C == 6

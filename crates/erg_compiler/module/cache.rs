@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::Hash;
-use std::path::{Path, PathBuf};
 
 use erg_common::config::ErgConfig;
 use erg_common::dict::Dict;
@@ -420,11 +419,15 @@ pub struct GeneralizationResult {
 }
 
 /// A call of a user-defined const function, by everything that decides its
-/// result: which module defined it, its name (const names cannot be shadowed,
-/// so the two identify it) and the arguments.
+/// result: the scope that defined it -- the module *and* the scope's name,
+/// because a class method and a module-level function may share a name --
+/// the function's name (const names cannot be shadowed within a scope) and
+/// the arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConstCallKey {
-    pub module: PathBuf,
+    pub module: NormalizedPathBuf,
+    /// the defining scope's name (`<module>`, a class name, ...)
+    pub scope: Str,
     pub name: Str,
     pub pos_args: Vec<ValueObj>,
     /// sorted by name, because `Dict`'s order is a hash order
@@ -462,8 +465,8 @@ impl SharedConstCallCache {
     }
 
     /// Drop what a module defined, for when it is recompiled.
-    pub fn remove_module(&self, path: &Path) {
-        self.0.borrow_mut().retain(|key, _| key.module != path);
+    pub fn remove_module(&self, path: &NormalizedPathBuf) {
+        self.0.borrow_mut().retain(|key, _| key.module != *path);
     }
 }
 

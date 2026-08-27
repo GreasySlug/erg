@@ -4,6 +4,7 @@ use erg_common::consts::DEBUG_MODE;
 use erg_common::dict::Dict;
 #[allow(unused_imports)]
 use erg_common::log;
+use erg_common::pathutil::NormalizedPathBuf;
 use erg_common::Str;
 
 use erg_parser::ast::{Block, ConstBlock, Params};
@@ -20,15 +21,27 @@ pub struct UserConstSubr {
     pub(crate) params: Params,
     pub(crate) block: ConstBlock,
     pub(crate) sig_t: Type,
+    /// The scope that defined this, when that scope can identify the
+    /// definition: the module's path and the scope's name. `None` for a
+    /// synthetic subroutine (a lambda, an `if` branch) and for a definition
+    /// inside a body, both of which read whatever happens to surround them.
+    pub(crate) def_scope: Option<(NormalizedPathBuf, Str)>,
 }
 
 impl UserConstSubr {
-    pub const fn new(name: Str, params: Params, block: ConstBlock, sig_t: Type) -> Self {
+    pub const fn new(
+        name: Str,
+        params: Params,
+        block: ConstBlock,
+        sig_t: Type,
+        def_scope: Option<(NormalizedPathBuf, Str)>,
+    ) -> Self {
         Self {
             name,
             params,
             block,
             sig_t,
+            def_scope,
         }
     }
 

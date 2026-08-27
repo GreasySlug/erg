@@ -4029,6 +4029,16 @@ impl PyCodeGenerator {
         let init_ident = Identifier::static_public("__init__");
         self.emit_load_attr_instr(init_ident);
         // Stack: [bound_init_method]
+        // `CALL_FUNCTION_EX` reserves a slot next to the callable, and 3.13 moved
+        // it from before to after. An attribute load leaves only the bound
+        // method, so fill it here or the argument tuple slides into the callable
+        // slot and the keyword dict is called instead.
+        let null = self.opcode_set.is_3_13_plus();
+        if null {
+            self.write_instr(self.opcode_set.push_null());
+            self.write_arg(0);
+            self.stack_inc();
+        }
 
         // Step 3: Load *args and **kwargs
         self.write_opcode(LOAD_FAST);
@@ -4039,12 +4049,13 @@ impl PyCodeGenerator {
         self.stack_inc();
         // Stack: [bound_init_method, args_tuple, kwargs_dict]
 
-        // Step 4: CALL_FUNCTION_EX with kwargs (flag=1)
+        // Step 4: CALL_FUNCTION_EX with kwargs (flag=1; 3.14 dropped the flag,
+        // where the keyword slot is always present)
         self.write_opcode(CALL_FUNCTION_EX);
-        self.write_arg(1); // flag=1: has **kwargs
-                           // CALL_FUNCTION_EX consumes: func + args + kwargs → result
-        self.stack_dec_n(2); // net: 3 consumed, 1 produced → dec by 2
-                             // Stack: [return_value]
+        self.write_arg(!self.opcode_set.is_3_14_plus() as usize);
+        // consumes func (+ NULL) + args + kwargs, produces the result
+        self.stack_dec_n(2 + null as usize);
+        // Stack: [return_value]
 
         // Step 5: Discard the return value
         self.emit_pop_top();

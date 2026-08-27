@@ -8,6 +8,8 @@ BigNat = nat("99999999999999999999999999999999999")   # ERR
 Surrogate = chr(0xD800)                               # ERR
 # `str` of a `Float` cannot reproduce CPython's shortest-repr rounding
 FloatStr = str(float 1.5)                             # ERR
+# a parameterized generic is not a runtime class: `isinstance` raises there
+IsList = isinstance([1], List(Int))                   # ERR
 
 # the same expressions are fine at run time
 big_int = int("99999999999999999999999999999999999")

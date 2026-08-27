@@ -752,6 +752,21 @@ fn class_infos(value: ValueObj, ctx: &Context) -> Option<Vec<Type>> {
     }
 }
 
+/// Whether `t` is something the emitted program can hand to `isinstance` /
+/// `issubclass`: a plain class, existing at run time under its own name.
+/// A parameterized generic (`List(Int)`) raises `TypeError` there, and a
+/// refinement or a union is not a runtime class object at all, so folding
+/// those would invent an answer the program never produces.
+fn is_runtime_class(t: &Type, ctx: &Context) -> bool {
+    match t {
+        Type::Int | Type::Nat | Type::Ratio | Type::Float | Type::Bool | Type::Str => true,
+        Type::Mono(_) => ctx
+            .get_nominal_type_ctx(t)
+            .is_some_and(|tc| tc.ctx.kind.is_class()),
+        _ => false,
+    }
+}
+
 /// `isinstance(object, classinfo)`.
 ///
 /// The object's class is the class the emitted program builds, so this asks the
@@ -768,6 +783,12 @@ pub(crate) fn isinstance_func(mut args: ValueArgs, ctx: &Context) -> EvalValueRe
     let Some(classes) = class_infos(classinfo.clone(), ctx) else {
         return Err(type_mismatch("ClassType", classinfo, "classinfo"));
     };
+    if let Some(t) = classes.iter().find(|t| !is_runtime_class(t, ctx)) {
+        return Err(not_foldable(
+            format!("isinstance(..., {t})"),
+            "only a plain class decides the same way at compile time and at run time",
+        ));
+    }
     let class = object.class();
     let is = classes.iter().any(|t| ctx.subtype_of(&class, t));
     Ok(ValueObj::Bool(is).into())
@@ -787,6 +808,16 @@ pub(crate) fn issubclass_func(mut args: ValueArgs, ctx: &Context) -> EvalValueRe
     let Some(classes) = class_infos(classinfo.clone(), ctx) else {
         return Err(type_mismatch("ClassType", classinfo, "classinfo"));
     };
+    if let Some(t) = classes
+        .iter()
+        .chain([&sub])
+        .find(|t| !is_runtime_class(t, ctx))
+    {
+        return Err(not_foldable(
+            format!("issubclass(..., {t})"),
+            "only a plain class decides the same way at compile time and at run time",
+        ));
+    }
     let is = classes.iter().any(|t| ctx.subtype_of(&sub, t));
     Ok(ValueObj::Bool(is).into())
 }

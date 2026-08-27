@@ -127,3 +127,23 @@ assert IntSeparator == 10
 # `_` digit separators are accepted by `float`, too
 FloatSeparator = float "1_0.5"
 assert FloatSeparator.nearly_eq(float "10.5")
+
+# A constant defined in a const function's body, built from the parameters.
+#
+# Lowering registers the definitions of a body before lowering it, and a
+# constant's body is evaluated there and then -- which cannot work for one built
+# from a parameter, whose value belongs to a call. It reported `N is not
+# defined` (while suggesting `N`, which is right there as a parameter).
+WithLocal(N: Int): Int =
+    Tmp = N + 1
+    Tmp * 2
+assert WithLocal(3) == 8
+WithLocal3: {8} = WithLocal(3)
+assert WithLocal3 == 8
+
+Chained(N: Int): Int =
+    Fst = N + 1
+    Snd = Fst * 2
+    Snd + 1
+Chained3: {9} = Chained(3)
+assert Chained3 == 9

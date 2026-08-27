@@ -1810,6 +1810,9 @@ impl Context {
                             }
                         }
                     };
+                    // before `grow`, which replaces `self.kind` with the
+                    // definition's own
+                    let in_subr = self.kind.is_subr();
                     self.grow(__name__, kind, vis, tv_cache);
                     let (obj, const_t) = match self.eval_const_block(&def.body.block) {
                         Ok(obj) => (obj.clone(), v_enum(set! {obj})),
@@ -1832,6 +1835,18 @@ impl Context {
                                 } else {
                                     return Err(errs);
                                 }
+                            }
+                            // A constant in a subroutine's body may be built from
+                            // the parameters, whose values belong to a call and not
+                            // to this definition. Leave it to the ordinary lowering,
+                            // which types the binding; a body that is wrong for some
+                            // other reason is reported there rather than twice.
+                            if in_subr {
+                                self.pop();
+                                if let Err((_, es)) = self.pre_define_var(sig, id) {
+                                    errs.extend(es);
+                                }
+                                return if errs.is_empty() { Ok(()) } else { Err(errs) };
                             }
                             errs.extend(es);
                             (obj.clone(), v_enum(set! {obj}))

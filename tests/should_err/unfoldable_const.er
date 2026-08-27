@@ -24,3 +24,12 @@ plain(n: Int): Int =
     Tmp = n + 1                                       # ERR
     Tmp * 2
 print! plain(1)
+
+# `match` folds only when it can decide which arm runs. CPython holds
+# `1 == True`, so a `Bool` against an `Int` pattern is not decidable here
+# without repeating that; the arm's condition does not fold and the `match`
+# declines rather than guess.
+AmbiguousMatch = match True:                          # ERR
+    1 -> "int one"
+    True -> "bool true"
+    _ -> "other"

@@ -966,6 +966,17 @@ impl Context {
                 Err((tp, errs))
             }
         } else {
+            // `match` is a special form rather than a name: lowering gives it a
+            // magic type and `get_call_t` intercepts it, so there is nothing to
+            // look up here either. `match!` is a procedure and is not folded.
+            if let Some(ident) = call.obj.as_ref().as_ident() {
+                if ident.vis.is_private() && &ident.inspect()[..] == "match" {
+                    return self
+                        .eval_const_match(call)
+                        .map(TyParam::Value)
+                        .map_err(|(val, errs)| (TyParam::value(val), errs));
+                }
+            }
             let callee = match call.obj.as_ref() {
                 Expr::Accessor(acc) => self
                     .eval_const_acc(acc)
@@ -1994,6 +2005,92 @@ impl Context {
             self.eval_const_chunk(chunk)?;
         }
         self.eval_const_chunk(block.last().unwrap())
+    }
+
+    /// `match obj, arm, arm, ...`, which is a special form rather than a name.
+    ///
+    /// Reproduces what the emitted program does rather than deciding by type:
+    /// each arm binds the value to its parameter and tests, in order, the
+    /// conditions the pattern was desugared into -- the same expressions
+    /// codegen emits. The last arm is taken without testing, because at run
+    /// time an unmatched `match` falls into it too.
+    fn eval_const_match(&self, call: &Call) -> Failable<ValueObj> {
+        let unfoldable = || {
+            (
+                ValueObj::Failure,
+                EvalErrors::from(EvalError::not_const_expr(
+                    self.cfg.input.clone(),
+                    line!() as usize,
+                    call.loc(),
+                    self.caused_by(),
+                )),
+            )
+        };
+        // Arms nest as deeply as the source does, and each is Rust frames like
+        // any other, so they are counted against the stack the same way.
+        if CONST_EVAL_DEPTH.with(|d| d.get()) >= erg_common::spawn::CONST_CALL_LIMIT {
+            return self.on_new_stack(call.loc(), || self.eval_const_match(call));
+        }
+        let _counter =
+            RecursionCounter::new(&CONST_EVAL_DEPTH, erg_common::spawn::CONST_CALL_LIMIT);
+        if !call.args.kw_args.is_empty() || call.args.var_args.is_some() {
+            return Err(unfoldable());
+        }
+        let mut pos_args = call.args.pos_args.iter();
+        let obj = self.eval_const_expr(&pos_args.next().ok_or_else(unfoldable)?.expr)?;
+        let arms = pos_args
+            .map(|arg| match &arg.expr {
+                Expr::Lambda(lambda) => Some(lambda),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(unfoldable)?;
+        let last = arms.len().checked_sub(1).ok_or_else(unfoldable)?;
+        let mut arm_ctx = Context::instant_in(
+            Str::from(format!("{}::<match>", self.name)),
+            self.cfg.clone(),
+            1,
+            self.shared.clone(),
+            Arc::new(self.clone()),
+        );
+        for (i, arm) in arms.iter().enumerate() {
+            let [param] = &arm.sig.params.non_defaults[..] else {
+                return Err(unfoldable());
+            };
+            if !arm.sig.params.defaults.is_empty() || arm.sig.params.var_params.is_some() {
+                return Err(unfoldable());
+            }
+            arm_ctx.consts.clear();
+            if let Some(name) = param.inspect() {
+                arm_ctx
+                    .consts
+                    .insert(VarName::from_str(name.clone()), obj.clone());
+            }
+            let mut matched = true;
+            if i != last {
+                for guard in arm.sig.params.guards.iter() {
+                    // a binding in a pattern would have to define into the arm's
+                    // scope, which is not what this reproduces
+                    let GuardClause::Condition(cond) = guard else {
+                        return Err(unfoldable());
+                    };
+                    match arm_ctx.eval_const_chunk_ref(cond) {
+                        Ok(ValueObj::Bool(true)) => {}
+                        Ok(ValueObj::Bool(false)) => {
+                            matched = false;
+                            break;
+                        }
+                        // a guard that does not fold to a `Bool` leaves which arm
+                        // runs undecided, and a later arm may still be the answer
+                        _ => return Err(unfoldable()),
+                    }
+                }
+            }
+            if matched {
+                return arm_ctx.eval_const_block(&arm.body);
+            }
+        }
+        Err(unfoldable())
     }
 
     /// A `do` block evaluated in *this* scope, with no frame of its own.

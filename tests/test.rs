@@ -472,6 +472,11 @@ fn exec_const_cache() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_const_match() -> Result<(), ()> {
+    expect_success("tests/should_ok/const_match.er", 0)
+}
+
+#[test]
 fn exec_const_method() -> Result<(), ()> {
     expect_success("tests/should_ok/const_method.er", 0)
 }
@@ -973,7 +978,7 @@ fn exec_chained_comparison_err() -> Result<(), ()> {
 
 #[test]
 fn exec_unfoldable_const_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/unfoldable_const.er", 0, 7)
+    expect_compile_failure("tests/should_err/unfoldable_const.er", 0, 8)
 }
 
 #[test]

@@ -1,0 +1,65 @@
+# `match` at compile time.
+#
+# `match` is a special form rather than a name -- lowering gives it a magic type
+# and `get_call_t` intercepts it -- so const evaluation intercepts it too, and
+# reproduces what the emitted program does: each arm binds the value to its
+# parameter and tests the conditions its pattern was desugared into, in order.
+
+Other: {"other"} = match 3:
+    1 -> "one"
+    _ -> "other"
+assert Other == "other"
+OneLit: {"one"} = match 1:
+    1 -> "one"
+    _ -> "other"
+assert OneLit == "one"
+
+Name(K: Int): Str =
+    match K:
+        0 -> "zero"
+        1 -> "one"
+        _ -> "many"
+Zero: {"zero"} = Name(0)
+One: {"one"} = Name(1)
+# the last arm is taken without testing, because an unmatched `match` falls
+# into it at run time too
+Many: {"many"} = Name(7)
+assert Zero == "zero"
+assert One == "one"
+assert Many == "many"
+
+# an arm that binds
+Bind(K: Int): Int =
+    match K:
+        0 -> 100
+        n -> n * 2
+Hundred: {100} = Bind(0)
+Fourteen: {14} = Bind(7)
+assert Hundred == 100
+assert Fourteen == 14
+
+Which(S: Str): Int =
+    match S:
+        "a" -> 1
+        "b" -> 2
+        _ -> 3
+Two: {2} = Which("b")
+assert Two == 2
+assert Which("z") == 3
+
+# recursion through `match`
+Fib(N: Int): Int =
+    match N:
+        0 -> 0
+        1 -> 1
+        _ -> Fib(N - 1) + Fib(N - 2)
+Fib10: {55} = Fib(10)
+assert Fib10 == 55
+
+# and `match` still works where it is not folded
+f x =
+    match x:
+        1 -> "one"
+        _ -> "other"
+assert f(1) == "one"
+assert f(2) == "other"

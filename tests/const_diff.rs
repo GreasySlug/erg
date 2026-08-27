@@ -29,6 +29,22 @@ const PRELUDE: &str = concat!(
     "Local(N: Int): Int =\n",
     "    Tmp = N + 1\n",
     "    Tmp * 2\n",
+    // `match`, whose arms are tested with the conditions its patterns were
+    // desugared into -- the same ones codegen emits
+    "Name(K: Int): Str =\n",
+    "    match K:\n",
+    "        0 -> \"zero\"\n",
+    "        1 -> \"one\"\n",
+    "        _ -> \"many\"\n",
+    "Bind(K: Int): Int =\n",
+    "    match K:\n",
+    "        0 -> 100\n",
+    "        n -> n * 2\n",
+    "Which(S: Str): Int =\n",
+    "    match S:\n",
+    "        \"a\" -> 1\n",
+    "        \"b\" -> 2\n",
+    "        _ -> 3\n",
 );
 
 /// Printed before the values, so warnings (which the runner also writes to
@@ -210,6 +226,16 @@ const CASES: &[&str] = &[
     // a constant function whose body defines a constant from its parameters
     "Local(3)",
     "Local(0)",
+    // `match`: a literal pattern, the arm that binds, and the last arm, which is
+    // taken without testing because an unmatched `match` falls into it too
+    "Name(0)",
+    "Name(1)",
+    "Name(7)",
+    "Bind(0)",
+    "Bind(7)",
+    "Which(\"a\")",
+    "Which(\"b\")",
+    "Which(\"z\")",
     "1e-3",
     // phase 5: Bool arithmetic, string ordering, sequence equality
     "True + True",

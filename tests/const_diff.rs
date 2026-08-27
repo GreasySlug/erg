@@ -23,6 +23,8 @@ const PRELUDE: &str = concat!(
     "Cls = Class {}\n",
     "Cls.\n",
     "    Twice(N: Int): Int = N * 2\n",
+    "    Base: Int = 10\n",
+    "    Plus(N: Int): Int = Cls.Base + N\n",
     // a constant built from the parameters, which only a call can evaluate
     "Local(N: Int): Int =\n",
     "    Tmp = N + 1\n",
@@ -201,6 +203,8 @@ const CASES: &[&str] = &[
     "1e+3",
     // a constant of a class, and a constant method called through the class
     "Cls.Twice(3)",
+    // a constant of the class, read from a constant of that class
+    "Cls.Plus(3)",
     "Str.replace(\"abc\", \"a\", \"z\")",
     "Str.startswith(\"abc\", \"a\")",
     // a constant function whose body defines a constant from its parameters

@@ -1051,8 +1051,17 @@ impl Context {
                 let mut errs = EvalErrors::empty();
                 // HACK: should avoid cloning
                 let def_ctx = self.const_def_ctx(&user);
+                // Name the frame inside the scope the subroutine was defined in.
+                // A bare name is not a namespace, and several lookups ask whether
+                // the current scope is inside another one -- `get_mono_type` does,
+                // so a frame called `F` was inside nothing and no class of the
+                // module was reachable from a const function's body.
+                let scope = match user.def_scope.as_ref() {
+                    Some((_, scope)) => scope.clone(),
+                    None => def_ctx.map_or_else(|| self.name.clone(), |ctx| ctx.name.clone()),
+                };
                 let mut subr_ctx = Context::instant(
-                    user.name.clone(),
+                    Str::from(format!("{scope}::{}", user.name)),
                     def_ctx.map_or_else(|| self.cfg.clone(), |ctx| ctx.cfg.clone()),
                     2,
                     self.shared.clone(),

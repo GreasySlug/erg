@@ -973,7 +973,7 @@ fn exec_chained_comparison_err() -> Result<(), ()> {
 
 #[test]
 fn exec_unfoldable_const_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/unfoldable_const.er", 0, 6)
+    expect_compile_failure("tests/should_err/unfoldable_const.er", 0, 7)
 }
 
 #[test]

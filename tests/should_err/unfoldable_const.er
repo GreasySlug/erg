@@ -15,3 +15,12 @@ IsList = isinstance([1], List(Int))                   # ERR
 big_int = int("99999999999999999999999999999999999")
 big_pow = pow(2, 10000)
 print! big_int, big_pow
+
+# The same, inside a subroutine. A constant in a *const* subroutine's body may
+# be built from the parameters, so it is left to be evaluated per call -- but a
+# plain function's parameters never have a compile-time value, so a constant
+# there has to be reported here or nowhere.
+plain(n: Int): Int =
+    Tmp = n + 1                                       # ERR
+    Tmp * 2
+print! plain(1)

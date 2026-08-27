@@ -16,7 +16,18 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Definitions both generated programs need.
-const PRELUDE: &str = "Dbl(N: Nat): Nat = N * 2\nOdd(N: Nat): Bool = N % 2 == 1\n";
+const PRELUDE: &str = concat!(
+    "Dbl(N: Nat): Nat = N * 2\n",
+    "Odd(N: Nat): Bool = N % 2 == 1\n",
+    // a constant *of* a class: the receiver is not one of its arguments
+    "Cls = Class {}\n",
+    "Cls.\n",
+    "    Twice(N: Int): Int = N * 2\n",
+    // a constant built from the parameters, which only a call can evaluate
+    "Local(N: Int): Int =\n",
+    "    Tmp = N + 1\n",
+    "    Tmp * 2\n",
+);
 
 /// Printed before the values, so warnings (which the runner also writes to
 /// stdout) can be skipped.
@@ -188,6 +199,13 @@ const CASES: &[&str] = &[
     "int(0.1 + 0.2)",
     "-1.5",
     "1e+3",
+    // a constant of a class, and a constant method called through the class
+    "Cls.Twice(3)",
+    "Str.replace(\"abc\", \"a\", \"z\")",
+    "Str.startswith(\"abc\", \"a\")",
+    // a constant function whose body defines a constant from its parameters
+    "Local(3)",
+    "Local(0)",
     "1e-3",
     // phase 5: Bool arithmetic, string ordering, sequence equality
     "True + True",

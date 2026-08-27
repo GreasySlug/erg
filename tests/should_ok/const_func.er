@@ -147,3 +147,15 @@ Chained(N: Int): Int =
     Snd + 1
 Chained3: {9} = Chained(3)
 assert Chained3 == 9
+
+# The same, from an `if` branch: the branch is a `do` block with no parameters
+# of its own, and it is still the const function's parameters it reads.
+InBranch(N: Int): Int =
+    if N > 0:
+        do:
+            Tmp = N + 1
+            Tmp
+        do: 0
+InBranch3: {4} = InBranch(3)
+assert InBranch3 == 4
+assert InBranch(-1) == 0

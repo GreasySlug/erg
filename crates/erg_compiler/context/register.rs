@@ -90,6 +90,25 @@ impl Context {
         }
     }
 
+    /// Whether a constant defined here could have a compile-time value at all.
+    ///
+    /// Only a const subroutine's parameters have one, and they are the ones
+    /// spelled in uppercase: `F(N: Int)` binds `N` per call, `f(n: Int)` never
+    /// binds `n` at compile time. A `do` block is transparent to this -- a
+    /// constant inside an `if` branch of a const function is still per call.
+    fn has_const_param(&self) -> bool {
+        if self
+            .params
+            .iter()
+            .any(|(name, _)| name.as_ref().is_some_and(|n| n.inspect().is_uppercase()))
+        {
+            return true;
+        }
+        self.get_outer()
+            .filter(|outer| !outer.kind.is_module())
+            .is_some_and(Self::has_const_param)
+    }
+
     fn declare_var(&mut self, ident: &Identifier, t_spec: &TypeSpecWithOp) -> Failable<()> {
         if self.decls.get(&ident.name).is_some()
             || self
@@ -1812,7 +1831,7 @@ impl Context {
                     };
                     // before `grow`, which replaces `self.kind` with the
                     // definition's own
-                    let in_subr = self.kind.is_subr();
+                    let per_call = self.kind.is_subr() && self.has_const_param();
                     self.grow(__name__, kind, vis, tv_cache);
                     let (obj, const_t) = match self.eval_const_block(&def.body.block) {
                         Ok(obj) => (obj.clone(), v_enum(set! {obj})),
@@ -1836,12 +1855,13 @@ impl Context {
                                     return Err(errs);
                                 }
                             }
-                            // A constant in a subroutine's body may be built from
-                            // the parameters, whose values belong to a call and not
-                            // to this definition. Leave it to the ordinary lowering,
-                            // which types the binding; a body that is wrong for some
-                            // other reason is reported there rather than twice.
-                            if in_subr {
+                            // A constant in a const subroutine's body may be built
+                            // from the parameters, whose values belong to a call and
+                            // not to this definition. Leave it to the ordinary
+                            // lowering, which types the binding; a body that is wrong
+                            // for some other reason is reported there rather than
+                            // twice, and the call reports one that cannot be folded.
+                            if per_call {
                                 self.pop();
                                 if let Err((_, es)) = self.pre_define_var(sig, id) {
                                     errs.extend(es);

@@ -2557,8 +2557,17 @@ impl Context {
             }
             GenTypeObj::Patch(_) => {
                 if gen.typ().is_monomorphic() {
-                    let Some(TypeObj::Builtin { t: base, .. }) = gen.base_or_sup() else {
-                        todo!("{gen}")
+                    // The base is whatever `Patch` was applied to, and a user
+                    // class is as good a base as a builtin one -- take the type
+                    // out of either.
+                    let Some(base) = gen.base_or_sup().map(TypeObj::typ) else {
+                        return feature_error!(
+                            CompileErrors,
+                            CompileError,
+                            self,
+                            ident.loc(),
+                            "patch definition with no base type"
+                        );
                     };
                     // A patch with `Impl := Trait` is a glue patch,
                     // which retrofits the trait to the base type

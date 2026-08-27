@@ -578,37 +578,36 @@ impl PyCodeGenerator {
                 self.mut_cur_block().lasti += 1;
                 1
             }
-            Err(_) => match u16::try_from(code) {
-                Ok(_) => {
-                    let delta =
-                        if CommonOpcode::is_jump_op(*self.cur_block_codeobj().code.last().unwrap())
-                        {
-                            2
-                        } else {
-                            0
-                        };
-                    let arg = code + delta;
-                    let bytes = u16::try_from(arg).unwrap().to_be_bytes(); // [u8; 2]
-                    let before_instr = self.lasti().saturating_sub(1);
-                    self.mut_cur_block_codeobj().code.push(bytes[1]);
-                    self.mut_cur_block().lasti += 1;
-                    self.extend_arg(before_instr, &bytes) + 1
+            Err(_) => {
+                // The EXTENDED_ARGs about to be inserted push this instruction
+                // further from where a *relative* jump was measured, so a jump
+                // argument has to grow by as many bytes as they take. Only a
+                // jump: adding it to, say, a name index would read the wrong
+                // name, which is what `LOAD_NAME` did from 3.14 on -- its new
+                // value, 93, is `JUMP_IF_FALSE_OR_POP` in the numbering
+                // `CommonOpcode::is_jump_op` reads.
+                let is_jump = self
+                    .opcode_set
+                    .is_jump_op(*self.cur_block_codeobj().code.last().unwrap());
+                match u16::try_from(code) {
+                    Ok(_) => {
+                        let arg = code + if is_jump { 2 } else { 0 };
+                        let bytes = u16::try_from(arg).unwrap().to_be_bytes(); // [u8; 2]
+                        let before_instr = self.lasti().saturating_sub(1);
+                        self.mut_cur_block_codeobj().code.push(bytes[1]);
+                        self.mut_cur_block().lasti += 1;
+                        self.extend_arg(before_instr, &bytes) + 1
+                    }
+                    Err(_) => {
+                        let arg = code + if is_jump { 6 } else { 0 };
+                        let bytes = u32::try_from(arg).unwrap().to_be_bytes(); // [u8; 4]
+                        let before_instr = self.lasti().saturating_sub(1);
+                        self.mut_cur_block_codeobj().code.push(bytes[3]);
+                        self.mut_cur_block().lasti += 1;
+                        self.extend_arg(before_instr, &bytes) + 1
+                    }
                 }
-                Err(_) => {
-                    let delta = 0;
-                    if CommonOpcode::is_jump_op(*self.cur_block_codeobj().code.last().unwrap()) {
-                        6
-                    } else {
-                        0
-                    };
-                    let arg = code + delta;
-                    let bytes = u32::try_from(arg).unwrap().to_be_bytes(); // [u8; 4]
-                    let before_instr = self.lasti().saturating_sub(1);
-                    self.mut_cur_block_codeobj().code.push(bytes[3]);
-                    self.mut_cur_block().lasti += 1;
-                    self.extend_arg(before_instr, &bytes) + 1
-                }
-            },
+            }
         }
     }
 

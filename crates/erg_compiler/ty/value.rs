@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use erg_common::consts::DEBUG_MODE;
 use erg_common::dict::Dict;
-use erg_common::error::{ErrorCore, ErrorKind, Location};
+use erg_common::error::{ErrorCore, ErrorKind, Location, SubMessage};
 use erg_common::fresh::FRESH_GEN;
 use erg_common::io::Input;
 use erg_common::python_util::PythonVersion;
@@ -35,6 +35,12 @@ use super::{CONTAINER_OMIT_THRESHOLD, GENERIC_LEVEL, STR_OMIT_THRESHOLD};
 pub struct EvalValueError {
     pub core: Box<ErrorCore>,
     pub value: Option<ValueObj>,
+    /// The call is well-formed and the program will run; only *folding* it
+    /// failed, because the result has no compile-time representation
+    /// (`pow(2, 10000)` does not fit an `Int`). A context that does not need a
+    /// constant drops this and leaves the call to run time, and one that does
+    /// reports it as "cannot be folded", not as a missing feature.
+    pub not_foldable: bool,
 }
 
 impl From<ErrorCore> for EvalValueError {
@@ -42,6 +48,7 @@ impl From<ErrorCore> for EvalValueError {
         Self {
             core: Box::new(core),
             value: None,
+            not_foldable: false,
         }
     }
 }
@@ -53,6 +60,20 @@ impl From<EvalValueError> for ErrorCore {
 }
 
 impl EvalValueError {
+    /// `what` could not be folded because of `why`. Not an error on its own:
+    /// see the `not_foldable` field.
+    pub fn not_foldable(what: impl std::fmt::Display, why: impl std::fmt::Display) -> Self {
+        let mut err = Self::from(ErrorCore::new(
+            vec![SubMessage::only_loc(Location::Unknown)],
+            format!("cannot fold `{what}`: {why}"),
+            line!() as usize,
+            ErrorKind::NotConstExpr,
+            Location::Unknown,
+        ));
+        err.not_foldable = true;
+        err
+    }
+
     pub fn feature_error(_input: Input, loc: Location, name: &str, caused_by: String) -> Self {
         Self::from(ErrorCore::new(
             vec![],

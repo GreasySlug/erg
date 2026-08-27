@@ -83,6 +83,13 @@ fn reject_extra_args(args: &ValueArgs, name: &str, expected: usize) -> Result<()
     }
 }
 
+/// The call is fine, only folding it is not: see `EvalValueError::not_foldable`.
+fn not_foldable(what: impl Display, why: impl Display) -> EvalValueError {
+    EvalValueError::not_foldable(what, why)
+}
+
+/// A genuinely unimplemented corner of a const function, as opposed to one that
+/// merely cannot be folded here.
 fn todo(msg: &str) -> EvalValueError {
     ErrorCore::new(
         vec![SubMessage::only_loc(Location::Unknown)],
@@ -1331,7 +1338,7 @@ fn abs_of(num: ValueObj, param: &str) -> EvalValueResult<TyParam> {
         ValueObj::Ratio(n, d) => n
             .checked_abs()
             .map(|n| ValueObj::Ratio(n, d).into())
-            .ok_or_else(|| todo("abs (out of range)")),
+            .ok_or_else(|| not_foldable("abs", "the result does not fit an `Int`")),
         ValueObj::Float(n) => Ok(ValueObj::from(n.abs()).into()),
         ValueObj::Inf | ValueObj::NegInf => Ok(ValueObj::Inf.into()),
         _ => Err(type_mismatch("Num", num, param)),
@@ -1622,7 +1629,10 @@ pub(crate) fn str_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     // must not be used here -- the result has to equal what `str` returns at run time.
     match py_str(&val) {
         Some(s) => Ok(ValueObj::Str(s.into()).into()),
-        None => Err(todo(&format!("str({val})"))),
+        None => Err(not_foldable(
+            format!("str({val})"),
+            "its text at run time is not reproducible here",
+        )),
     }
 }
 
@@ -1812,7 +1822,9 @@ pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
             };
             match parse_py_int(s, radix) {
                 IntParse::Parsed(i) => i,
-                IntParse::TooLarge => return Err(todo("int (out of range)")),
+                IntParse::TooLarge => {
+                    return Err(not_foldable("int", "the result does not fit an `Int`"))
+                }
                 IntParse::Invalid => {
                     return Err(value_error(format!(
                         "invalid literal for int() with base {radix}: {s}"
@@ -1826,7 +1838,7 @@ pub(crate) fn int_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         },
     };
     Ok(ValueObj::from_i128(parsed)
-        .ok_or_else(|| todo("int (out of range)"))?
+        .ok_or_else(|| not_foldable("int", "the result does not fit an `Int`"))?
         .into())
 }
 
@@ -1839,7 +1851,7 @@ pub(crate) fn nat_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         Some(i) if i < 0 => Err(value_error(format!("Nat can't be negative: {i}"))),
         Some(i) => Ok(u64::try_from(i)
             .map(ValueObj::Nat)
-            .map_err(|_| todo("nat (out of range)"))?
+            .map_err(|_| not_foldable("nat", "the result does not fit a `Nat`"))?
             .into()),
         None => Err(type_mismatch("Nat-convertible", obj, "obj")),
     }
@@ -1876,7 +1888,7 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     // off the halfway point.
     if let Some((num, den)) = number.as_ratio() {
         let (Some(q), Some(rest)) = (num.checked_div(den), num.checked_rem(den)) else {
-            return Err(todo("round (out of range)"));
+            return Err(not_foldable("round", "the result does not fit an `Int`"));
         };
         // `floor` the quotient, so `rest` is the non-negative distance above it
         let (q, rest) = if rest < 0 {
@@ -1892,7 +1904,7 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
         let rounded = if round_up { q + 1 } else { q };
         return match i64::try_from(rounded) {
             Ok(i) => Ok(ValueObj::Int(i).into()),
-            Err(_) => Err(todo("round (out of range)")),
+            Err(_) => Err(not_foldable("round", "the result does not fit an `Int`")),
         };
     }
     let Some(f) = number.as_float().filter(|f| f.is_finite()) else {
@@ -1907,7 +1919,7 @@ pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     if rounded.is_finite() {
         Ok(ValueObj::Int(rounded as i64).into())
     } else {
-        Err(todo("round (out of range)"))
+        Err(not_foldable("round", "the result does not fit an `Int`"))
     }
 }
 
@@ -1940,7 +1952,7 @@ pub(crate) fn chr_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
     match char::from_u32(n) {
         Some(c) => Ok(ValueObj::Str(c.to_string().into()).into()),
         // lone surrogates are valid for Python's `chr` but have no `char`
-        None if n <= 0x10FFFF => Err(todo("chr (surrogate)")),
+        None if n <= 0x10FFFF => Err(not_foldable("chr", "a lone surrogate is not a `Str` here")),
         None => Err(value_error("chr() arg not in range(0x110000)".to_string())),
     }
 }
@@ -1993,7 +2005,10 @@ pub(crate) fn pow_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<T
         .ok_or_else(|| not_passed("exp"))?;
     match base.clone().try_pow(exp.clone()) {
         Some(v) => Ok(v.into()),
-        None => Err(todo(&format!("pow({base}, {exp})"))),
+        None => Err(not_foldable(
+            format!("pow({base}, {exp})"),
+            "the result does not fit an `Int`",
+        )),
     }
 }
 
@@ -2014,7 +2029,10 @@ pub(crate) fn divmod_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResul
         a.clone().try_floordiv(b.clone()),
         a.clone().try_mod(b.clone()),
     ) else {
-        return Err(todo(&format!("divmod({a}, {b})")));
+        return Err(not_foldable(
+            format!("divmod({a}, {b})"),
+            "the result does not fit an `Int`",
+        ));
     };
     Ok(ValueObj::Tuple(vec![div, rem].into()).into())
 }

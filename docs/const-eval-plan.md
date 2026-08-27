@@ -286,11 +286,11 @@ x = -3000000000       # SyntaxError: invalid literal（レキサ）
 
 ---
 
-## フェーズ 4: 「畳み込み不可」をエラーと区別する
+## フェーズ 4: 「畳み込み不可」をエラーと区別する ✅
 
 原則 2。
 
-### 現状
+### 現状（実装前）
 
 const 関数は `EvalValueResult<TyParam>` を返し、`Err` は必ずハードエラーになる。
 「この呼び出しは畳み込めないので実行時に委ねる」が表現できないため、部分的にしか対応できない
@@ -308,6 +308,32 @@ const 関数は `EvalValueResult<TyParam>` を返し、`Err` は必ずハード�
 
 と分岐する。`todo(...)` を返している箇所（`int (out of range)`、`str(<Float>)`、`chr (surrogate)` など）を
 この新しい状態に移す。
+
+### 実装結果
+
+**投機的な畳み込みの経路は既にエラーを捨てていた**（`eval_t_params` は `ret.ok()`、
+`TyParam::App` の評価は `_ =>` で握り潰す）。const 呼び出しは const 位置でしか走らないので、
+「実行時に委ねる」側は最初から成立していた。残っていたのは**診断の質**で、
+
+```erg
+X = pow(2, 10000)
+# FeatureError: pow(2, 10000) is not supported yet in const context
+```
+
+は嘘だった（未実装ではなく、値が `ValueObj` に収まらないだけ）。
+
+`EvalValueError` に `not_foldable: bool` を追加し（`EvalValueResult` の型を 3 状態に変えるのは
+const 関数 100 箇所超の機械的な書き換えになるため、振る舞いだけを分けた）、
+`Context::call` の Builtin/Gen アームで `EvalError::unfoldable_call` に振り替える:
+
+```erg
+X = pow(2, 10000)
+# NotConstExpr: cannot fold `pow(2, 10000)`: the result does not fit an `Int`
+#   hint: bind it to a lowercase name (a run-time variable) and it is computed at run time
+```
+
+`todo(...)` は本当に未実装の箇所（`str` の `encoding` 引数）にだけ残した。
+テスト: `tests/should_err/unfoldable_const.er`。
 
 ---
 
@@ -391,7 +417,7 @@ codegen は `D` の静的型 `{[2, 1]}`（クラスは `List`）に合わせて�
 | 2 | フェーズ 1（再帰ガード） | ✅ `af970054` |
 | 3 | フェーズ 2（メソッド・添字） | ✅ `2ade62bd` |
 | 4 | フェーズ 3（Ratio / 整数範囲） | ✅ `01dd5a28`, `78217f57` |
-| 5 | フェーズ 4（畳み込み不可の区別） | 未着手 |
+| 5 | フェーズ 4（畳み込み不可の区別） | ✅ |
 | 6 | フェーズ 5（残りのオペレータ・関数） | 未着手 |
 | 7 | フェーズ 6（評価器再設計） | 未着手・設計判断が要る |
 

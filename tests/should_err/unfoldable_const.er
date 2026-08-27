@@ -1,0 +1,15 @@
+# A const function that cannot fold *this* call is not a missing feature: the
+# call is well-formed and the program runs, only the value has no compile-time
+# representation. These used to be reported as
+# `FeatureError: int (out of range) is not supported yet in const context`.
+BigInt = int("99999999999999999999999999999999999")   # ERR
+BigPow = pow(2, 10000)                                # ERR
+BigNat = nat("99999999999999999999999999999999999")   # ERR
+Surrogate = chr(0xD800)                               # ERR
+# `str` of a `Float` cannot reproduce CPython's shortest-repr rounding
+FloatStr = str(float 1.5)                             # ERR
+
+# the same expressions are fine at run time
+big_int = int("99999999999999999999999999999999999")
+big_pow = pow(2, 10000)
+print! big_int, big_pow

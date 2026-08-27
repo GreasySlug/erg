@@ -957,6 +957,11 @@ fn exec_const_op_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_unfoldable_const_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/unfoldable_const.er", 0, 5)
+}
+
+#[test]
 fn exec_stateful_const_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/stateful_const.er", 0, 7)
 }

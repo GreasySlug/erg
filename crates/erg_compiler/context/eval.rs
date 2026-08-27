@@ -27,7 +27,7 @@ use crate::ty::constructors::{
 };
 use crate::ty::free::HasLevel;
 use crate::ty::typaram::{IntervalOp, OpKind, TyParam};
-use crate::ty::value::{GenTypeObj, TypeObj, ValueObj};
+use crate::ty::value::{EvalValueError, GenTypeObj, TypeObj, ValueObj};
 use crate::ty::{
     ConstSubr, HasType, Predicate, SubrKind, SubrType, Type, UserConstSubr, ValueArgs, Visibility,
 };
@@ -1089,33 +1089,36 @@ impl Context {
                     Err((tp, errs))
                 }
             }
-            ConstSubr::Builtin(builtin) => builtin.call(args, self).map_err(|mut e| {
-                if e.core.loc.is_unknown() {
-                    e.core.loc = loc.loc();
-                }
-                (
-                    TyParam::Failure,
-                    EvalErrors::from(EvalError::new(
-                        *e.core,
-                        self.cfg.input.clone(),
-                        self.caused_by(),
-                    )),
-                )
-            }),
-            ConstSubr::Gen(gen) => gen.call(args, self).map_err(|mut e| {
-                if e.core.loc.is_unknown() {
-                    e.core.loc = loc.loc();
-                }
-                (
-                    TyParam::Failure,
-                    EvalErrors::from(EvalError::new(
-                        *e.core,
-                        self.cfg.input.clone(),
-                        self.caused_by(),
-                    )),
-                )
-            }),
+            ConstSubr::Builtin(builtin) => builtin
+                .call(args, self)
+                .map_err(|e| self.const_call_error(e, loc.loc())),
+            ConstSubr::Gen(gen) => gen
+                .call(args, self)
+                .map_err(|e| self.const_call_error(e, loc.loc())),
         }
+    }
+
+    /// A const function's failure, placed at `loc`.
+    ///
+    /// A call that merely could not be folded gets the diagnostic that says so,
+    /// with the way out; every context that does not need a constant has already
+    /// dropped it by the time this runs.
+    fn const_call_error(&self, mut e: EvalValueError, loc: Location) -> (TyParam, EvalErrors) {
+        if e.core.loc.is_unknown() {
+            e.core.loc = loc;
+        }
+        let err = if e.not_foldable {
+            EvalError::unfoldable_call(
+                self.cfg.input.clone(),
+                line!() as usize,
+                e.core.loc,
+                self.caused_by(),
+                e.core.main_message.clone(),
+            )
+        } else {
+            EvalError::new(*e.core, self.cfg.input.clone(), self.caused_by())
+        };
+        (TyParam::Failure, EvalErrors::from(err))
     }
 
     fn eval_const_def(&mut self, def: &Def) -> Failable<ValueObj> {

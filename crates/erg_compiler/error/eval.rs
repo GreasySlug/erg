@@ -197,6 +197,38 @@ impl EvalError {
         )
     }
 
+    /// A const function that could not fold this particular call, in a context
+    /// that needs a constant. `msg` already says what and why; the hint says
+    /// what to do about it.
+    pub fn unfoldable_call(
+        input: Input,
+        errno: usize,
+        loc: Location,
+        caused_by: String,
+        msg: String,
+    ) -> Self {
+        Self::new(
+            ErrorCore::new(
+                vec![SubMessage::ambiguous_new(
+                    loc,
+                    vec![],
+                    Some(switch_lang!(
+                        "japanese" => "小文字の名前(実行時変数)に束縛すれば、実行時に計算されます".to_string(),
+                        "simplified_chinese" => "绑定到小写名称(运行时变量)即可在运行时计算".to_string(),
+                        "traditional_chinese" => "繫結到小寫名稱(執行時變數)即可在執行時計算".to_string(),
+                        "english" => "bind it to a lowercase name (a run-time variable) and it is computed at run time".to_string(),
+                    )),
+                )],
+                msg,
+                errno,
+                NotConstExpr,
+                loc,
+            ),
+            input,
+            caused_by,
+        )
+    }
+
     pub fn index_out_of_range(
         input: Input,
         errno: usize,

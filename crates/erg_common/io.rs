@@ -52,11 +52,21 @@ impl DummyStdin {
     }
 
     pub fn reread_lines(&self, ln_begin: usize, ln_end: usize) -> Vec<String> {
-        self.lines[ln_begin - 1..=ln_end - 1].to_vec()
+        let end = ln_end.min(self.lines.len());
+        if ln_begin > end {
+            return vec![];
+        }
+        self.lines[ln_begin - 1..=end - 1].to_vec()
     }
 
     pub fn reread(&self) -> Option<String> {
         self.lines.get(self.current_line).cloned()
+    }
+
+    /// The line number the next read will hand out, counting from 1 -- the
+    /// same convention as the interactive stdin's.
+    pub const fn lineno(&self) -> usize {
+        self.current_line + 1
     }
 }
 
@@ -216,7 +226,12 @@ impl Input {
     }
 
     pub fn lineno(&self) -> usize {
-        GLOBAL_STDIN.lineno()
+        match &self.kind {
+            // a scripted REPL reads from its own lines, so the global stdin's
+            // line number never moves and would put every error on line 1
+            InputKind::DummyREPL(dummy) => dummy.lineno(),
+            _ => GLOBAL_STDIN.lineno(),
+        }
     }
 
     pub fn block_begin(&self) -> usize {
@@ -410,7 +425,12 @@ impl Input {
                 let block_begin = self.block_begin().saturating_sub(1);
                 GLOBAL_STDIN.reread_lines(ln_begin + block_begin, ln_end + block_begin)
             }
-            InputKind::DummyREPL(dummy) => dummy.reread_lines(ln_begin, ln_end),
+            // the lexer numbers a cell's lines from 1, so the same offset the
+            // interactive REPL applies is needed to find them again
+            InputKind::DummyREPL(dummy) => {
+                let block_begin = self.block_begin().saturating_sub(1);
+                dummy.reread_lines(ln_begin + block_begin, ln_end + block_begin)
+            }
             InputKind::Dummy => panic!("cannot read lines from a dummy file"),
         }
     }

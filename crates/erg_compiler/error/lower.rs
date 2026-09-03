@@ -78,10 +78,10 @@ impl LowerError {
             "english" => format!("the evaluation result of the expression (: {}) is not used", expr.ref_t()),
         );
         let hint = switch_lang!(
-            "japanese" => format!("呼び出しの()を忘れていませんか?"),
-            "simplified_chinese" => format!("忘记了调用的()吗?"),
-            "traditional_chinese" => format!("忘記了調用的()嗎?"),
-            "english" => format!("perhaps you forgot the () in the call?"),
+            "japanese" => "呼び出しの()を忘れていませんか?".to_string(),
+            "simplified_chinese" => "忘记了调用的()吗?".to_string(),
+            "traditional_chinese" => "忘記了調用的()嗎?".to_string(),
+            "english" => "perhaps you forgot the () in the call?".to_string(),
         );
         Self::new(
             ErrorCore::new(
@@ -1078,10 +1078,10 @@ impl LowerError {
             ErrorCore::new(
                 vec![SubMessage::only_loc(loc)],
                 switch_lang!(
-                    "japanese" => format!("型はトップレベルで定義されなければなりません"),
-                    "simplified_chinese" => format!("类型必须在顶层定义"),
-                    "traditional_chinese" => format!("類型必須在頂層定義"),
-                    "english" => format!("types must be defined at the top level"),
+                    "japanese" => "型はトップレベルで定義されなければなりません".to_string(),
+                    "simplified_chinese" => "类型必须在顶层定义".to_string(),
+                    "traditional_chinese" => "類型必須在頂層定義".to_string(),
+                    "english" => "types must be defined at the top level".to_string(),
                 ),
                 errno,
                 TypeError,
@@ -1097,10 +1097,10 @@ impl LowerError {
             ErrorCore::new(
                 vec![SubMessage::only_loc(loc)],
                 switch_lang!(
-                    "japanese" => format!("d.erファイル内では宣言、別名定義のみが許可されています"),
-                    "simplified_chinese" => format!("在d.er文件中只允许声明和别名定义"),
-                    "traditional_chinese" => format!("在d.er文件中只允許聲明和別名定義"),
-                    "english" => format!("declarations and alias definitions are only allowed in d.er files"),
+                    "japanese" => "d.erファイル内では宣言、別名定義のみが許可されています".to_string(),
+                    "simplified_chinese" => "在d.er文件中只允许声明和别名定义".to_string(),
+                    "traditional_chinese" => "在d.er文件中只允許聲明和別名定義".to_string(),
+                    "english" => "declarations and alias definitions are only allowed in d.er files".to_string(),
                 ),
                 errno,
                 SyntaxError,

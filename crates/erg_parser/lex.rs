@@ -1801,10 +1801,10 @@ impl Iterator for Lexer /*<'a>*/ {
                     line!() as usize,
                     token.loc(),
                     switch_lang!(
-                        "japanese" => format!("バッククォート(`)が閉じられていません"),
-                        "simplified_chinese" => format!("反引号(`)未关闭"),
-                        "traditional_chinese" => format!("反引號(`)未關閉"),
-                        "english" => format!("back quotes (`) not closed"),
+                        "japanese" => "バッククォート(`)が閉じられていません",
+                        "simplified_chinese" => "反引号(`)未关闭",
+                        "traditional_chinese" => "反引號(`)未關閉",
+                        "english" => "back quotes (`) not closed",
                     ),
                     None,
                 )))

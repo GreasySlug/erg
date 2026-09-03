@@ -845,7 +845,7 @@ impl fmt::Display for CompileErrors {
 
 impl CompileErrors {
     pub fn flush(&mut self) -> Self {
-        Self(self.0.drain(..).collect())
+        Self(std::mem::take(&mut self.0))
     }
 
     pub fn take(&mut self) -> Self {

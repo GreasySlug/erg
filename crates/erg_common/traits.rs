@@ -240,7 +240,7 @@ pub trait Stream<T>: Sized {
 
     #[inline]
     fn take_all(&mut self) -> Vec<T> {
-        self.ref_mut_payload().drain(..).collect()
+        std::mem::take(self.ref_mut_payload())
     }
 
     fn extend<I>(&mut self, iter: I)

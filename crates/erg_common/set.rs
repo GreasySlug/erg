@@ -323,7 +323,7 @@ impl<T: Hash + Eq> Set<T> {
     #[inline]
     pub fn take_all(&mut self) -> Self {
         Self {
-            elems: self.elems.drain().collect(),
+            elems: std::mem::take(&mut self.elems),
         }
     }
 

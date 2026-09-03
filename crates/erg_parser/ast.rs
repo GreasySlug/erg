@@ -3072,6 +3072,11 @@ impl ConstDefBody {
 pub struct ConstDef {
     pub ident: ConstIdentifier,
     pub body: ConstDefBody,
+    /// The signature when the definition is a subroutine, whose parameters are
+    /// part of it: without them `F(X) = ...` comes back as `F = ...` and the
+    /// body is evaluated with the parameters unbound. `None` for a plain
+    /// `name = value`, which is all a record field can be.
+    pub subr_sig: Option<SubrSignature>,
 }
 
 impl NestedDisplay for ConstDef {
@@ -3086,14 +3091,26 @@ impl_locational!(ConstDef, ident, body);
 #[pymethods]
 impl ConstDef {
     #[staticmethod]
-    pub const fn new(ident: ConstIdentifier, body: ConstDefBody) -> Self {
-        Self { ident, body }
+    pub const fn new(
+        ident: ConstIdentifier,
+        body: ConstDefBody,
+        subr_sig: Option<SubrSignature>,
+    ) -> Self {
+        Self {
+            ident,
+            body,
+            subr_sig,
+        }
     }
 }
 
 impl ConstDef {
     pub fn downgrade(self) -> Def {
-        Def::new(Signature::new_var(self.ident), self.body.downgrade())
+        let sig = match self.subr_sig {
+            Some(subr) => Signature::Subr(subr),
+            None => Signature::new_var(self.ident),
+        };
+        Def::new(sig, self.body.downgrade())
     }
 }
 

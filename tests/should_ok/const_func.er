@@ -159,3 +159,31 @@ InBranch(N: Int): Int =
 InBranch3: {4} = InBranch(3)
 assert InBranch3 == 4
 assert InBranch(-1) == 0
+
+# A *subroutine* defined in a const function's body.
+#
+# The parameters used to be dropped on the way in: a const body is stored as a
+# `ConstBlock`, whose `ConstDef` held only an identifier, so `Bump(M) = M + N`
+# came back as `Bump = M + N` and was evaluated with `M` unbound -- even when it
+# captured nothing.
+#
+# It reads the frame it is called from, which is the frame that defined it: the
+# name cannot leave the body, so that frame is always still on the chain. That
+# is the same thing the emitted Python closure reads.
+Nest(N: Int): Int =
+    Bump(M: Int): Int = M + N
+    Bump(1) + Bump(2)
+Nest3: {9} = Nest(3)
+assert Nest3 == 9
+# a second call must not reuse the first one's captures
+Nest4: {11} = Nest(4)
+assert Nest4 == 11
+assert Nest(0) == 3
+
+# capturing nothing is the same path, and used to fail the same way
+Pure(N: Int): Int =
+    Sq(M: Int): Int = M * M
+    Sq(4) + N
+Pure1: {17} = Pure(1)
+assert Pure1 == 17
+assert Pure(10) == 26

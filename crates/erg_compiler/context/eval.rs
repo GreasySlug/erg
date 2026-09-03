@@ -1313,6 +1313,39 @@ impl Context {
                 ));
             };
             let __name__ = ident.inspect();
+            // A subroutine definition defines a subroutine. Evaluating the body
+            // here would run it with its own parameters unbound, which is what
+            // a definition inside a const function's body used to do -- even one
+            // that captured nothing failed with a `NameError` on its parameter.
+            //
+            // The subroutine gets no `def_scope` (a body scope is re-entered with
+            // different surroundings, so it cannot identify a definition), and
+            // that is exactly what makes it read the frame it is called from:
+            // `Context::call` falls back to the caller when there is no defining
+            // scope to look up. Since the name cannot leave the body, the frame
+            // that defined it is always still on the chain.
+            if let Signature::Subr(subr) = &def.sig {
+                if !subr.params.is_empty() {
+                    let obj = match self.register_const_subr(subr, &def.body.block, def.def_kind())
+                    {
+                        Ok(obj) => obj,
+                        Err((obj, es)) => {
+                            errs.extend(es);
+                            obj
+                        }
+                    };
+                    if let Err(es) =
+                        self.register_gen_const(ident, obj, None, def.def_kind().is_other())
+                    {
+                        errs.extend(es);
+                    }
+                    return if errs.is_empty() {
+                        Ok(ValueObj::None)
+                    } else {
+                        Err((ValueObj::None, errs))
+                    };
+                }
+            }
             let vis = self
                 .instantiate_vis_modifier(def.sig.vis())
                 .map_err(|es| (ValueObj::None, es))?;

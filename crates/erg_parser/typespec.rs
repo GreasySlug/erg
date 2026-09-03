@@ -212,7 +212,15 @@ impl Parser {
             let err = ParseError::feature_error(line!() as usize, def.sig.loc(), "def pattern");
             return Err(err);
         };
-        Ok(ConstDef::new(ident.clone(), body))
+        let ident = ident.clone();
+        // A subroutine's parameters belong to its definition. Keeping only the
+        // identifier turned `F(X) = ...` into `F = ...`, so a definition inside
+        // a const function's body was evaluated with its parameters unbound.
+        let subr_sig = match def.sig {
+            Signature::Subr(subr) => Some(subr),
+            Signature::Var(_) => None,
+        };
+        Ok(ConstDef::new(ident, body, subr_sig))
     }
 
     fn accessor_to_type_spec(accessor: Accessor) -> Result<TypeSpec, ParseError> {

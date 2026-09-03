@@ -40,6 +40,14 @@ const PRELUDE: &str = concat!(
     "    match K:\n",
     "        0 -> 100\n",
     "        n -> n * 2\n",
+    // a subroutine defined inside a body: it reads the frame it is called
+    // from, the way the emitted Python closure reads its enclosing frame
+    "Nest(N: Int): Int =\n",
+    "    Bump(M: Int): Int = M + N\n",
+    "    Bump(1) + Bump(2)\n",
+    "Pure(N: Int): Int =\n",
+    "    Sq(M: Int): Int = M * M\n",
+    "    Sq(4) + N\n",
     "Which(S: Str): Int =\n",
     "    match S:\n",
     "        \"a\" -> 1\n",
@@ -286,6 +294,12 @@ const CASES: &[&str] = &[
     "{2: 20, 1: 10}",
     "{3: 1, 1: 3, 2: 2}",
     "{1: 2, 3: 4}",
+    // a subroutine defined in a body, whose captures belong to one call
+    "Nest(3)",
+    "Nest(4)",
+    "Nest(0)",
+    "Pure(1)",
+    "Pure(10)",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.

@@ -2165,7 +2165,7 @@ impl Context {
     /// Register a user-defined const subroutine (compile-time function with parameters).
     /// Instead of evaluating the body immediately, we create a UserConstSubr that stores
     /// the function definition and evaluates it when called.
-    fn register_const_subr(
+    pub(crate) fn register_const_subr(
         &mut self,
         sig: &ast::SubrSignature,
         block: &ast::Block,

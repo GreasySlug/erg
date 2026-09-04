@@ -174,13 +174,20 @@ Codegen follows CPython's model; the pieces that have to agree are spread out:
 
 - A variable a nested function reads lives in a **cell owned by the defining frame**,
   made in that frame's prologue (`MAKE_CELL`, before `COPY_FREE_VARS`/`RESUME`) —
-  one cell per variable per frame, so closures made in a loop share the loop
-  variable (late binding, as in Python and the transpiler). The closure tuple
-  carries the cells; a callee never boxes its freevars.
+  one cell per variable per frame. The closure tuple carries the cells; a callee
+  never boxes its freevars.
+- A loop body is a procedure called once per element, so its own bindings (its
+  parameter, its locals) are fresh on every iteration and a closure made in the body
+  keeps that iteration's value. A body whose own binding is captured is therefore
+  **not inlined** (`loop_body_needs_frame`, applied identically by the capture
+  pre-scan and by `emit_for_instr`/`emit_while_instr`): it goes through `for__` /
+  `while__` as a real function, like a body passed as a variable always did. Splicing
+  it in would leave one shared slot and Python's late binding. (The transpiler still
+  writes `for i in …:` and differs here.)
 - Which locals need cells comes from `collect_captures` (a pre-scan over the HIR using
   the `captured_names` lowering records) plus a per-function walk at emit time
-  (`frame_cells`). Lambdas that codegen inlines (`if` branches, `for!`/`while!` bodies,
-  `match` arms) are walked as part of the host frame — their `captured_names` include
+  (`frame_cells`). Lambdas that codegen inlines (`if` branches, `match` arms, loop
+  bodies with nothing of their own captured) are walked as part of the host frame — their `captured_names` include
   the host's own parameters, which must not become cells. Desugared lambdas
   (comprehensions) share a `Location`, so nothing is keyed by location.
 - Slots are numbered as names are met, but `COPY_FREE_VARS` fills the *trailing* slots,

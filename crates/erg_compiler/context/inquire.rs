@@ -722,7 +722,11 @@ impl Context {
         None
     }
 
-    pub(crate) fn rec_get_decl_info(
+    /// The declaration (or not-yet-lowered definition) of `ident` in this scope
+    /// alone: outer scopes are not consulted. A definition implements a
+    /// declaration of the scope it is defined in; one of the same name in an
+    /// enclosing scope is a different variable, which the definition shadows.
+    pub(crate) fn get_decl_info(
         &self,
         ident: &Identifier,
         acc_kind: AccessKind,
@@ -745,7 +749,7 @@ impl Context {
             }
         }
         for method_ctx in self.methods_list.iter() {
-            match method_ctx.rec_get_decl_info(ident, acc_kind, input, namespace) {
+            match method_ctx.get_decl_info(ident, acc_kind, input, namespace) {
                 Triple::Ok(vi) => {
                     return Triple::Ok(vi);
                 }
@@ -754,6 +758,20 @@ impl Context {
                 }
                 Triple::None => {}
             }
+        }
+        Triple::None
+    }
+
+    pub(crate) fn rec_get_decl_info(
+        &self,
+        ident: &Identifier,
+        acc_kind: AccessKind,
+        input: &Input,
+        namespace: &Context,
+    ) -> Triple<VarInfo, TyCheckError> {
+        match self.get_decl_info(ident, acc_kind, input, namespace) {
+            Triple::None => {}
+            found => return found,
         }
         if acc_kind.is_local() {
             if let Some(parent) = self

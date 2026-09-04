@@ -275,8 +275,14 @@ impl Context {
         } else {
             AccessKind::Name
         };
+        // Only a declaration of the scope the subroutine is defined in can be
+        // the one it implements. Looking outward as well found the hoisted
+        // entry of a *later* outer definition of the same name (`f = 3` after
+        // a function whose body defines its own `f`): an unbound type variable,
+        // which was then taken as this signature's type, so the nested
+        // definition never got a subroutine type and lowered to a dummy.
         let opt_decl_sig_t = match self
-            .rec_get_decl_info(&sig.ident, kind, &self.cfg.input, self)
+            .get_decl_info(&sig.ident, kind, &self.cfg.input, self)
             .ok()
             .map(|vi| vi.t)
         {

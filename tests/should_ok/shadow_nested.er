@@ -1,0 +1,64 @@
+# A definition inside a function whose name a *later* module-level definition
+# also uses. The module-level one is hoisted before any body is lowered, and
+# the nested signature used to take that hoisted entry (an unbound type
+# variable) as its own declaration, so the nested definition got no type at
+# all and was stored by name while its call site read a local slot nothing
+# had written to -- the interpreter crashed, with no error from the checker.
+
+# a nested function, then a module-level variable of the same name
+pair(n: Int): Int =
+    f(x: Int): Int = x + n
+    f(1) + 0
+f = 3
+assert pair(2) == 3
+assert f == 3
+
+# a nested variable, then a module-level variable of the same name
+scaled(n: Int): Int =
+    k = n + 1
+    k * 2
+k = "k"
+assert scaled(3) == 8
+assert k == "k"
+
+# a nested function, then a module-level function of the same name
+twice(n: Int): Int =
+    g(x: Int): Int = x * 2
+    g(n)
+g(s: Str): Str = s + "!"
+assert twice(4) == 8
+assert g("hi") == "hi!"
+
+# two sibling functions each defining their own inner `h`, and a module-level
+# `h` after both
+first(n: Int): Int =
+    h(x: Int): Int = x + n
+    h(1)
+second(n: Int): Int =
+    h(x: Int): Int = x * n
+    h(2)
+h = 10
+assert first(2) == 3
+assert second(2) == 4
+assert h == 10
+
+# the module-level name defined *before* the function keeps working too
+m = 5
+shadow(n: Int): Int =
+    m(x: Int): Int = x - n
+    m(1)
+assert shadow(1) == 0
+assert m == 5
+
+# a nested function shadowing an outer one that is defined later and closed
+# over elsewhere
+outer(n: Int): Int =
+    inner(x: Int): Int = x + n
+    inner(1)
+caller(n: Int): Int = inner(n) * 10
+inner(x: Int): Int = x + 100
+assert outer(1) == 2
+assert caller(1) == 1010
+assert inner(1) == 101
+
+print! "OK"

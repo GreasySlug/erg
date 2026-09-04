@@ -6,6 +6,7 @@
 //! Use `self.opcode_set` instead of branching on `self.py_version.minor` so that adding
 //! new CPython versions (3.12, 3.13, 3.14, …) only requires updating `opcode_set.rs` and
 //! adding `opcodeNNN.rs` in `erg_common`.
+use std::collections::HashSet;
 use std::fmt;
 use std::process;
 
@@ -40,6 +41,7 @@ use crate::error::CompileError;
 use crate::hir::DefaultParamSignature;
 use crate::hir::GlobSignature;
 use crate::hir::ListWithLength;
+use crate::hir::Module;
 use crate::hir::{
     Accessor, Args, BinOp, Block, Call, ClassDef, Def, DefBody, Dict, Expr, GuardClause,
     Identifier, Lambda, List, Literal, NonDefaultParamSignature, Params, PatchDef, PosArg, ReDef,
@@ -49,11 +51,11 @@ use crate::ty::codeobj::{CodeObj, CodeObjFlags, MakeFunctionFlags};
 use crate::ty::value::{GenTypeObj, ValueObj};
 use crate::ty::SubrType;
 use crate::ty::{HasType, Type, TypeCode, TypePair, VisibilityModifier};
-use crate::varinfo::VarInfo;
+use crate::varinfo::{AbsLocation, VarInfo};
 use AccessKind::*;
 use Type::*;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum RegisterNameKind {
     Import,
     Fast,
@@ -125,6 +127,327 @@ fn escape_name(
     }
 }
 
+/// The `VarInfo` of each parameter, in [`PyCodeGenerator::gen_param_names`] order.
+fn param_vis(params: &Params) -> impl Iterator<Item = &VarInfo> {
+    params
+        .non_defaults
+        .iter()
+        .map(|p| &p.vi)
+        .chain(params.defaults.iter().map(|p| &p.sig.vi))
+        .chain(params.var_params.iter().map(|p| &p.vi))
+        .chain(params.kw_var_params.iter().map(|p| &p.vi))
+}
+
+/// Each parameter's name and `VarInfo`, in the same order.
+fn param_names_vis(params: &Params) -> impl Iterator<Item = (Option<&Str>, &VarInfo)> {
+    params
+        .non_defaults
+        .iter()
+        .map(|p| (p.inspect(), &p.vi))
+        .chain(params.defaults.iter().map(|p| (p.sig.inspect(), &p.sig.vi)))
+        .chain(params.var_params.iter().map(|p| (p.inspect(), &p.vi)))
+        .chain(params.kw_var_params.iter().map(|p| (p.inspect(), &p.vi)))
+}
+
+/// What the code generator has to know about closures before it emits
+/// anything: the definitions some nested function closes over.
+///
+/// A variable a nested function reads lives in a cell, and the cell is the
+/// frame's: made when the frame starts, held by every closure made in it, read
+/// and written through by the frame itself. Lowering records what each
+/// function captures on that function; this turns it around, into what the
+/// scope binding the variable has in hand -- a frame finds what it has to
+/// hold by looking its own definitions up here ([`HostFrame::cells`]).
+#[derive(Debug, Default)]
+struct Captures {
+    defs: HashSet<AbsLocation>,
+}
+
+fn collect_captures(module: &Module) -> Captures {
+    let mut caps = Captures::default();
+    let mut walk = CaptureWalk {
+        caps: &mut caps,
+        into_functions: true,
+    };
+    // nothing read at module level is captured, so what its inlined blocks
+    // read is not looked at
+    let mut module_frame = HostFrame::default();
+    for chunk in module.iter() {
+        walk.expr(chunk, &mut module_frame);
+    }
+    caps
+}
+
+/// The frame of the function whose body is being walked.
+///
+/// A lambda codegen inlines (a branch of `if`, the body of `for!`, an arm of
+/// `match`, ...) is no function at run time: its parameters and locals are
+/// this frame's, what it reads from this frame is a plain local, and only
+/// what it reads from further out is captured -- by this function. Lowering
+/// records the reads on the inlined lambda without telling them apart, and
+/// which is which is settled once the whole body is seen, as a nested
+/// function is visible before its definition.
+#[derive(Default)]
+struct HostFrame {
+    /// the frame's own definitions, with the name each has as a slot
+    own: Vec<(AbsLocation, Str)>,
+    read_inline: Vec<AbsLocation>,
+}
+
+impl HostFrame {
+    fn owns(&self, loc: &AbsLocation) -> bool {
+        self.own.iter().any(|(own, _)| own == loc)
+    }
+
+    fn define(&mut self, loc: &AbsLocation, name: Str) {
+        if loc.loc != Location::Unknown && !self.owns(loc) {
+            self.own.push((loc.clone(), name));
+        }
+    }
+
+    fn define_params(&mut self, params: &Params) {
+        for (name, vi) in param_names_vis(params) {
+            // a parameter's slot is its bare name (see `escape_ident`)
+            if let Some(name) = name.filter(|n| &n[..] != "_") {
+                self.define(&vi.def_loc, name.clone());
+            }
+        }
+    }
+
+    fn read_inline(&mut self, captured: &[Identifier]) {
+        for ident in captured {
+            if ident.vi.def_loc.loc != Location::Unknown {
+                self.read_inline.push(ident.vi.def_loc.clone());
+            }
+        }
+    }
+
+    /// What the frame's inlined blocks read from further out is captured --
+    /// by this function.
+    fn finish(self, caps: &mut Captures) {
+        let Self { own, read_inline } = self;
+        for loc in read_inline {
+            if !own.iter().any(|(o, _)| o == &loc) {
+                caps.defs.insert(loc);
+            }
+        }
+    }
+
+    /// The frame's own definitions that some nested function closes over:
+    /// what it has to hold in cells, in definition order.
+    fn cells(&self, caps: &Captures) -> Vec<Str> {
+        self.own
+            .iter()
+            .filter(|(loc, _)| caps.defs.contains(loc))
+            .map(|(_, name)| name.clone())
+            .collect()
+    }
+}
+
+/// The walk over the module, or over one function's body.
+///
+/// `into_functions`: whether a function met on the way is walked as a frame
+/// of its own (the pass over the module) or only noted as a definition of
+/// the frame being walked (a frame asking what it has to hold).
+struct CaptureWalk<'c> {
+    caps: &'c mut Captures,
+    into_functions: bool,
+}
+
+impl CaptureWalk<'_> {
+    /// A function of its own: what it reads from outside is captured, and
+    /// its body is a frame.
+    fn function(&mut self, params: &Params, body: &Block, captured: &[Identifier]) {
+        if !self.into_functions {
+            return;
+        }
+        for ident in captured {
+            if ident.vi.def_loc.loc != Location::Unknown {
+                self.caps.defs.insert(ident.vi.def_loc.clone());
+            }
+        }
+        let frame = self.frame(params, body);
+        frame.finish(self.caps);
+    }
+
+    /// A function's frame: its parameters and locals, those its inlined
+    /// blocks bring in included.
+    fn frame(&mut self, params: &Params, body: &Block) -> HostFrame {
+        let mut frame = HostFrame::default();
+        frame.define_params(params);
+        self.params(params, &mut frame);
+        for chunk in body.iter() {
+            self.expr(chunk, &mut frame);
+        }
+        frame
+    }
+
+    fn params(&mut self, params: &Params, frame: &mut HostFrame) {
+        for param in params.defaults.iter() {
+            self.expr(&param.default_val, frame);
+        }
+        for guard in params.guards.iter() {
+            match guard {
+                GuardClause::Condition(cond) => self.expr(cond, frame),
+                GuardClause::Bind(bind) => self.def(bind, frame),
+            }
+        }
+    }
+
+    /// `inlined`: codegen splices the body into the enclosing function
+    fn lambda(&mut self, lambda: &Lambda, inlined: bool, frame: &mut HostFrame) {
+        if inlined {
+            frame.define_params(&lambda.params);
+            frame.read_inline(&lambda.captured_names);
+            self.params(&lambda.params, frame);
+            for chunk in lambda.body.iter() {
+                self.expr(chunk, frame);
+            }
+        } else {
+            self.function(&lambda.params, &lambda.body, &lambda.captured_names);
+        }
+    }
+
+    fn def(&mut self, def: &Def, frame: &mut HostFrame) {
+        let ident = def.sig.ident();
+        frame.define(&ident.vi.def_loc, escape_ident(ident.clone()));
+        match &def.sig {
+            Signature::Subr(sig) => {
+                self.function(&sig.params, &def.body.block, &sig.captured_names)
+            }
+            _ => {
+                for chunk in def.body.block.iter() {
+                    self.expr(chunk, frame);
+                }
+            }
+        }
+    }
+
+    fn call(&mut self, call: &Call, frame: &mut HostFrame) {
+        // the same decision `emit_call_local` makes
+        let inlined = match (call.obj.as_ref(), call.attr_name.as_ref()) {
+            (Expr::Accessor(Accessor::Ident(ident)), None) if ident.vis().is_private() => {
+                match &ident.inspect()[..] {
+                    "if" | "if!" | "match" | "match!" | "with!" => true,
+                    // a loop is inlined only when its body is written as a lambda
+                    "for" | "for!" | "while!" => matches!(
+                        call.args.pos_args.get(1),
+                        Some(arg) if matches!(arg.expr, Expr::Lambda(_))
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        self.expr(&call.obj, frame);
+        for arg in call.args.iter() {
+            match arg {
+                Expr::Lambda(lambda) => self.lambda(lambda, inlined, frame),
+                other => self.expr(other, frame),
+            }
+        }
+    }
+
+    fn acc(&mut self, acc: &Accessor, frame: &mut HostFrame) {
+        if let Accessor::Attr(attr) = acc {
+            self.expr(&attr.obj, frame);
+        }
+    }
+
+    fn expr(&mut self, expr: &Expr, frame: &mut HostFrame) {
+        match expr {
+            Expr::Literal(_) | Expr::Import(_) => {}
+            Expr::Accessor(acc) => self.acc(acc, frame),
+            Expr::List(List::Normal(lis)) => {
+                for elem in lis.elems.iter() {
+                    self.expr(elem, frame);
+                }
+            }
+            Expr::List(List::Comprehension(lis)) => {
+                self.expr(&lis.elem, frame);
+                self.expr(&lis.guard, frame);
+            }
+            Expr::List(List::WithLength(lis)) => {
+                self.expr(&lis.elem, frame);
+                if let Some(len) = lis.len.as_ref() {
+                    self.expr(len, frame);
+                }
+            }
+            Expr::Tuple(Tuple::Normal(tup)) => {
+                for elem in tup.elems.iter() {
+                    self.expr(elem, frame);
+                }
+            }
+            Expr::Set(Set::Normal(set)) => {
+                for elem in set.elems.iter() {
+                    self.expr(elem, frame);
+                }
+            }
+            Expr::Set(Set::WithLength(set)) => {
+                self.expr(&set.elem, frame);
+                self.expr(&set.len, frame);
+            }
+            Expr::Dict(Dict::Normal(dict)) => {
+                for kv in dict.kvs.iter() {
+                    self.expr(&kv.key, frame);
+                    self.expr(&kv.value, frame);
+                }
+            }
+            Expr::Dict(Dict::Comprehension(dict)) => {
+                self.expr(&dict.key, frame);
+                self.expr(&dict.value, frame);
+                self.expr(&dict.guard, frame);
+            }
+            Expr::Record(record) => {
+                for attr in record.attrs.iter() {
+                    self.def(attr, frame);
+                }
+            }
+            Expr::BinOp(bin) => {
+                self.expr(&bin.lhs, frame);
+                self.expr(&bin.rhs, frame);
+            }
+            Expr::UnaryOp(unary) => self.expr(&unary.expr, frame),
+            Expr::Call(call) => self.call(call, frame),
+            Expr::Lambda(lambda) => self.lambda(lambda, false, frame),
+            Expr::Def(def) => self.def(def, frame),
+            Expr::ClassDef(class) => {
+                if let Some(sup) = class.require_or_sup.as_ref() {
+                    self.expr(sup, frame);
+                }
+                for methods in class.methods_list.iter() {
+                    for chunk in methods.defs.iter() {
+                        self.expr(chunk, frame);
+                    }
+                }
+            }
+            Expr::PatchDef(patch) => {
+                self.expr(&patch.base, frame);
+                for chunk in patch.methods.iter() {
+                    self.expr(chunk, frame);
+                }
+            }
+            Expr::ReDef(redef) => {
+                self.acc(&redef.attr, frame);
+                for chunk in redef.block.iter() {
+                    self.expr(chunk, frame);
+                }
+            }
+            Expr::TypeAsc(asc) => self.expr(&asc.expr, frame),
+            Expr::Code(block) | Expr::Compound(block) => {
+                for chunk in block.iter() {
+                    self.expr(chunk, frame);
+                }
+            }
+            Expr::Dummy(dummy) => {
+                for chunk in dummy.iter() {
+                    self.expr(chunk, frame);
+                }
+            }
+        }
+    }
+}
+
 fn escape_ident(ident: Identifier) -> Str {
     let vis = ident.vis();
     if &ident.inspect()[..] == "Self" {
@@ -164,6 +487,10 @@ pub struct PyCodeGenUnit {
     pub(crate) py_version: PythonVersion,
     pub(crate) codeobj: CodeObj,
     pub(crate) captured_vars: Vec<Str>,
+    /// The locals whose slot holds a cell (3.11+): a local some nested function
+    /// closes over is made a cell where it is bound, and is read and written
+    /// through the cell from then on.
+    pub(crate) cells: Vec<Str>,
     pub(crate) stack_len: u32, // the maximum stack size
     pub(crate) prev_lineno: u32,
     pub(crate) lasti: usize,
@@ -206,6 +533,7 @@ impl PyCodeGenUnit {
             py_version,
             codeobj: CodeObj::empty(params, kwonlyargcount, filename, name, firstlineno, flags),
             captured_vars: vec![],
+            cells: vec![],
             stack_len: 0,
             prev_lineno: firstlineno,
             lasti: 0,
@@ -244,6 +572,9 @@ pub struct PyCodeGenerator {
     err_ops_loaded: bool,
     unit_size: usize,
     units: PyCodeGenStack,
+    /// What is closed over, collected from the whole module before anything
+    /// is emitted. See [`collect_captures`].
+    captures: Captures,
     pub(crate) fresh_gen: SharedFreshNameGenerator,
 }
 
@@ -279,6 +610,7 @@ impl PyCodeGenerator {
             err_ops_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
+            captures: Captures::default(),
             fresh_gen: SharedFreshNameGenerator::new("codegen"),
         }
     }
@@ -307,6 +639,7 @@ impl PyCodeGenerator {
             err_ops_loaded: false,
             unit_size: 0,
             units: PyCodeGenStack::empty(),
+            captures: Captures::default(),
             fresh_gen: self.fresh_gen.clone(),
         }
     }
@@ -703,7 +1036,8 @@ impl PyCodeGenerator {
                     .iter()
                     .position(|f| &**f == name)
                 {
-                    // in 3.11+ deref args index into the unified varnames (localsplus)
+                    // in 3.11+ deref args index into the unified varnames (localsplus);
+                    // before, into cellvars then freevars
                     let idx = if self.opcode_set.is_3_11_plus() {
                         self.cur_block_codeobj()
                             .varnames
@@ -711,8 +1045,19 @@ impl PyCodeGenerator {
                             .position(|v| &**v == name)
                             .unwrap_or(idx)
                     } else {
-                        idx
+                        self.cur_block_codeobj().cellvars.len() + idx
                     };
+                    Some(Name::deref(idx))
+                } else if self.opcode_set.is_3_11_plus()
+                    && self.cur_block().cells.iter().any(|c| &**c == name)
+                {
+                    // a local that was made a cell where it was bound
+                    let idx = self
+                        .cur_block_codeobj()
+                        .varnames
+                        .iter()
+                        .position(|v| &**v == name)
+                        .expect("a cell is always a local");
                     Some(Name::deref(idx))
                 } else if let Some(idx) = self
                     .cur_block_codeobj()
@@ -790,17 +1135,19 @@ impl PyCodeGenerator {
                 {
                     block.codeobj.cellvars.push(Str::rc(name));
                 }
-            } else if is_3_11_plus && def_idx < nth && nth < cur_idx {
-                // Variables captured from a scope further out than the immediate parent
-                // must be passed through every intermediate function as a freevar
-                // (3.11+: closure values are copied with COPY_FREE_VARS,
-                // so each level needs its own slot)
+            } else if def_idx < nth && nth < cur_idx {
+                // A variable captured from a scope further out than the
+                // immediate parent passes through every function in between as
+                // a freevar of its own: that is where the function in between
+                // takes the cell from when it builds the closure.
                 if !block.codeobj.freevars.iter().any(|f| &**f == name)
-                    && !block.codeobj.varnames.iter().any(|v| &**v == name)
+                    && !block.codeobj.cellvars.iter().any(|c| &**c == name)
                 {
                     block.codeobj.freevars.push(Str::rc(name));
-                    // in 3.11 freevars are unified with varnames
-                    block.codeobj.varnames.push(Str::rc(name));
+                    if is_3_11_plus && !block.codeobj.varnames.iter().any(|v| &**v == name) {
+                        // in 3.11 freevars are unified with varnames
+                        block.codeobj.varnames.push(Str::rc(name));
+                    }
                 }
             }
         }
@@ -832,7 +1179,9 @@ impl PyCodeGenerator {
                     Name::deref(self.cur_block_codeobj().varnames.len() - 1)
                 } else {
                     // cellvarsのpushはrec_search()で行われる
-                    Name::deref(self.cur_block_codeobj().freevars.len() - 1)
+                    // a deref indexes cellvars then freevars
+                    let codeobj = self.cur_block_codeobj();
+                    Name::deref(codeobj.cellvars.len() + codeobj.freevars.len() - 1)
                 }
             }
             None => {
@@ -1122,16 +1471,39 @@ impl PyCodeGenerator {
     }
 
     pub(crate) fn emit_store_instr(&mut self, ident: Identifier, acc_kind: AccessKind) {
-        log!(info "entered {} ({ident})", fn_name!());
         let kind = RegisterNameKind::from_ident(&ident);
+        let captured = self.captures.defs.contains(&ident.vi.def_loc);
+        self.emit_store_instr_captured(ident, acc_kind, kind, captured)
+    }
+
+    /// `captured`: some nested function closes over this binding. Its cell is
+    /// normally made when the frame starts (`emit_frame_cells`), and a store
+    /// then goes through it; this is the fallback for a binding that was not
+    /// known then, which becomes a cell here (3.11+; before, the frame makes
+    /// the cells itself).
+    fn emit_store_instr_captured(
+        &mut self,
+        ident: Identifier,
+        acc_kind: AccessKind,
+        kind: RegisterNameKind,
+        captured: bool,
+    ) {
+        log!(info "entered {} ({ident})", fn_name!());
         let escaped = escape_ident(ident);
-        let name = self.local_search(&escaped, acc_kind).unwrap_or_else(|| {
+        let mut name = self.local_search(&escaped, acc_kind).unwrap_or_else(|| {
             if acc_kind.is_local() {
                 self.register_name(escaped, kind)
             } else {
                 self.register_attr(escaped)
             }
         });
+        if captured
+            && self.opcode_set.is_3_11_plus()
+            && matches!(name.kind, StoreLoadKind::Fast | StoreLoadKind::FastConst)
+        {
+            self.emit_make_cell(name.idx);
+            name = Name::deref(name.idx);
+        }
         let instr = self.select_store_instr(name.kind, acc_kind);
         self.write_instr(instr);
         self.write_arg(name.idx);
@@ -1507,6 +1879,7 @@ impl PyCodeGenerator {
         if !self.cur_block_codeobj().varnames.is_empty() {
             self.mut_cur_block_codeobj().flags += CodeObjFlags::NewLocals as u32;
         }
+        self.remap_localsplus();
         // end of flagging
         let unit = self.units.pop().unwrap();
         if !self.units.is_empty() {
@@ -1750,6 +2123,26 @@ impl PyCodeGenerator {
         let name = sig.ident.inspect().clone();
         let mut make_function_flag = 0;
         let params = self.gen_param_names(&sig.params);
+        let cell_names = self.frame_cells(&sig.params, &body.block);
+        // A nested function some function closes over -- itself, when it is
+        // recursive -- is bound to a cell, and the cell has to exist before the
+        // function does: the recursive one carries its own cell in its
+        // closure. So the name is given its slot now, ahead of the body, where
+        // the body's reference to it then resolves to this scope rather than
+        // to a local of its own that nothing ever stores.
+        if !self.is_toplevel()
+            && RegisterNameKind::from_ident(&sig.ident).is_fast()
+            && self.captures.defs.contains(&sig.ident.vi.def_loc)
+        {
+            let escaped = escape_ident(sig.ident.clone());
+            if self.opcode_set.is_3_11_plus() {
+                let idx = self.register_fast_local(escaped);
+                self.emit_make_cell(idx);
+            } else if !self.cur_block_codeobj().cellvars.contains(&escaped) {
+                // the frame makes the cell; the name only has to be found here
+                self.mut_cur_block_codeobj().cellvars.push(escaped);
+            }
+        }
         let kwonlyargcount = if sig.params.var_params.is_some() {
             sig.params.defaults.len()
         } else {
@@ -1773,7 +2166,7 @@ impl PyCodeGenerator {
             Some(name.clone()),
             params,
             kwonlyargcount as u32,
-            sig.captured_names.clone(),
+            cell_names,
             flags,
         );
         // code.flags += CodeObjFlags::Optimized as u32;
@@ -1819,6 +2212,7 @@ impl PyCodeGenerator {
         let init_stack_len = self.stack_len();
         let mut make_function_flag = 0;
         let params = self.gen_param_names(&lambda.params);
+        let cell_names = self.frame_cells(&lambda.params, &lambda.body);
         let kwonlyargcount = if lambda.params.var_params.is_some() {
             lambda.params.defaults.len()
         } else {
@@ -1842,7 +2236,7 @@ impl PyCodeGenerator {
             Some(format!("<lambda_{}>", lambda.id).into()),
             params,
             kwonlyargcount as u32,
-            lambda.captured_names.clone(),
+            cell_names,
             flags,
         );
         self.enclose_vars(&code, &mut make_function_flag);
@@ -1886,6 +2280,134 @@ impl PyCodeGenerator {
         }
     }
 
+    /// Which of the parameters (in [`Self::gen_param_names`] order) some nested
+    /// function closes over.
+    fn captured_param_flags(&self, params: &Params) -> Vec<bool> {
+        param_vis(params)
+            .map(|vi| self.captures.defs.contains(&vi.def_loc))
+            .collect()
+    }
+
+    /// The names a function's frame has to hold in cells: the parameters and
+    /// locals of the function that some nested function closes over.
+    fn frame_cells(&mut self, params: &Params, body: &Block) -> Vec<Str> {
+        let mut walk = CaptureWalk {
+            caps: &mut self.captures,
+            into_functions: false,
+        };
+        let frame = walk.frame(params, body);
+        frame.cells(&self.captures)
+    }
+
+    /// The slot of a local, given one if it has none yet.
+    fn register_fast_local(&mut self, name: Str) -> usize {
+        let varnames = &mut self.mut_cur_block_codeobj().varnames;
+        varnames.iter().position(|v| v == &name).unwrap_or_else(|| {
+            varnames.push(name);
+            varnames.len() - 1
+        })
+    }
+
+    /// Turn the slot into a cell (3.11+). Whatever the slot holds goes into the
+    /// cell, and the variable is read and written through the cell from here on.
+    fn emit_make_cell(&mut self, idx: usize) {
+        debug_assert!(self.opcode_set.is_3_11_plus());
+        let name = self.cur_block_codeobj().varnames[idx].clone();
+        if self.cur_block().cells.contains(&name) {
+            return;
+        }
+        self.write_instr(self.opcode_set.make_cell());
+        self.write_arg(idx);
+        self.mut_cur_block().cells.push(name.clone());
+        if !self.cur_block_codeobj().cellvars.contains(&name) {
+            self.mut_cur_block_codeobj().cellvars.push(name);
+        }
+    }
+
+    /// The frame's cells, made as the frame starts -- before `COPY_FREE_VARS`
+    /// and `RESUME`, where CPython's compiler puts them. One cell per variable
+    /// per frame, so closures made in a loop share the loop's variable, as
+    /// they do in Python.
+    fn emit_frame_cells(&mut self, names: Vec<Str>) {
+        for name in names {
+            if self.opcode_set.is_3_11_plus() {
+                let idx = self.register_fast_local(name);
+                self.emit_make_cell(idx);
+            } else if !self.cur_block_codeobj().cellvars.contains(&name) {
+                // the frame makes the cells; every access goes through them
+                self.mut_cur_block_codeobj().cellvars.push(name);
+            }
+        }
+    }
+
+    /// Put the slots in the order the frame will have them (3.11+).
+    ///
+    /// A slot is handed out when its name is first met, and the name of a
+    /// variable a nested function closes over from further out is met in the
+    /// middle of the body. But `COPY_FREE_VARS` fills the *last* slots of the
+    /// frame with the closure, so those names have to end up last -- which
+    /// [`CodeObj::localsplus_layout`] does. Reordering the names is not enough:
+    /// every instruction that named a slot named it by the old number.
+    fn remap_localsplus(&mut self) {
+        if !self.opcode_set.is_3_11_plus() {
+            return;
+        }
+        let codeobj = self.cur_block_codeobj();
+        if codeobj.freevars.is_empty() {
+            return;
+        }
+        let (order, _kinds) =
+            CodeObj::localsplus_layout(&codeobj.varnames, &codeobj.freevars, &codeobj.cellvars);
+        let map = codeobj
+            .varnames
+            .iter()
+            .map(|v| order.iter().position(|o| o == v).unwrap())
+            .collect::<Vec<_>>();
+        if map.iter().enumerate().all(|(from, to)| from == *to) {
+            return;
+        }
+        let slot_ops = [
+            self.common_byte(LOAD_FAST),
+            self.common_byte(STORE_FAST),
+            self.common_byte(DELETE_FAST),
+            self.opcode_set.load_deref(),
+            self.opcode_set.store_deref(),
+            self.opcode_set.load_closure(),
+            self.opcode_set.make_cell(),
+        ];
+        let extended_arg = self.common_byte(EXTENDED_ARG);
+        let mut overflow = false;
+        let code = &mut self.mut_cur_block_codeobj().code;
+        // wordcode: every unit is an opcode and an argument byte, inline
+        // caches included, so even offsets are always opcodes
+        let mut i = 0;
+        while i + 1 < code.len() {
+            if slot_ops.contains(&code[i]) {
+                let extended = i >= 2 && code[i - 2] == extended_arg;
+                let from = if extended {
+                    (code[i - 1] as usize) << 8 | code[i + 1] as usize
+                } else {
+                    code[i + 1] as usize
+                };
+                if let Some(&to) = map.get(from) {
+                    if extended {
+                        code[i - 1] = (to >> 8) as u8;
+                        code[i + 1] = (to & 0xff) as u8;
+                    } else if let Ok(to) = u8::try_from(to) {
+                        code[i + 1] = to;
+                    } else {
+                        overflow = true;
+                    }
+                }
+            }
+            i += 2;
+        }
+        if overflow {
+            self.crash("too many locals to renumber a captured one");
+        }
+        self.mut_cur_block_codeobj().varnames = order;
+    }
+
     fn enclose_vars(&mut self, code: &CodeObj, flag: &mut usize) {
         if self.opcode_set.is_3_11_plus() {
             // Since 3.11, LOAD_CLOSURE is simply an alias for LOAD_FAST.
@@ -1902,6 +2424,19 @@ impl PyCodeGenerator {
                 else {
                     continue;
                 };
+                // What goes into the closure is the cell. The slot holds one
+                // when the variable was made a cell where it was bound, and
+                // when it is itself a closure variable passing through. Any
+                // other is a capture lowering did not record: make the cell
+                // now, late -- a use of the variable before this point that
+                // runs again (in a loop) would read the cell, so this is a
+                // fallback, not the design.
+                let holds_cell = self.cur_block().cells.iter().any(|c| c == name)
+                    || self.cur_block_codeobj().freevars.iter().any(|f| f == name);
+                if !holds_cell {
+                    log!(err "unrecorded capture of {name}, making its cell late");
+                    self.emit_make_cell(idx);
+                }
                 self.write_instr(self.opcode_set.load_closure());
                 self.write_arg(idx);
                 nloaded += 1;
@@ -1911,15 +2446,29 @@ impl PyCodeGenerator {
                 self.write_arg(nloaded);
                 *flag += MakeFunctionFlags::Closure as usize;
             }
-        } else if !self.cur_block_codeobj().cellvars.is_empty() {
-            let cellvars_len = self.cur_block_codeobj().cellvars.len();
-            for i in 0..cellvars_len {
+        } else {
+            // The closure is the child's freevars, in the child's order. Before
+            // 3.11 a deref and LOAD_CLOSURE index cellvars then freevars.
+            let freevars = code.freevars.clone();
+            let mut nloaded = 0;
+            for name in freevars.iter() {
+                let codeobj = self.cur_block_codeobj();
+                let idx = if let Some(i) = codeobj.cellvars.iter().position(|c| c == name) {
+                    i
+                } else if let Some(j) = codeobj.freevars.iter().position(|f| f == name) {
+                    codeobj.cellvars.len() + j
+                } else {
+                    continue;
+                };
                 self.write_instr(self.opcode_set.load_closure());
-                self.write_arg(i);
+                self.write_arg(idx);
+                nloaded += 1;
             }
-            self.write_opcode(BUILD_TUPLE);
-            self.write_arg(cellvars_len);
-            *flag += MakeFunctionFlags::Closure as usize;
+            if nloaded > 0 {
+                self.write_opcode(BUILD_TUPLE);
+                self.write_arg(nloaded);
+                *flag += MakeFunctionFlags::Closure as usize;
+            }
         }
     }
 
@@ -1951,12 +2500,15 @@ impl PyCodeGenerator {
         let cellvars = self.cur_block_codeobj().cellvars.clone();
         for cellvar in cellvars {
             if code.freevars.iter().any(|n| n == &cellvar) {
-                let old_idx = self
+                // a nested function bound straight to a cell has no local slot
+                let Some(old_idx) = self
                     .cur_block_codeobj()
                     .varnames
                     .iter()
                     .position(|n| n == &cellvar)
-                    .unwrap();
+                else {
+                    continue;
+                };
                 let new_idx = self
                     .cur_block_codeobj()
                     .cellvars
@@ -3545,9 +4097,16 @@ impl PyCodeGenerator {
     fn emit_control_block(&mut self, block: Block, params: Params) {
         log!(info "entered {}", fn_name!());
         let param_names = self.gen_param_names(&params);
+        let captured = self.captured_param_flags(&params);
         let line = block.ln_begin().unwrap_or(0);
-        for param in param_names {
-            self.emit_store_instr(Identifier::public_with_line(DOT, param, line), Name);
+        // A parameter of an inlined block is a local of the frame it is
+        // inlined into. (The name is remade here without its `VarInfo`, which
+        // would make it a name rather than a local -- and a name stored in a
+        // frame with no locals of its own goes to the module's globals.)
+        let kind = if self.is_toplevel() { NonFast } else { Fast };
+        for (param, captured) in param_names.into_iter().zip(captured) {
+            let ident = Identifier::public_with_line(DOT, param, line);
+            self.emit_store_instr_captured(ident, Name, kind, captured);
         }
         for guard in params.guards {
             if let GuardClause::Bind(bind) = guard {
@@ -3675,6 +4234,7 @@ impl PyCodeGenerator {
         if !self.cur_block_codeobj().varnames.is_empty() {
             self.mut_cur_block_codeobj().flags += CodeObjFlags::NewLocals as u32;
         }
+        self.remap_localsplus();
         // end of flagging
         let unit = self.units.pop().unwrap();
         if !self.units.is_empty() {
@@ -3867,6 +4427,7 @@ impl PyCodeGenerator {
         log!(info "entered {} ({sig} = {})", fn_name!(), body.block);
         let name = sig.ident.inspect().clone();
         let params = self.gen_param_names(&sig.params);
+        let cell_names = self.frame_cells(&sig.params, &body.block);
         // No defaults to emit for *args, **kwargs
         let make_function_flag = 0;
         let mut flags = 0;
@@ -3876,7 +4437,13 @@ impl PyCodeGenerator {
         if sig.params.kw_var_params.is_some() {
             flags += CodeObjFlags::VarKeywords as u32;
         }
-        let code = self.emit_init_block_with_super(body.block, Some(name.clone()), params, flags);
+        let code = self.emit_init_block_with_super(
+            body.block,
+            Some(name.clone()),
+            params,
+            cell_names,
+            flags,
+        );
         self.emit_load_const(code);
         if !self.opcode_set.is_3_11_plus() {
             if let Some(class) = class_name {
@@ -3899,6 +4466,7 @@ impl PyCodeGenerator {
         block: Block,
         opt_name: Option<Str>,
         params: Vec<Str>,
+        cell_names: Vec<Str>,
         flags: u32,
     ) -> CodeObj {
         log!(info "entered {}", fn_name!());
@@ -3925,6 +4493,7 @@ impl PyCodeGenerator {
             firstlineno,
             flags,
         ));
+        self.emit_frame_cells(cell_names);
         let idx_copy_free_vars = if self.opcode_set.is_3_11_plus() {
             let idx_copy_free_vars = self.lasti();
             self.write_instr(self.opcode_set.copy_free_vars());
@@ -3978,6 +4547,7 @@ impl PyCodeGenerator {
             self.edit_code(idx_copy_free_vars, nop as usize);
         }
         // end of flagging
+        self.remap_localsplus();
         let unit = self.units.pop().unwrap();
         if !self.units.is_empty() {
             let ld = unit
@@ -4142,7 +4712,7 @@ impl PyCodeGenerator {
         opt_name: Option<Str>,
         params: Vec<Str>,
         kwonlyargcount: u32,
-        captured_names: Vec<Identifier>,
+        cell_names: Vec<Str>,
         flags: u32,
     ) -> CodeObj {
         log!(info "entered {}", fn_name!());
@@ -4166,6 +4736,7 @@ impl PyCodeGenerator {
             firstlineno,
             flags,
         ));
+        self.emit_frame_cells(cell_names);
         let idx_copy_free_vars = if self.opcode_set.is_3_11_plus() {
             let idx_copy_free_vars = self.lasti();
             self.write_instr(self.opcode_set.copy_free_vars());
@@ -4176,22 +4747,6 @@ impl PyCodeGenerator {
         } else {
             0
         };
-        let mut cells = vec![];
-        for captured in captured_names {
-            // the same variable can appear multiple times (once per reference),
-            // but MAKE_CELL must be emitted only once per variable
-            if self.cur_block().captured_vars.contains(captured.inspect()) {
-                continue;
-            }
-            self.mut_cur_block()
-                .captured_vars
-                .push(captured.inspect().clone());
-            if self.opcode_set.is_3_11_plus() {
-                self.write_instr(self.opcode_set.make_cell());
-                cells.push((captured, self.lasti()));
-                self.write_arg(0);
-            }
-        }
         let init_stack_len = self.stack_len();
         for guard in guards {
             if let GuardClause::Bind(bind) = guard {
@@ -4243,18 +4798,7 @@ impl PyCodeGenerator {
             let nop = self.opcode_set.translate_common(CommonOpcode::NOP as u8);
             self.edit_code(idx_copy_free_vars, nop as usize);
         }
-        for (cell, placeholder) in cells {
-            let name = escape_ident(cell);
-            let Some(idx) = self
-                .cur_block_codeobj()
-                .varnames
-                .iter()
-                .position(|v| v == &name)
-            else {
-                continue;
-            };
-            self.edit_code(placeholder, idx);
-        }
+        self.remap_localsplus();
         // end of flagging
         let unit = self.units.pop().unwrap();
         // increase lineno
@@ -4543,6 +5087,7 @@ impl PyCodeGenerator {
 
     pub fn emit(&mut self, hir: HIR) -> CodeObj {
         log!(info "the code-generating process has started.{RESET}");
+        self.captures = collect_captures(&hir.module);
         self.unit_size += 1;
         self.units.push(PyCodeGenUnit::new(
             self.unit_size,
@@ -4596,6 +5141,7 @@ impl PyCodeGenerator {
         if !self.cur_block_codeobj().varnames.is_empty() {
             self.mut_cur_block_codeobj().flags += CodeObjFlags::NewLocals as u32;
         }
+        self.remap_localsplus();
         // end of flagging
         let unit = self.units.pop().unwrap();
         if !self.units.is_empty() {

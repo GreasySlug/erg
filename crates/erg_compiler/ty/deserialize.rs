@@ -356,11 +356,16 @@ impl Deserializer {
             let mut freevars = vec![];
             let mut cellvars = vec![];
             for (name, kind) in names.into_iter().zip(kinds) {
-                match FastKind::try_from(kind) {
-                    Ok(FastKind::Local) => varnames.push(name),
-                    Ok(FastKind::Free) => freevars.push(name),
-                    Ok(FastKind::Cell) => cellvars.push(name),
-                    _ => unreachable!(),
+                // the kinds are flags: a local some closure reads is a local and a cell
+                if kind & FastKind::Free as u8 != 0 {
+                    freevars.push(name);
+                    continue;
+                }
+                if kind & FastKind::Cell as u8 != 0 {
+                    cellvars.push(name.clone());
+                }
+                if kind & FastKind::Local as u8 != 0 {
+                    varnames.push(name);
                 }
             }
             Ok((varnames, freevars, cellvars))

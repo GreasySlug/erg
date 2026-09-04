@@ -1647,8 +1647,13 @@ impl Context {
 
     /// Context of the function that actually creates the scope.
     /// Control flow function blocks do not create actual scopes.
+    ///
+    /// Judged by what the scope *is*: what it happens to be lowering at the
+    /// moment (`current_control_flow`) is not it -- a function lowering the
+    /// body of its `for!` is still the function, and a variable that body's
+    /// closures read is still captured from its frame.
     pub fn current_true_function_ctx(&self) -> Option<&Context> {
-        if self.kind.is_subr() && self.current_control_flow().is_none() {
+        if self.kind.is_subr() && self.kind.control_kind().is_none() {
             Some(self)
         } else if let Some(outer) = self.get_outer_scope() {
             outer.current_true_function_ctx()

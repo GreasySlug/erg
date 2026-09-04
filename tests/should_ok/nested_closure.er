@@ -1,0 +1,69 @@
+# What nested functions close over.
+
+# A nested function calling itself. Its own name is a variable of the
+# enclosing frame, which it holds in its closure -- so the cell has to exist
+# before the function does. Reading it from a slot nothing had stored to
+# crashed the interpreter (3.12+, where LOAD_FAST no longer checks).
+outer(n: Int): Int =
+    down(m: Int): Int = if m <= 0, do 0, do down(m - 1) + 1
+    down(3) + n
+assert outer(10) == 13
+
+# A variable passing through a function that never reads it. The one in
+# between hands the cell on; it used to hand on a slot of its own that
+# COPY_FREE_VARS had put the value somewhere else.
+through(n: Int): Int =
+    mid(a: Int): Int =
+        inner(b: Int): Int = b + n
+        inner(a)
+    mid(1)
+assert through(3) == 4
+
+# Read where it passes through, and one level further. The cell used to be
+# boxed a second time on the way.
+both(n: Int): Int =
+    mid(a: Int): Int =
+        inner(b: Int): Int = b + n
+        inner(a) + n
+    mid(1)
+assert both(3) == 7
+
+# a nested function closed over by its sibling
+pair(n: Int): Int =
+    f(x: Int): Int = x + n
+    g(y: Int): Int = f(y) * 2
+    g(1)
+assert pair(3) == 8
+
+# recursion that also captures
+count(n: Int): Int =
+    go(m: Int): Int = if m >= n, do m, do go(m + 1)
+    go(0)
+assert count(5) == 5
+
+# a local, bound before the function that reads it and read after
+scaled(n: Int): Int =
+    k = n + 1
+    f(x: Int): Int = x * k
+    f(2) + k
+assert scaled(3) == 12
+
+# a closure that leaves the function that made it
+adder(n: Int): (Int -> Int) = (m: Int) -> m + n
+add3 = adder 3
+assert add3(4) == 7
+
+# Closures made in a loop all share the loop's variable: the frame has one
+# cell for it, so each sees the value it had last -- what the transpiled
+# program does, and what Python does. (The variable used to be stored by
+# name, which in a frame with no locals of its own means the module's
+# globals.)
+adders!() =
+    fs = ![]
+    for! [1, 2, 3], i =>
+        fs.push!((m: Int) -> m + i)
+    fs
+fs = adders!()
+assert fs[0](10) == 13
+last = fs.pop!()
+assert last(10) == 13

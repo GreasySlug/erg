@@ -429,6 +429,46 @@ impl CodeObj {
         bytes
     }
 
+    /// The frame's slots (3.11+) and their kinds: every local in the order it
+    /// was given a slot -- one a closure reads is a cell in place, the way a
+    /// captured argument is in CPython -- and the closure's own variables last,
+    /// which is where `COPY_FREE_VARS` puts the closure. The code generator
+    /// renumbers its instructions to this order when a unit is finished
+    /// (`remap_localsplus`), so the two must not disagree.
+    pub fn localsplus_layout(
+        varnames: &[Str],
+        freevars: &[Str],
+        cellvars: &[Str],
+    ) -> (Vec<Str>, Vec<u8>) {
+        let mut names = Vec::with_capacity(varnames.len());
+        let mut kinds = Vec::with_capacity(varnames.len());
+        for name in varnames {
+            if freevars.contains(name) {
+                continue;
+            }
+            let kind = if cellvars.contains(name) {
+                FastKind::Cell as u8 | FastKind::Local as u8
+            } else {
+                FastKind::Local as u8
+            };
+            names.push(name.clone());
+            kinds.push(kind);
+        }
+        // a cell with no local slot of its own (the generator gives every cell
+        // one; CPython's layout allows the shape, so it is kept)
+        for name in cellvars {
+            if !names.contains(name) && !freevars.contains(name) {
+                names.push(name.clone());
+                kinds.push(FastKind::Cell as u8);
+            }
+        }
+        for name in freevars {
+            names.push(name.clone());
+            kinds.push(FastKind::Free as u8);
+        }
+        (names, kinds)
+    }
+
     fn dump_locals(
         varnames: Vec<Str>,
         freevars: Vec<Str>,
@@ -437,21 +477,9 @@ impl CodeObj {
         python_ver: PythonVersion,
     ) {
         if python_ver.minor >= Some(11) {
-            let varnames = varnames
-                .into_iter()
-                .filter(|n| !freevars.contains(n) && !cellvars.contains(n))
-                .collect::<Vec<_>>();
-            // NOTE: freevars must come last: COPY_FREE_VARS copies the closure into
-            // the trailing `nfreevars` slots of localsplus
-            let localspluskinds = [
-                vec![FastKind::Local as u8; varnames.len()],
-                vec![FastKind::Cell as u8 + FastKind::Local as u8; cellvars.len()],
-                vec![FastKind::Free as u8; freevars.len()],
-            ]
-            .concat();
-            let localsplusnames = [varnames, cellvars, freevars].concat();
-            bytes.append(&mut strs_into_bytes(localsplusnames));
-            bytes.append(&mut raw_string_into_bytes(localspluskinds));
+            let (names, kinds) = Self::localsplus_layout(&varnames, &freevars, &cellvars);
+            bytes.append(&mut strs_into_bytes(names));
+            bytes.append(&mut raw_string_into_bytes(kinds));
         } else {
             bytes.append(&mut strs_into_bytes(varnames));
             bytes.append(&mut strs_into_bytes(freevars));

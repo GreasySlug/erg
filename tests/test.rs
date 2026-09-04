@@ -72,6 +72,11 @@ fn exec_closure() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_nested_closure() -> Result<(), ()> {
+    expect_success("tests/should_ok/nested_closure.er", 0)
+}
+
+#[test]
 fn exec_coercion() -> Result<(), ()> {
     expect_success("tests/should_ok/coercion.er", 0)
 }

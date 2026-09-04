@@ -260,6 +260,38 @@ mod code_completeness_tests {
     }
 
     #[test]
+    fn test_class_def_may_continue() {
+        // The method blocks of a class have to be in the same chunk as its
+        // definition, so a buffer ending with a class/patch definition or a
+        // method block is kept open (recognized the way the AST linker does).
+        for src in [
+            "C = Class()",
+            "@Inheritable\nC = Class {x = Int}",
+            "P3 = Inherit P2, Additional := {z = Int}",
+            "P = Patch Int",
+            "C.\n    attr = 1",
+            "C::\n    f self = 1",
+            "C.\n    @Override\n    f self = 1",
+            "C = Class()\nC.\n    attr = 1",
+        ] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::MayContinue,
+                "{src:?}"
+            );
+        }
+        // a call that merely takes a class as an argument, or a buffer that
+        // goes on after the definition, is complete
+        for src in ["C = a Class()", "C = Class()\nc = C.new()", "x = 1"] {
+            assert_eq!(
+                check_code_completeness(src),
+                CodeCompleteness::Complete,
+                "{src:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_multiline_buffers() {
         // Buffers that became complete after more lines were added
         for src in [

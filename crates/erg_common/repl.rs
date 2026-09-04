@@ -73,6 +73,10 @@ pub enum SessionStep {
 /// - an empty line closes the innermost open block; the cell is evaluated
 ///   when the outermost one closes (even if still incomplete, so that the
 ///   user sees the error)
+/// - a class definition (`MayContinue`) is not evaluated on its own line, and
+///   its cell stays open after a method block ends, because the method blocks
+///   of a class have to be in the same cell as its definition; an empty line
+///   at the outermost level evaluates it
 /// - a syntax error is evaluated immediately to show the error
 pub struct ReplSession {
     lines: Vec<String>,
@@ -188,8 +192,15 @@ impl ReplSession {
             }
             // An empty line closes the innermost open block. The cell is
             // evaluated when the outermost one closes, so that nested blocks
-            // can be exited one at a time.
-            if self.block_indents.len() <= 1 {
+            // can be exited one at a time -- except that a class cell stays
+            // open after a method block: another one may follow, and it has
+            // to be in the same cell as the class definition.
+            let closes_cell = match self.block_indents.len() {
+                0 => true,
+                1 => self.last != CodeCompleteness::MayContinue,
+                _ => false,
+            };
+            if closes_cell {
                 // evaluate the pending cell: complete code runs, incomplete
                 // code is evaluated anyway so that the user sees the error
                 return SessionStep::Eval(self.take_code());
@@ -219,6 +230,13 @@ impl ReplSession {
                     self.next_indent = width;
                     SessionStep::Continue
                 }
+            }
+            // a class definition or one of its method blocks: even a single
+            // line waits for an empty line, so that method blocks can be
+            // added to the cell
+            CodeCompleteness::MayContinue => {
+                self.next_indent = width;
+                SessionStep::Continue
             }
             CodeCompleteness::ExpectsBlock => {
                 self.next_indent = width + INDENT_UNIT.len();
@@ -516,8 +534,12 @@ mod frontend {
             }
             // IPython-style: a multi-line cell is submitted with an empty
             // final line, so that more lines can be added to an
-            // already-complete buffer (e.g. a second line of a function body)
-            if line.contains('\n') && !line.ends_with('\n') {
+            // already-complete buffer (e.g. a second line of a function body).
+            // A class definition is treated the same way even on one line:
+            // its method blocks have to be in the same cell
+            if (line.contains('\n') || res == CodeCompleteness::MayContinue)
+                && !line.ends_with('\n')
+            {
                 return ValidationResult::Incomplete;
             }
             ValidationResult::Complete
@@ -580,8 +602,10 @@ mod tests {
     /// A tiny stand-in for the real parser-based checker, just structured
     /// enough to exercise the session state machine:
     /// - an odd number of `"""` => Unclosed
-    /// - last line ending with `=` or `=>` => ExpectsBlock
+    /// - last line ending with `=`, `=>`, or a method block header
+    ///   (`C.` / `C::`) => ExpectsBlock
     /// - containing `!!` => SyntaxError
+    /// - last chunk headed by a `Class` call or a method block => MayContinue
     fn stub_check(src: &str) -> CodeCompleteness {
         if src.matches("\"\"\"").count() % 2 == 1 {
             return CodeCompleteness::Unclosed;
@@ -590,10 +614,18 @@ mod tests {
             return CodeCompleteness::SyntaxError;
         }
         let last = src.lines().last().unwrap_or("").trim_end();
+        let is_method_header = |l: &str| l.ends_with('.') || l.ends_with("::");
+        // the first line of the last chunk: the last unindented line
+        let chunk_head = src
+            .lines()
+            .rfind(|l| !l.is_empty() && !l.starts_with(' '))
+            .unwrap_or("");
         if last.trim_start().starts_with('@') {
             CodeCompleteness::Continuation
-        } else if last.ends_with('=') || last.ends_with("=>") {
+        } else if last.ends_with('=') || last.ends_with("=>") || is_method_header(last) {
             CodeCompleteness::ExpectsBlock
+        } else if chunk_head.contains("Class") || is_method_header(chunk_head) {
+            CodeCompleteness::MayContinue
         } else {
             CodeCompleteness::Complete
         }
@@ -644,6 +676,28 @@ mod tests {
         // block at 4 columns to fall back to) and evaluates
         let (evals, _) = drive(false, &["a =", "    1", "2", ""]);
         assert_eq!(evals, vec!["a =\n        1\n        2\n"]);
+    }
+
+    #[test]
+    fn session_class_def_waits_for_empty_line() {
+        // a class definition is complete, but its method blocks have to be
+        // in the same cell, so a single line is not evaluated immediately
+        let (evals, _) = drive(false, &["C = Class()", ""]);
+        assert_eq!(evals, vec!["C = Class()\n"]);
+    }
+
+    #[test]
+    fn session_class_cell_holds_method_blocks() {
+        // the empty line after a method block only closes the block; the
+        // cell is evaluated by the empty line at the outermost level
+        let (evals, _) = drive(
+            false,
+            &["C = Class()", "C::", "x = 1", "", "C.", "y = 2", "", ""],
+        );
+        assert_eq!(
+            evals,
+            vec!["C = Class()\nC::\n    x = 1\n\nC.\n    y = 2\n\n"]
+        );
     }
 
     #[test]

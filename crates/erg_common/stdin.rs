@@ -31,6 +31,13 @@ pub enum CellResult {
 pub enum CodeCompleteness {
     /// Code is syntactically complete and can be executed
     Complete,
+    /// Complete, but more lines may belong to the same cell: the last chunk
+    /// is a class or patch definition, or one of its method blocks
+    /// (`C.` / `C::`). Method blocks are attached to the class while the AST
+    /// is still whole, so they have to be in the same chunk as the definition
+    /// -- in the REPL, the same cell. A REPL keeps such a cell open until an
+    /// empty line at the outermost level.
+    MayContinue,
     /// More lines are needed: an indented block is expected
     /// (e.g. after `=`, `=>`, `->`, or a class accessor line)
     ExpectsBlock,
@@ -47,6 +54,7 @@ pub enum CodeCompleteness {
 
 impl CodeCompleteness {
     /// Returns true if more input lines are needed to complete the code
+    /// (`MayContinue` is complete: an empty line evaluates it)
     pub const fn is_incomplete(&self) -> bool {
         matches!(
             self,
@@ -540,7 +548,11 @@ impl StdinReader {
                                 CodeCompleteness::Complete | CodeCompleteness::SyntaxError => {
                                     !code.trim().is_empty()
                                 }
-                                CodeCompleteness::ExpectsBlock
+                                // a class definition may be followed by its
+                                // method blocks, which have to be in the same
+                                // cell: Enter inserts a newline, Ctrl+Enter executes
+                                CodeCompleteness::MayContinue
+                                | CodeCompleteness::ExpectsBlock
                                 | CodeCompleteness::Continuation
                                 | CodeCompleteness::Unclosed => false,
                             }

@@ -128,6 +128,8 @@ impl SimpleParser {
 ///
 /// Returns:
 /// - `Complete`: Code is valid and can be executed
+/// - `MayContinue`: Code is valid, but ends with a class/patch definition or a
+///   method block, so more method blocks may belong to the same cell
 /// - `Incomplete`: Code needs more input (unclosed brackets, unfinished blocks, etc.)
 /// - `SyntaxError`: Code has a syntax error (should be executed to show error message)
 pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness {
@@ -145,7 +147,13 @@ pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness
     // because the EOF check after `=` only fires when EOF follows directly
     let src = src.trim_end();
     match SimpleParser::parse(src.to_string()) {
-        Ok(_) => CodeCompleteness::Complete,
+        Ok(artifact) => {
+            if ends_with_class_def(&artifact.ast) {
+                CodeCompleteness::MayContinue
+            } else {
+                CodeCompleteness::Complete
+            }
+        }
         Err(incomplete_artifact) => {
             // `ExpectNextLine` is emitted by the parser when a block is expected
             // at EOF (after `=`, `=>`, a decorator, a class accessor line, ...),
@@ -168,6 +176,30 @@ pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness
                 CodeCompleteness::SyntaxError
             }
         }
+    }
+}
+
+/// Whether the module ends with a class or patch definition, or with a method
+/// block (`C.` / `C::`) of one.
+///
+/// The method blocks of a class are attached to it while the AST is still
+/// whole (the AST linker), so they have to be in the same chunk as the
+/// definition -- in the REPL, the same cell. The REPL therefore keeps such a
+/// cell open for more method blocks (`CodeCompleteness::MayContinue`). A
+/// definition is recognized the way the linker recognizes it: its body is a
+/// call to `Class`, `Inherit`, `Inheritable` or `Patch`.
+fn ends_with_class_def(module: &Module) -> bool {
+    match module.last() {
+        Some(Expr::Def(def)) => matches!(
+            def.body.block.first(),
+            Some(Expr::Call(call))
+                if matches!(
+                    call.obj.get_name().map(|s| &s[..]),
+                    Some("Class" | "Inherit" | "Inheritable" | "Patch")
+                )
+        ),
+        Some(Expr::Methods(_)) => true,
+        _ => false,
     }
 }
 

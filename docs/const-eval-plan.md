@@ -418,8 +418,11 @@ codegen は `D` の静的型 `{[2, 1]}`（クラスは `List`）に合わせて�
 - ~~複数チャンクの const 関数本体で仮引数が見えない~~ → 修正済み（2026-08-27）。
   lowering が本体の定義を先行評価していた。const 引数がスコープにあるときだけ先行評価の失敗を捨て、
   通常の lowering に型付けさせる（非 const 関数では従来どおりエラー）
-- 可変長引数の const 関数は `FeatureError: const parameters`
-  ([eval.rs:636](../crates/erg_compiler/context/eval.rs#L636))
+- ~~可変長引数の const 関数は `FeatureError: const parameters`~~ → 修正済み（2026-09-04）。
+  引数ゼロの const 関数 `F() = 1` も同じ根で、登録時に「パラメータが無ければ本体を即評価して
+  値にする」分岐に落ちていた。`F` の型が `{1}` になる一方 codegen は関数を束縛するので、
+  **検査を通ってから実行時に `NameError`** になっていた。可変長は `Context::call` が元から
+  残りの引数を List に束縛していて、実行時の `*args` も erg は List にするので一致する
 - `eval_const_chunk` ([eval.rs:1584](../crates/erg_compiler/context/eval.rs#L1584)) に
   `ClassDef` / `PatchDef` / `Methods` / `ReDef` / `Compound` が無い（コード中に TODO あり）
 

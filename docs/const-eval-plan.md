@@ -413,8 +413,11 @@ codegen は `D` の静的型 `{[2, 1]}`（クラスは `List`）に合わせて�
 
 ### その他の評価機構のギャップ
 
-- 無名ラムダが const 化できない（小文字パラメータは非 const、大文字は `NameError`）。
-  結果 `map` / `filter` には名前付き const 関数しか渡せない
+- ~~無名ラムダが const 化できない（小文字パラメータは非 const、大文字は `NameError`）~~ → 修正済み（2026-09-04）。
+  `eval_const_lambda` は戻り値型を精密にするために本体を定義時に評価していて、本体が自分の仮引数を
+  読むと `NameError` で**ラムダ全体が失敗**していた。評価に失敗したら戻り値型は宣言（無ければ `Obj`）に
+  落とし、値は `UserConstSubr` として残す（呼ばれたときに本体は仮引数を束縛して評価される）。
+  `Inc = (X: Int) -> X + 1; Inc(1)` と `Apply((X: Int) -> X + 1, 2)` が畳める
 - ~~複数チャンクの const 関数本体で仮引数が見えない~~ → 修正済み（2026-08-27）。
   lowering が本体の定義を先行評価していた。const 引数がスコープにあるときだけ先行評価の失敗を捨て、
   通常の lowering に型付けさせる（非 const 関数では従来どおりエラー）
@@ -423,8 +426,16 @@ codegen は `D` の静的型 `{[2, 1]}`（クラスは `List`）に合わせて�
   値にする」分岐に落ちていた。`F` の型が `{1}` になる一方 codegen は関数を束縛するので、
   **検査を通ってから実行時に `NameError`** になっていた。可変長は `Context::call` が元から
   残りの引数を List に束縛していて、実行時の `*args` も erg は List にするので一致する
-- `eval_const_chunk` ([eval.rs:1584](../crates/erg_compiler/context/eval.rs#L1584)) に
-  `ClassDef` / `PatchDef` / `Methods` / `ReDef` / `Compound` が無い（コード中に TODO あり）
+- ~~`eval_const_chunk` に `ClassDef` / `PatchDef` / `Methods` / `ReDef` / `Compound` が無い~~ → 整理済み（2026-09-04）。
+  本当のギャップは別で、`eval_const_def` が**小文字の定義を弾いていた**こと。const 関数の本体で
+  `m = n + 1` も、`(a, b) = t` の脱糖結果 `%v_desugar_1 = t; a = ...` も `NotConstExpr` になっていた。
+  評価中のスコープ（呼び出しフレーム・畳み込み中のブロック）では名前に関わらずコンパイル時の束縛なので、
+  module / 型本体でだけ小文字を弾く。`Compound` も評価する。クラス・パッチ・メソッド定義は
+  const 関数本体では「定数式でない」として弾く（設計どおり）
+- ~~クラス本体の順序: `C.Tripled = C.Base * 3` が `Base` を見つけられない~~ → 修正済み（2026-09-04）。
+  メソッドブロックのコンテキストはブロックが終わるまでクラスに接ぎ木されないので、
+  `eval_attr_and_recv` は型の nominal 検索に失敗したら**今いるスコープ鎖の MethodDefs**（名前で
+  クラスを同定）の `consts` も見る（`const_of_enclosing_methods`）
 
 ---
 

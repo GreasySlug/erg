@@ -244,6 +244,26 @@ impl HostFrame {
     }
 }
 
+/// Whether the body of a loop, written as a lambda, has to be a function of
+/// its own at run time.
+///
+/// The body is called once per element, so a binding of its own -- its
+/// parameter, a local -- is fresh on every iteration, and a function nested
+/// in the body that closes over one keeps that iteration's value. Spliced
+/// into the enclosing frame instead, the binding would be one slot which the
+/// closures of every iteration share, each reading the last iteration's
+/// value. (What the body reads from outside is not affected: that is the
+/// enclosing frame's, whether the body is spliced in or called.)
+fn loop_body_needs_frame(lambda: &Lambda) -> bool {
+    let mut caps = Captures::default();
+    let mut walk = CaptureWalk {
+        caps: &mut caps,
+        into_functions: true,
+    };
+    let frame = walk.frame(&lambda.params, &lambda.body);
+    !frame.cells(&caps).is_empty()
+}
+
 /// The walk over the module, or over one function's body.
 ///
 /// `into_functions`: whether a function met on the way is walked as a frame
@@ -329,10 +349,11 @@ impl CaptureWalk<'_> {
             (Expr::Accessor(Accessor::Ident(ident)), None) if ident.vis().is_private() => {
                 match &ident.inspect()[..] {
                     "if" | "if!" | "match" | "match!" | "with!" => true,
-                    // a loop is inlined only when its body is written as a lambda
+                    // a loop is inlined only when its body is written as a
+                    // lambda, and the body does not need a frame of its own
                     "for" | "for!" | "while!" => matches!(
                         call.args.pos_args.get(1),
-                        Some(arg) if matches!(arg.expr, Expr::Lambda(_))
+                        Some(arg) if matches!(&arg.expr, Expr::Lambda(l) if !loop_body_needs_frame(l))
                     ),
                     _ => false,
                 }
@@ -3093,7 +3114,9 @@ impl PyCodeGenerator {
 
     fn emit_for_instr(&mut self, mut args: Args) {
         log!(info "entered {} ({})", fn_name!(), args);
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
+        // the same decision `CaptureWalk::call` makes
+        let inlined = matches!(args.get(1), Some(Expr::Lambda(l)) if !loop_body_needs_frame(l));
+        if !inlined {
             return self.deopt_instr(ControlKind::For, args);
         }
         let _init_stack_len = self.stack_len();
@@ -3175,7 +3198,9 @@ impl PyCodeGenerator {
 
     fn emit_while_instr(&mut self, mut args: Args) {
         log!(info "entered {} ({})", fn_name!(), args);
-        if !matches!(args.get(1).unwrap(), Expr::Lambda(_)) {
+        // the same decision `CaptureWalk::call` makes
+        let inlined = matches!(args.get(1), Some(Expr::Lambda(l)) if !loop_body_needs_frame(l));
+        if !inlined {
             return self.deopt_instr(ControlKind::While, args);
         }
         let _init_stack_len = self.stack_len();

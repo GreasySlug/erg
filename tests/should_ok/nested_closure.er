@@ -53,20 +53,67 @@ adder(n: Int): (Int -> Int) = (m: Int) -> m + n
 add3 = adder 3
 assert add3(4) == 7
 
-# Closures made in a loop all share the loop's variable: the frame has one
-# cell for it, so each sees the value it had last -- what the transpiled
-# program does, and what Python does. (The variable used to be stored by
-# name, which in a frame with no locals of its own means the module's
-# globals.)
+
+# The body of a loop is called once per element, so a binding of the body's
+# own -- its parameter, a local -- is fresh on every iteration, and a closure
+# made in the body keeps that iteration's value. This holds whether codegen
+# splices the body into the loop (it does not when a binding of the body is
+# captured) or passes it to `for__` as a function.
 adders!() =
     fs = ![]
     for! [1, 2, 3], i =>
         fs.push!((m: Int) -> m + i)
     fs
 fs = adders!()
-assert fs[0](10) == 13
+assert fs[0](10) == 11
 last = fs.pop!()
 assert last(10) == 13
+
+adders2!() =
+    fs = ![]
+    body! = i => fs.push!((m: Int) -> m + i)
+    for! [1, 2, 3], body!
+    fs
+gs = adders2!()
+assert gs[0](10) == 11
+last2 = gs.pop!()
+assert last2(10) == 13
+
+pairs!() =
+    fs = ![]
+    for! [1, 2], i =>
+        for! [10, 20], j =>
+            fs.push!(() -> i + j)
+    fs
+ps = pairs!()
+assert ps[0]() == 11
+last3 = ps.pop!()
+assert last3() == 22
+
+evens!() =
+    fs = ![]
+    for! [1, 2, 3, 4], i =>
+        if! i % 2 == 0, do!:
+            k = i * 10
+            fs.push!(() -> k)
+    fs
+es = evens!()
+assert es[0]() == 20
+last4 = es.pop!()
+assert last4() == 40
+
+counters!() =
+    fs = ![]
+    n = !0
+    while! do! n < 3, do!:
+        n.inc!()
+        k = n * 2
+        fs.push!(() -> k)
+    fs
+cs = counters!()
+assert cs[0]() == 2
+last5 = cs.pop!()
+assert last5() == 6
 
 # A variable bound in a block codegen inlines -- a `match` arm, an `if`
 # branch, a `with!` block -- is a local of the function the block is inlined

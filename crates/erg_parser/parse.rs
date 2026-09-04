@@ -973,7 +973,9 @@ impl Parser {
             .opt_reduce_decorator()
             .map_err(|_| self.stack_dec(fn_name!()))?
         {
-            if self.cur_is(EOF) {
+            // `at_eof`, not `cur_is(EOF)`: a decorator that ends the input one
+            // block in (`C.\n    @Override`) is followed by `Dedent, EOF`
+            if self.at_eof() {
                 let err =
                     ParseError::expect_next_line_error(line!() as usize, deco.0.loc(), "AtMark");
                 self.errs.push(err);

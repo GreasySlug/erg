@@ -247,6 +247,16 @@ mod code_completeness_tests {
             check_code_completeness("@Inheritable"),
             CodeCompleteness::Continuation
         );
+        // One block in, a decorator at EOF is followed by `Dedent, EOF`; it
+        // is still a continuation, not a syntax error.
+        assert_eq!(
+            check_code_completeness("C.\n    @Override"),
+            CodeCompleteness::Continuation
+        );
+        assert_eq!(
+            check_code_completeness("C.\n    @Override\n    f self ="),
+            CodeCompleteness::ExpectsBlock
+        );
     }
 
     #[test]

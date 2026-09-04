@@ -189,9 +189,13 @@ Codegen follows CPython's model; the pieces that have to agree are spread out:
   freevars last). The serializer uses the same function; they must not disagree.
 - Before 3.11, a deref/`LOAD_CLOSURE` indexes `cellvars ++ freevars`, and the closure
   tuple is built in the *callee's* freevars order.
-- Parameters of inlined control blocks are fast locals of the host frame. (They used to
-  be stored by name — and a function frame without `CO_OPTIMIZED` uses `func_globals`
-  as its locals, so they leaked into the module's globals.)
+- Variables bound in inlined control blocks (`if` branches, loop bodies, `match` arms,
+  `with!` blocks) and the blocks' parameters are fast locals of the host frame
+  (`store_kind` / `block_param_kind`, keyed on `UnitKind`). They used to be stored by
+  name — and a function frame without `CO_OPTIMIZED` uses `func_globals` as its locals,
+  so they leaked into the module's globals and every closure over them read the last
+  call's value. `VarInfo::is_fast_value` cannot decide this: it looks at the scope
+  lowering gave the variable, which is the block's own.
 - Lowering's `current_true_function_ctx` judges a scope by its kind, not by what it is
   lowering at the moment; otherwise captures inside a `for!` body are never recorded.
 

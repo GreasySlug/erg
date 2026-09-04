@@ -474,6 +474,13 @@ impl VarInfo {
         ns.split_with(&[".", "::"]).len() == 1
     }
 
+    /// Whether the variable was bound inside a control-flow block (an `if`
+    /// branch, a loop body, a `match` arm), which codegen inlines into the
+    /// function around it.
+    pub fn is_control_block_local(&self) -> bool {
+        self.ctx.control_kind().is_some() && !self.is_parameter()
+    }
+
     pub fn is_fast_value(&self) -> bool {
         !self.is_toplevel()
             && !self.is_parameter()

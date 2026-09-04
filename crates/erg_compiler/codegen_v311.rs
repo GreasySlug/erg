@@ -29,7 +29,6 @@ impl PyCodeGenerator {
         let Expr::Lambda(lambda) = args.remove(0) else {
             unreachable!()
         };
-        let params = self.gen_param_names(&lambda.params);
         self.emit_expr(expr);
         if self.opcode_set.is_3_14_plus() {
             // 3.14 dropped BEFORE_WITH. Its replacement spells the same thing out:
@@ -58,7 +57,7 @@ impl PyCodeGenerator {
         // push __exit__, __enter__() to the stack
         self.stack_inc_n(2);
         let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
+        self.emit_with_block(lambda.body, &lambda.params);
         let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
         self.emit_store_instr(stash.clone(), AccessKind::Name);
         self.emit_load_const(ValueObj::None);

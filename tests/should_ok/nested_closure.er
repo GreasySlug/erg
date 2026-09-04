@@ -67,3 +67,39 @@ fs = adders!()
 assert fs[0](10) == 13
 last = fs.pop!()
 assert last(10) == 13
+
+# A variable bound in a block codegen inlines -- a `match` arm, an `if`
+# branch, a `with!` block -- is a local of the function the block is inlined
+# into. Bound by name instead, it went to the module's globals (a function
+# frame without CO_OPTIMIZED uses them as its locals), and every closure over
+# it read whatever the last call had left there.
+mk(x: Int): (() -> Int) =
+    match x:
+        n -> () -> n
+one = mk 1
+two = mk 2
+assert one() == 1
+assert two() == 2
+
+mk2(x: Int): (() -> Int) =
+    if x > 0:
+        do:
+            k = x + 10
+            () -> k
+        do: () -> 0
+one2 = mk2 1
+two2 = mk2 2
+assert one2() == 11
+assert two2() == 12
+
+Box = Class {.v = Int}
+Box|<: ContextManager|.
+    __enter__ self = self
+    __exit__ self, _, _, _ = False
+mk3!(x: Int): (() -> Int) =
+    with! Box.new({.v = x}), b =>
+        () -> b.v
+one3 = mk3! 1
+two3 = mk3! 2
+assert one3() == 1
+assert two3() == 2

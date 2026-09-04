@@ -481,10 +481,20 @@ fn escape_ident(ident: Identifier) -> Str {
     }
 }
 
+/// What a code unit is the body of. A store to a name binds a slot in a
+/// function frame, and a name in a module or class body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnitKind {
+    Module,
+    ClassBody,
+    Function,
+}
+
 #[derive(Debug, Clone)]
 pub struct PyCodeGenUnit {
     pub(crate) id: usize,
     pub(crate) py_version: PythonVersion,
+    pub(crate) kind: UnitKind,
     pub(crate) codeobj: CodeObj,
     pub(crate) captured_vars: Vec<Str>,
     /// The locals whose slot holds a cell (3.11+): a local some nested function
@@ -531,6 +541,7 @@ impl PyCodeGenUnit {
         Self {
             id,
             py_version,
+            kind: UnitKind::Function,
             codeobj: CodeObj::empty(params, kwonlyargcount, filename, name, firstlineno, flags),
             captured_vars: vec![],
             cells: vec![],
@@ -1470,8 +1481,34 @@ impl PyCodeGenerator {
         }
     }
 
+    /// How a store to `ident` binds it in this unit.
+    ///
+    /// A variable bound in a block codegen inlines -- an `if` branch, a loop
+    /// body, a `match` arm -- is a local of the frame the block is inlined
+    /// into. `is_fast_value` cannot say so: it looks at the scope lowering gave
+    /// the variable, which is the block's own. Stored by name instead, the
+    /// variable went to the module's globals -- a function frame without
+    /// CO_OPTIMIZED uses them as its locals.
+    fn store_kind(&self, ident: &Identifier) -> RegisterNameKind {
+        if self.cur_block().kind == UnitKind::Function && ident.vi.is_control_block_local() {
+            Fast
+        } else {
+            RegisterNameKind::from_ident(ident)
+        }
+    }
+
+    /// How the parameter of an inlined block binds: it is a local of the frame
+    /// the block is inlined into, and a name in a module or class body.
+    fn block_param_kind(&self) -> RegisterNameKind {
+        if self.cur_block().kind == UnitKind::Function {
+            Fast
+        } else {
+            NonFast
+        }
+    }
+
     pub(crate) fn emit_store_instr(&mut self, ident: Identifier, acc_kind: AccessKind) {
-        let kind = RegisterNameKind::from_ident(&ident);
+        let kind = self.store_kind(&ident);
         let captured = self.captures.defs.contains(&ident.vi.def_loc);
         self.emit_store_instr_captured(ident, acc_kind, kind, captured)
     }
@@ -1847,6 +1884,7 @@ impl PyCodeGenerator {
             firstlineno,
             0,
         ));
+        self.mut_cur_block().kind = UnitKind::ClassBody;
         let mod_name = self.toplevel_block_codeobj().name.clone();
         self.emit_load_const(mod_name);
         self.emit_store_instr(Identifier::static_public("__module__"), Name);
@@ -3271,7 +3309,9 @@ impl PyCodeGenerator {
             ParamPattern::VarName(name) => {
                 let ident = erg_parser::ast::Identifier::private_from_varname(name.clone());
                 let ident = Identifier::new(ident, None, param.vi);
-                self.emit_store_instr(ident, AccessKind::Name);
+                let kind = self.block_param_kind();
+                let captured = self.captures.defs.contains(&ident.vi.def_loc);
+                self.emit_store_instr_captured(ident, AccessKind::Name, kind, captured);
             }
             ParamPattern::Discard(_) => {
                 self.emit_pop_top();
@@ -4099,11 +4139,9 @@ impl PyCodeGenerator {
         let param_names = self.gen_param_names(&params);
         let captured = self.captured_param_flags(&params);
         let line = block.ln_begin().unwrap_or(0);
-        // A parameter of an inlined block is a local of the frame it is
-        // inlined into. (The name is remade here without its `VarInfo`, which
-        // would make it a name rather than a local -- and a name stored in a
-        // frame with no locals of its own goes to the module's globals.)
-        let kind = if self.is_toplevel() { NonFast } else { Fast };
+        // the name is remade here without its `VarInfo`, which would make it
+        // a name rather than a local
+        let kind = self.block_param_kind();
         for (param, captured) in param_names.into_iter().zip(captured) {
             let ident = Identifier::public_with_line(DOT, param, line);
             self.emit_store_instr_captured(ident, Name, kind, captured);
@@ -4141,11 +4179,15 @@ impl PyCodeGenerator {
         self.cancel_if_pop_top();
     }
 
-    pub(crate) fn emit_with_block(&mut self, block: Block, params: Vec<Str>) {
+    pub(crate) fn emit_with_block(&mut self, block: Block, params: &Params) {
         log!(info "entered {}", fn_name!());
+        let param_names = self.gen_param_names(params);
+        let captured = self.captured_param_flags(params);
         let line = block.ln_begin().unwrap_or(0);
-        for param in params {
-            self.emit_store_instr(Identifier::public_with_line(DOT, param, line), Name);
+        let kind = self.block_param_kind();
+        for (param, captured) in param_names.into_iter().zip(captured) {
+            let ident = Identifier::public_with_line(DOT, param, line);
+            self.emit_store_instr_captured(ident, Name, kind, captured);
         }
         let init_stack_len = self.stack_len();
         for chunk in block.into_iter() {
@@ -4176,6 +4218,7 @@ impl PyCodeGenerator {
             firstlineno,
             0,
         ));
+        self.mut_cur_block().kind = UnitKind::ClassBody;
         let init_stack_len = self.stack_len();
         let mod_name = self.toplevel_block_codeobj().name.clone();
         self.emit_load_const(mod_name);
@@ -5099,6 +5142,7 @@ impl PyCodeGenerator {
             1,
             0,
         ));
+        self.mut_cur_block().kind = UnitKind::Module;
         if self.opcode_set.is_3_11_plus() {
             self.write_instr(self.opcode_set.resume());
             self.write_arg(0);

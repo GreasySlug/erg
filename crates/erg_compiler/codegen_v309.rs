@@ -32,7 +32,6 @@ impl PyCodeGenerator {
         let Expr::Lambda(lambda) = args.remove(0) else {
             unreachable!()
         };
-        let params = self.gen_param_names(&lambda.params);
         self.emit_expr(expr);
         let idx_setup_with = self.lasti();
         self.write_instr(Opcode310::SETUP_WITH);
@@ -40,7 +39,7 @@ impl PyCodeGenerator {
         // push __exit__, __enter__() to the stack
         self.stack_inc_n(2);
         let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
+        self.emit_with_block(lambda.body, &lambda.params);
         let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
         self.emit_store_instr(stash.clone(), AccessKind::Name);
         self.write_instr(POP_BLOCK);
@@ -88,7 +87,6 @@ impl PyCodeGenerator {
         let Expr::Lambda(lambda) = args.remove(0) else {
             unreachable!()
         };
-        let params = self.gen_param_names(&lambda.params);
         self.emit_expr(expr);
         let idx_setup_with = self.lasti();
         self.write_instr(Opcode310::SETUP_WITH);
@@ -96,7 +94,7 @@ impl PyCodeGenerator {
         // push __exit__, __enter__() to the stack
         self.stack_inc_n(2);
         let lambda_line = lambda.body.last().unwrap().ln_begin().unwrap_or(0);
-        self.emit_with_block(lambda.body, params);
+        self.emit_with_block(lambda.body, &lambda.params);
         let stash = Identifier::private_with_line(self.fresh_gen.fresh_varname(), lambda_line);
         self.emit_store_instr(stash.clone(), AccessKind::Name);
         self.write_instr(POP_BLOCK);

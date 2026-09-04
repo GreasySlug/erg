@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use erg_common::consts::DEBUG_MODE;
 use erg_common::dict::Dict;
-use erg_common::error::Location;
+use erg_common::error::{ErrorKind, Location};
 #[allow(unused)]
 use erg_common::log;
 use erg_common::macros::RecursionCounter;
@@ -1859,27 +1859,37 @@ impl Context {
             match lambda_ctx.eval_const_block(&lambda.body) {
                 Ok(val) => v_enum(set! {val}),
                 // The body reads its parameters (`(X: Int) -> X + 1`), which
-                // have no value until the lambda is called. The lambda is a
-                // value all the same, and calling it evaluates the body with
-                // them bound; whatever went wrong here comes up again then.
-                // Its return type is what it declares, if anything -- as for
-                // a named const function.
-                Err(_) => match lambda.sig.return_t_spec.as_deref() {
-                    Some(spec) => match self.instantiate_typespec_full(
-                        &spec.t_spec,
-                        None,
-                        &mut tmp_tv_cache,
-                        RegistrationMode::Normal,
-                        false,
-                    ) {
-                        Ok(t) => t,
-                        Err((t, es)) => {
-                            errs.extend(es);
-                            t
-                        }
-                    },
-                    None => Type::Obj,
-                },
+                // have no value until the lambda is called: the only thing
+                // this evaluation can trip over is a name. The lambda is a
+                // value all the same -- calling it binds the parameters and
+                // evaluates the body -- and its return type is what it
+                // declares, if anything, as for a named const function.
+                // Any other failure is the failure it is. Going on after one
+                // would not do: a `do` block that recursed past the limit
+                // would be *called* after its failed pre-evaluation, at every
+                // level, and a recursion error took exponential time.
+                Err((_, es))
+                    if !lambda.sig.params.is_empty()
+                        && es.iter().all(|e| e.core.kind == ErrorKind::NameError) =>
+                {
+                    match lambda.sig.return_t_spec.as_deref() {
+                        Some(spec) => match self.instantiate_typespec_full(
+                            &spec.t_spec,
+                            None,
+                            &mut tmp_tv_cache,
+                            RegistrationMode::Normal,
+                            false,
+                        ) {
+                            Ok(t) => t,
+                            Err((t, es)) => {
+                                errs.extend(es);
+                                t
+                            }
+                        },
+                        None => Type::Obj,
+                    }
+                }
+                Err(err) => return Err(err),
             }
         };
         drop(counter);

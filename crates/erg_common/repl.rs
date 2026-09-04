@@ -66,16 +66,21 @@ pub enum SessionStep {
 /// Evaluation rules (IPython-like):
 /// - a single complete line is evaluated immediately (unless in cell mode)
 /// - while the checker reports `ExpectsBlock`, lines are accumulated with
-///   auto-indentation
+///   auto-indentation; the indentation follows the previous line, so a line
+///   the user indented further opens a block at that width
 /// - while the checker reports `Unclosed` (inside brackets / `"""` strings),
 ///   lines are accumulated verbatim (no auto-indentation)
-/// - an empty line evaluates the pending cell (even if still incomplete,
-///   so that the user sees the error)
+/// - an empty line closes the innermost open block; the cell is evaluated
+///   when the outermost one closes (even if still incomplete, so that the
+///   user sees the error)
 /// - a syntax error is evaluated immediately to show the error
 pub struct ReplSession {
     lines: Vec<String>,
-    /// suggested indent level (in units of 4 spaces) for the next line
-    indent_level: usize,
+    /// indentation widths (in columns) of the blocks the accumulated lines
+    /// have opened, innermost last; the outermost level (0) is not stored
+    block_indents: Vec<usize>,
+    /// indentation (in columns) suggested for the next line
+    next_indent: usize,
     /// checker result for the current buffer
     last: CodeCompleteness,
     /// In cell mode (a real terminal REPL without the `full-repl` feature),
@@ -87,7 +92,8 @@ impl ReplSession {
     pub fn new(cell_mode: bool) -> Self {
         Self {
             lines: vec![],
-            indent_level: 0,
+            block_indents: vec![],
+            next_indent: 0,
             last: CodeCompleteness::Complete,
             cell_mode,
         }
@@ -99,13 +105,13 @@ impl ReplSession {
             // raw content lines (e.g. inside a `"""` string) must not be auto-indented
             String::new()
         } else {
-            INDENT_UNIT.repeat(self.indent_level)
+            " ".repeat(self.next_indent)
         }
     }
 
     /// 1-origin indent depth (used e.g. for `Input::set_indent`).
     pub fn indent_depth(&self) -> usize {
-        self.indent_level + 1
+        self.next_indent / INDENT_UNIT.len() + 1
     }
 
     /// Returns true if some source code is accumulated but not yet evaluated.
@@ -116,7 +122,8 @@ impl ReplSession {
     /// Resets the session to the initial state.
     pub fn reset(&mut self) {
         self.lines.clear();
-        self.indent_level = 0;
+        self.block_indents.clear();
+        self.next_indent = 0;
         self.last = CodeCompleteness::Complete;
     }
 
@@ -132,11 +139,16 @@ impl ReplSession {
         code
     }
 
-    fn last_indent_level(&self) -> usize {
-        self.lines
-            .last()
-            .map(|l| (l.len() - l.trim_start_matches(' ').len()) / INDENT_UNIT.len())
-            .unwrap_or(0)
+    /// Record the block structure a line at `width` columns implies: it
+    /// closes every block indented deeper than itself and opens one if it is
+    /// indented deeper than the innermost open block.
+    fn enter_line(&mut self, width: usize) {
+        while self.block_indents.last().is_some_and(|&w| w > width) {
+            self.block_indents.pop();
+        }
+        if width > self.block_indents.last().copied().unwrap_or(0) {
+            self.block_indents.push(width);
+        }
     }
 
     /// Feed a single input line (already chomped / right-trimmed).
@@ -174,17 +186,18 @@ impl ReplSession {
                 self.lines.push(String::new());
                 return SessionStep::Continue;
             }
-            if self.indent_level > 1 {
-                // dedent one level; the cell is evaluated only when a blank
-                // line closes the outermost block (so that nested blocks can
-                // be exited one at a time)
-                self.indent_level -= 1;
-                self.lines.push(String::new());
-                return SessionStep::Continue;
+            // An empty line closes the innermost open block. The cell is
+            // evaluated when the outermost one closes, so that nested blocks
+            // can be exited one at a time.
+            if self.block_indents.len() <= 1 {
+                // evaluate the pending cell: complete code runs, incomplete
+                // code is evaluated anyway so that the user sees the error
+                return SessionStep::Eval(self.take_code());
             }
-            // evaluate the pending cell: complete code runs, incomplete code
-            // is evaluated anyway so that the user sees the error
-            return SessionStep::Eval(self.take_code());
+            self.block_indents.pop();
+            self.next_indent = self.block_indents.last().copied().unwrap_or(0);
+            self.lines.push(String::new());
+            return SessionStep::Continue;
         }
         let mut full = String::with_capacity(indent.len() + line.len());
         if !indent.is_empty() {
@@ -192,6 +205,8 @@ impl ReplSession {
             on_indent_insert(indent);
         }
         full.push_str(line);
+        let width = full.len() - full.trim_start_matches(' ').len();
+        self.enter_line(width);
         self.lines.push(full);
         self.last = check(&self.current_code());
         match self.last {
@@ -201,17 +216,17 @@ impl ReplSession {
                 } else {
                     // multi-line cell: keep the indent of the last line and
                     // wait for an empty line to evaluate
-                    self.indent_level = self.last_indent_level();
+                    self.next_indent = width;
                     SessionStep::Continue
                 }
             }
             CodeCompleteness::ExpectsBlock => {
-                self.indent_level = self.last_indent_level() + 1;
+                self.next_indent = width + INDENT_UNIT.len();
                 SessionStep::Continue
             }
             // e.g. a decorator line: the next line stays at the same indent
             CodeCompleteness::Continuation => {
-                self.indent_level = self.last_indent_level();
+                self.next_indent = width;
                 SessionStep::Continue
             }
             CodeCompleteness::Unclosed => SessionStep::Continue,
@@ -620,6 +635,15 @@ mod tests {
         // blank line closes the outermost block
         let (evals, _) = drive(false, &["a =", "b =", "1", "", ""]);
         assert_eq!(evals, vec!["a =\n    b =\n        1\n\n"]);
+    }
+
+    #[test]
+    fn session_dedent_returns_to_enclosing_block() {
+        // the user indented the body further than suggested: the next line
+        // follows it, and the empty line closes that block (there is no
+        // block at 4 columns to fall back to) and evaluates
+        let (evals, _) = drive(false, &["a =", "    1", "2", ""]);
+        assert_eq!(evals, vec!["a =\n        1\n        2\n"]);
     }
 
     #[test]

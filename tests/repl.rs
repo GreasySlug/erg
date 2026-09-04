@@ -162,6 +162,11 @@ fn exec_invalid_class_def() -> Result<(), ()> {
 #[test]
 #[ignore]
 fn exec_repl_invalid_indent() -> Result<(), ()> {
+    // The first block is valid: auto-indentation follows the previous line,
+    // so `2` lands at the 8 columns `1` was typed at, and the empty line
+    // returns to the enclosing level (0) and evaluates. In the second block
+    // the over-indented `print!` is an invalid indent; the parser reports two
+    // errors for that cell.
     expect_repl_failure(
         "repl_invalid_indent",
         [
@@ -178,7 +183,7 @@ fn exec_repl_invalid_indent() -> Result<(), ()> {
         .into_iter()
         .map(|x| x.to_string())
         .collect(),
-        3,
+        2,
     )
 }
 

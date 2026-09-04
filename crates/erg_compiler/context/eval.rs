@@ -1325,26 +1325,23 @@ impl Context {
             // scope to look up. Since the name cannot leave the body, the frame
             // that defined it is always still on the chain.
             if let Signature::Subr(subr) = &def.sig {
-                if !subr.params.is_empty() {
-                    let obj = match self.register_const_subr(subr, &def.body.block, def.def_kind())
-                    {
-                        Ok(obj) => obj,
-                        Err((obj, es)) => {
-                            errs.extend(es);
-                            obj
-                        }
-                    };
-                    if let Err(es) =
-                        self.register_gen_const(ident, obj, None, def.def_kind().is_other())
-                    {
+                let obj = match self.register_const_subr(subr, &def.body.block, def.def_kind()) {
+                    Ok(obj) => obj,
+                    Err((obj, es)) => {
                         errs.extend(es);
+                        obj
                     }
-                    return if errs.is_empty() {
-                        Ok(ValueObj::None)
-                    } else {
-                        Err((ValueObj::None, errs))
-                    };
+                };
+                if let Err(es) =
+                    self.register_gen_const(ident, obj, None, def.def_kind().is_other())
+                {
+                    errs.extend(es);
                 }
+                return if errs.is_empty() {
+                    Ok(ValueObj::None)
+                } else {
+                    Err((ValueObj::None, errs))
+                };
             }
             let vis = self
                 .instantiate_vis_modifier(def.sig.vis())

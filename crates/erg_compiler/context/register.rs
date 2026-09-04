@@ -1726,9 +1726,20 @@ impl Context {
                             )
                         );
                     }
-                    // If the const subroutine has parameters, create a UserConstSubr
-                    // instead of evaluating the body immediately
-                    if !sig.params.is_empty() {
+                    // A const subroutine is a subroutine whatever its arity:
+                    // `F() = 1` defines a function, which a call folds -- not
+                    // the constant 1. Evaluating the body here (as this used to
+                    // for a parameterless one) put the type of a value on a
+                    // name that codegen binds to a function, and the program
+                    // failed at run time after passing the checker.
+                    //
+                    // In Python a parameterless function is a function whatever
+                    // its name, and its body is not for evaluating here.
+                    if PYTHON_MODE && sig.params.is_empty() {
+                        if let Err(es) = self.declare_sub(sig, id) {
+                            errs.extend(es);
+                        }
+                    } else {
                         let obj =
                             match self.register_const_subr(sig, &def.body.block, def.def_kind()) {
                                 Ok(obj) => obj,
@@ -1737,69 +1748,6 @@ impl Context {
                                     obj
                                 }
                             };
-                        if let Err(es) = self.register_gen_const(
-                            def.sig.ident().unwrap(),
-                            obj,
-                            call,
-                            def.def_kind().is_other(),
-                        ) {
-                            errs.extend(es);
-                        }
-                    } else {
-                        // No parameters: evaluate the body immediately (const value)
-                        let tv_cache = match self.instantiate_ty_bounds(&sig.bounds, PreRegister) {
-                            Ok(tv_cache) => tv_cache,
-                            Err((tv_cache, es)) => {
-                                errs.extend(es);
-                                tv_cache
-                            }
-                        };
-                        let vis = match self.instantiate_vis_modifier(sig.vis()) {
-                            Ok(vis) => vis,
-                            Err(es) => {
-                                errs.extend(es);
-                                VisibilityModifier::Private
-                            }
-                        };
-                        self.grow(__name__, ContextKind::Proc, vis, Some(tv_cache));
-                        let (obj, const_t) = match self.eval_const_block(&def.body.block) {
-                            Ok(obj) => (obj.clone(), v_enum(set! {obj})),
-                            Err((obj, es)) => {
-                                if PYTHON_MODE {
-                                    self.pop();
-                                    if let Err(es) = self.declare_sub(sig, id) {
-                                        errs.extend(es);
-                                    }
-                                    if errs.is_empty() {
-                                        return Ok(());
-                                    } else {
-                                        return Err(errs);
-                                    }
-                                }
-                                errs.extend(es);
-                                (obj.clone(), v_enum(set! {obj}))
-                            }
-                        };
-                        if let Some(spec) = sig.return_t_spec.as_ref() {
-                            let mut dummy_tv_cache = TyVarCache::new(self.level, self);
-                            let spec_t = match self.instantiate_typespec_full(
-                                &spec.t_spec,
-                                None,
-                                &mut dummy_tv_cache,
-                                PreRegister,
-                                false,
-                            ) {
-                                Ok(ty) => ty,
-                                Err((ty, es)) => {
-                                    errs.extend(es);
-                                    ty
-                                }
-                            };
-                            if let Err(es) = self.sub_unify(&const_t, &spec_t, &def.body, None) {
-                                errs.extend(es);
-                            }
-                        }
-                        self.pop();
                         if let Err(es) = self.register_gen_const(
                             def.sig.ident().unwrap(),
                             obj,

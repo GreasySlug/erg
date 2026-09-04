@@ -187,3 +187,31 @@ Pure(N: Int): Int =
 Pure1: {17} = Pure(1)
 assert Pure1 == 17
 assert Pure(10) == 26
+
+# A const function of no parameters is still a function: a call folds, the
+# name does not. It used to be registered as the value of its body, with the
+# type of that value on a name that codegen binds to a function -- so the
+# program passed the checker and failed at run time.
+Zero(): Int = 1
+assert Zero() == 1
+Zero1: {1} = Zero()
+assert Zero1 == 1
+
+# variadic parameters bind the rest of the arguments -- a list, as at run time
+Count(*Xs: Int): Int = len Xs
+assert Count() == 0
+assert Count(1, 2, 3) == 3
+Count3: {3} = Count(1, 2, 3)
+assert Count3 == 3
+Head(*Xs: Int): Int = Xs[0]
+Head7: {7} = Head(7, 8)
+assert Head7 == 7
+Total(X: Int, *Xs: Int): Int = X + len Xs
+assert Total(10, 1, 2) == 12
+
+# a parameterless const function defined in a const function's body
+Doubled(N: Int): Int =
+    Inner(): Int = N * 2
+    Inner() + 1
+Doubled3: {7} = Doubled(3)
+assert Doubled3 == 7

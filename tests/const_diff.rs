@@ -48,6 +48,11 @@ const PRELUDE: &str = concat!(
     "Pure(N: Int): Int =\n",
     "    Sq(M: Int): Int = M * M\n",
     "    Sq(4) + N\n",
+    // a subroutine of no parameters is a subroutine: a call folds, the name does not
+    "Zero(): Int = 1\n",
+    // the rest of the arguments -- the list they are at run time, too
+    "Count(*Xs: Int): Int = len Xs\n",
+    "Rest(X: Int, *Xs: Int): [Int; _] = Xs\n",
     "Which(S: Str): Int =\n",
     "    match S:\n",
     "        \"a\" -> 1\n",
@@ -300,6 +305,12 @@ const CASES: &[&str] = &[
     "Nest(0)",
     "Pure(1)",
     "Pure(10)",
+    // parameterless and variadic const subroutines
+    "Zero()",
+    "Count()",
+    "Count(1, 2, 3)",
+    "Rest(1, 2, 3)",
+    "Rest(1)",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.

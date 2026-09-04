@@ -215,3 +215,34 @@ Doubled(N: Int): Int =
     Inner() + 1
 Doubled3: {7} = Doubled(3)
 assert Doubled3 == 7
+
+# an anonymous lambda is a const value: it can be bound to a name, passed to
+# a const function, and called
+Succ = (X: Int) -> X + 1
+Succ1: {2} = Succ(1)
+assert Succ1 == 2
+Apply(F, X: Int): Int = F(X)
+Applied: {3} = Apply((X: Int) -> X + 1, 2)
+assert Applied == 3
+
+# a constant of a class may be built from one defined above it in the same
+# block, before the block is on the class
+Cfg = Class {.v = Int}
+Cfg.
+    Base = 2
+    Tripled = Cfg.Base * 3
+Tripled6: {6} = Cfg.Tripled
+assert Tripled6 == 6
+
+# a const function's body binds locals of any name -- and so what a pattern
+# definition desugars to
+Sum2(T: (Int, Int)): Int =
+    (a, b) = T
+    a + b
+Sum3: {3} = Sum2((1, 2))
+assert Sum3 == 3
+Low(N: Int): Int =
+    m = N + 1
+    m * 2
+Low4: {4} = Low(1)
+assert Low4 == 4

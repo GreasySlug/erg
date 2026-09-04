@@ -25,6 +25,8 @@ const PRELUDE: &str = concat!(
     "    Twice(N: Int): Int = N * 2\n",
     "    Base: Int = 10\n",
     "    Plus(N: Int): Int = Cls.Base + N\n",
+    // built from a constant above it in the same block
+    "    Tripled: Int = Cls.Base * 3\n",
     // a constant built from the parameters, which only a call can evaluate
     "Local(N: Int): Int =\n",
     "    Tmp = N + 1\n",
@@ -53,6 +55,15 @@ const PRELUDE: &str = concat!(
     // the rest of the arguments -- the list they are at run time, too
     "Count(*Xs: Int): Int = len Xs\n",
     "Rest(X: Int, *Xs: Int): [Int; _] = Xs\n",
+    // locals of any name in a body, and what a pattern definition desugars to
+    "Sum2(T: (Int, Int)): Int =\n",
+    "    (a, b) = T\n",
+    "    a + b\n",
+    "Low(N: Int): Int =\n",
+    "    m = N + 1\n",
+    "    m * 2\n",
+    // a function taking a function: called with an anonymous lambda below
+    "Apply(F, X: Int): Int = F(X)\n",
     "Which(S: Str): Int =\n",
     "    match S:\n",
     "        \"a\" -> 1\n",
@@ -311,6 +322,12 @@ const CASES: &[&str] = &[
     "Count(1, 2, 3)",
     "Rest(1, 2, 3)",
     "Rest(1)",
+    // a constant of a class built from another in the same block
+    "Cls.Tripled",
+    // locals of any name, a pattern definition, an anonymous lambda
+    "Sum2((1, 2))",
+    "Low(1)",
+    "Apply((X: Int) -> X + 1, 2)",
 ];
 
 /// Expressions whose folded value is known *not* to match the run-time value.

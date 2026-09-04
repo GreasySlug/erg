@@ -773,6 +773,9 @@ impl Context {
                     }
                 }
             }
+            if let Some(val) = self.const_of_enclosing_methods(t.typ(), ident.inspect()) {
+                return Ok((val, false));
+            }
         }
         // A const method called on a value (`"abc".replace("a", "z")`) rather than
         // on the type. This is the same lookup the binary operators do, so every
@@ -789,6 +792,35 @@ impl Context {
             ident.inspect(),
             None,
         ))
+    }
+
+    /// A constant the methods block of `typ` has registered so far, when this
+    /// is (in) that block: `C.Tripled = C.Base * 3` a few lines below `Base`.
+    /// The block's context goes onto the class only when the block ends, so
+    /// until then its constants are found in the scope itself.
+    fn const_of_enclosing_methods(&self, typ: &Type, name: &str) -> Option<ValueObj> {
+        let local = typ.local_name();
+        let mut ctx = Some(self);
+        while let Some(c) = ctx {
+            let of_typ = match &c.kind {
+                ContextKind::MethodDefs {
+                    class: Some(class), ..
+                } => class.local_name() == local,
+                // a monomorphic class is not recorded on the kind; the block
+                // is named after it (`grow`)
+                ContextKind::MethodDefs { class: None, .. } => {
+                    c.name.rsplit(['.', ':']).next() == Some(&local[..])
+                }
+                _ => false,
+            };
+            if of_typ {
+                if let Some(val) = c.consts.get(name) {
+                    return Some(val.clone());
+                }
+            }
+            ctx = c.get_outer();
+        }
+        None
     }
 
     fn eval_const_bin(&self, bin: &BinOp) -> Failable<ValueObj> {
@@ -1298,7 +1330,13 @@ impl Context {
     }
 
     fn eval_const_def(&mut self, def: &Def) -> Failable<ValueObj> {
-        if def.is_const() {
+        // A definition in a scope that is being evaluated -- the frame of a
+        // const function, a block being folded -- binds a compile-time value
+        // whatever its name: `(a, b) = t` desugars to `%v_desugar_1 = t;
+        // a = %v_desugar_1[0]; ...`, and `m = n + 1` is a local like any
+        // other. Only in a module or type body is a lowercase name a run-time
+        // variable, which no constant can be made of.
+        if def.is_const() || !(self.kind.is_module() || self.kind.is_type()) {
             let mut errs = EvalErrors::empty();
             let Some(ident) = def.sig.ident() else {
                 return Err((
@@ -1818,7 +1856,31 @@ impl Context {
                 );
                 lambda_ctx.params.push((name, vi));
             }
-            v_enum(set! {lambda_ctx.eval_const_block(&lambda.body)?})
+            match lambda_ctx.eval_const_block(&lambda.body) {
+                Ok(val) => v_enum(set! {val}),
+                // The body reads its parameters (`(X: Int) -> X + 1`), which
+                // have no value until the lambda is called. The lambda is a
+                // value all the same, and calling it evaluates the body with
+                // them bound; whatever went wrong here comes up again then.
+                // Its return type is what it declares, if anything -- as for
+                // a named const function.
+                Err(_) => match lambda.sig.return_t_spec.as_deref() {
+                    Some(spec) => match self.instantiate_typespec_full(
+                        &spec.t_spec,
+                        None,
+                        &mut tmp_tv_cache,
+                        RegistrationMode::Normal,
+                        false,
+                    ) {
+                        Ok(t) => t,
+                        Err((t, es)) => {
+                            errs.extend(es);
+                            t
+                        }
+                    },
+                    None => Type::Obj,
+                },
+            }
         };
         drop(counter);
         let sig_t = subr_t(
@@ -1978,8 +2040,18 @@ impl Context {
     // コンパイル時評価できないならNoneを返す
     pub(crate) fn eval_const_chunk(&mut self, expr: &Expr) -> Failable<ValueObj> {
         match expr {
-            // TODO: ClassDef, PatchDef
             Expr::Def(def) => self.eval_const_def(def),
+            // what a pattern definition desugars to (`(a, b) = t`): definitions
+            // of its own, made in this scope like the block's
+            Expr::Compound(compound) => {
+                let mut last = ValueObj::None;
+                for chunk in compound.iter() {
+                    last = self.eval_const_chunk(chunk)?;
+                }
+                Ok(last)
+            }
+            // a class, a patch or a methods block inside a const function's
+            // body is rejected as not a constant expression
             other => self.eval_const_chunk_ref(other),
         }
     }

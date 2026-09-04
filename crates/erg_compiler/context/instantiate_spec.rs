@@ -1539,8 +1539,17 @@ impl Context {
         not_found_is_qvar: bool,
     ) -> Failable<TyParam> {
         let mut errs = TyCheckErrors::empty();
-        if let Ok(value) = self.eval_const_expr(&expr.clone().downgrade()) {
-            return Ok(TyParam::Value(value));
+        // A lambda with parameters stays symbolic (`TyParam::Lambda`, below):
+        // in a type -- the predicate of a refinement, say -- its body is
+        // evaluated with its parameters substituted, which a value could not
+        // be. (Evaluating it used to fail on the parameter read anyway; now
+        // it gives a value, which is right for a call but not for a type.)
+        let symbolic =
+            matches!(expr, ast::ConstExpr::Lambda(lambda) if !lambda.sig.params.is_empty());
+        if !symbolic {
+            if let Ok(value) = self.eval_const_expr(&expr.clone().downgrade()) {
+                return Ok(TyParam::Value(value));
+            }
         }
         match expr {
             ast::ConstExpr::Lit(lit) => {

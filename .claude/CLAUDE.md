@@ -168,6 +168,35 @@ self.write_instr(self.opcode_set.call());  // u8, already correct for target ver
 | FOR_ITER exhaustion | — | END_FOR (pops 2) | **END_FOR (pops 1) + POP_TOP** | END_FOR (pops 1) + POP_ITER |
 | LOAD_ASSERTION_ERROR | yes | yes | yes | **removed → LOAD_COMMON_CONSTANT** |
 
+### Closures (cells)
+
+Codegen follows CPython's model; the pieces that have to agree are spread out:
+
+- A variable a nested function reads lives in a **cell owned by the defining frame**,
+  made in that frame's prologue (`MAKE_CELL`, before `COPY_FREE_VARS`/`RESUME`) —
+  one cell per variable per frame, so closures made in a loop share the loop
+  variable (late binding, as in Python and the transpiler). The closure tuple
+  carries the cells; a callee never boxes its freevars.
+- Which locals need cells comes from `collect_captures` (a pre-scan over the HIR using
+  the `captured_names` lowering records) plus a per-function walk at emit time
+  (`frame_cells`). Lambdas that codegen inlines (`if` branches, `for!`/`while!` bodies,
+  `match` arms) are walked as part of the host frame — their `captured_names` include
+  the host's own parameters, which must not become cells. Desugared lambdas
+  (comprehensions) share a `Location`, so nothing is keyed by location.
+- Slots are numbered as names are met, but `COPY_FREE_VARS` fills the *trailing* slots,
+  so `remap_localsplus` renumbers every slot instruction at unit end to
+  `CodeObj::localsplus_layout` (locals in order, captured ones marked cells in place,
+  freevars last). The serializer uses the same function; they must not disagree.
+- Before 3.11, a deref/`LOAD_CLOSURE` indexes `cellvars ++ freevars`, and the closure
+  tuple is built in the *callee's* freevars order.
+- Parameters of inlined control blocks are fast locals of the host frame. (They used to
+  be stored by name — and a function frame without `CO_OPTIMIZED` uses `func_globals`
+  as its locals, so they leaked into the module's globals.)
+- Lowering's `current_true_function_ctx` judges a scope by its kind, not by what it is
+  lowering at the moment; otherwise captures inside a `for!` body are never recorded.
+
+Regression file: `tests/should_ok/nested_closure.er` (run it on every Python version).
+
 ### Bytecode Test Suites
 
 ```bash

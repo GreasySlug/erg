@@ -87,6 +87,14 @@ const PY_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
+/// Whether `name` can be a Python identifier as it is.
+fn is_py_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
+        && !PY_KEYWORDS.contains(&name)
+}
+
 /// The Python name of a parameter: its own name, as the bytecode backend spells
 /// it, so that a keyword argument and a `**kwargs` key match it; a Python
 /// keyword gets a `_`. Used for the definition, the references and the
@@ -1299,12 +1307,14 @@ impl PyScriptGenerator {
             return demangle(py_name);
         }
         // a raw identifier (`'test_one'`, `'name'!`) is spelled exactly, as in
-        // the bytecode backend: `unittest` finds the test by that name
+        // the bytecode backend: `unittest` finds the test by that name. The
+        // bytecode backend can name a variable anything; Python source cannot,
+        // so `'2t+3'` keeps the escaped spelling.
         if let Some(inner) = name.strip_prefix('\'') {
-            return inner
-                .trim_end_matches('!')
-                .trim_end_matches('\'')
-                .to_string();
+            let inner = inner.trim_end_matches('!').trim_end_matches('\'');
+            if is_py_identifier(inner) {
+                return inner.to_string();
+            }
         }
         let name = replace_non_symbolic(name);
         if vis.is_public() || &name == "_" {

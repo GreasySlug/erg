@@ -338,6 +338,8 @@ print! c.x
         "\
 'test_one' x = x + 1
 print! 'test_one'(1)
+'2t+3' = 5
+print! '2t+3'
 ",
     ),
     // A parameter that is a Python keyword gets a `_`, at the definition and

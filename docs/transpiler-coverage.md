@@ -15,13 +15,13 @@ python3 tests/transpile_survey.py . /tmp/transpile_survey   # summary.tsv + deta
 
 | Class | 2026-09-05 (start) | after the class rewrite | Meaning |
 | ----- | ---: | ---: | ------- |
-| OK | 57 | 68 | both backends print the same thing |
+| OK | 57 | 69 | both backends print the same thing |
 | TRANSPILE_FAIL | 40 | 25 | the transpiler panics (`todo!`/`unreachable!`/index) |
-| PY_ERROR | 40 | 41 | the generated Python fails to parse or raises |
+| PY_ERROR | 40 | 40 | the generated Python fails to parse or raises |
 | MISMATCH | 0 | 3 | the programs print an object's default `repr` (`<... object at 0x...>`), which no two runs agree on; not a transpiler defect |
 | BC_FAIL | 19 | 19 | the bytecode backend itself fails (demo programs that are meant to fail, external packages, declaration-only modules); out of scope |
 
-Of the 137 programs the bytecode backend runs, 68 (50 %) transpile correctly.
+Of the 137 programs the bytecode backend runs, 69 (50 %) transpile correctly.
 
 ## Done
 
@@ -34,8 +34,10 @@ Of the 137 programs the bytecode backend runs, 68 (50 %) transpile correctly.
 - **Names**: a private (or restricted, `::[<: Self]x`) attribute or method is
   one name for the whole class, `x__`, at its definition, in the record
   literal that fills it and at `self::x`; a parameter keeps its source name
-  (as the bytecode backend does) so a keyword argument and a `**kwargs` key
-  match it; `*args` / `**kwargs` parameters are written.
+  (as the bytecode backend does, with a `_` after a Python keyword) so a
+  keyword argument and a `**kwargs` key match it; `*args` / `**kwargs`
+  parameters are written; a raw identifier (`'test_one'`) is spelled exactly
+  when Python can, so `unittest` finds the test.
 - **Decorators** are written (`@staticmethod`); `Override` and `Inheritable`
   are compile-time and dropped.
 - An attribute definition's target is written without the builtin class
@@ -51,7 +53,7 @@ Of the 137 programs the bytecode backend runs, 68 (50 %) transpile correctly.
 | 1 | `Expr::List` (693) | list comprehension / non-normal list | advanced_type_spec |
 | 1 | `write_if` (1061) | `if` whose then-branch is not a lambda literal | never |
 
-## PY_ERROR by cause (41)
+## PY_ERROR by cause (40)
 
 | # | Cause | Files |
 | - | --- | --- |
@@ -61,7 +63,7 @@ Of the 137 programs the bytecode backend runs, 68 (50 %) transpile correctly.
 | 4 | **arguments**: `*args` spread (`f(*xs)`), a positional passed after `*args` and again by keyword, keyword arguments to a Python builtin (`abs(x:=1)`), a `**kwargs` key | args_expansion, var_args, const_kw_args, var_kwargs |
 | 3 | prelude helpers `iterable_map` / `iterable_filter` / `iterable_reduce` are used but never defined | iterator (examples); lambda_arg, comprehension |
 | 3 | a `return` in a lambda is written as an attribute (`.return__`); a type application on a function (`f|T|`) | return, fast_value, poly_class_full |
-| 13 | one-offs: patch operator name (`__Invert___zero__`), `Del`, `add` (operator symbol), `pow__`, `list_iterator`, `float.nearly_eq`, `Structural` subtype compare, `method-wrapper[...]`, `dyn_type_check` and `pyimport` assertions, `pystd_decls` import shadowing, `unittest` finds no test (`'test_one'` raw name), `ratio_literal` (timeout) | patch, impl, unit_test (examples); comment, sym_op, const_func, ratio_num, structural_subtyping, map, dyn_type_check, pyimport, pystd_decls, ratio_literal |
+| 12 | one-offs: patch operator name (`__Invert___zero__`), `Del`, `add` (operator symbol), `pow__`, `list_iterator`, `float.nearly_eq`, `Structural` subtype compare, `method-wrapper[...]`, `dyn_type_check` and `pyimport` assertions, `pystd_decls` import shadowing, `ratio_literal` (timeout) | patch, impl (examples); comment, sym_op, const_func, ratio_num, structural_subtyping, map, dyn_type_check, pyimport, pystd_decls, ratio_literal |
 
 ## Order of work
 

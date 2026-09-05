@@ -37,6 +37,21 @@ Increase the thread stack size. Used for Windows execution and test execution.
 `--language-server` option becomes available.
 `erg --language-server` will start the Erg language server.
 
+## full-repl
+
+Enable the rich REPL: cursor movement, pasting, history, and so on.
+
+## full
+
+Enable every user-facing feature (`els` + `full-repl` + `unicode` + `pretty`).
+
+## pydecl
+
+Convert a Python type stub (`.pyi`) into Erg declarations with `erg_pydecl`, which parses the stub
+(classes, generics, overloads, `Literal`, `Callable`, ...).
+Without this feature the compiler falls back to a line-based preprocessor that reads only functions
+and variable annotations, and skips classes.
+
 ## py_compat
 
 Enable Python-compatible mode, which makes parts of the APIs and syntax compatible with Python. Used for [pylyzer](https://github.com/mtshiba/pylyzer).

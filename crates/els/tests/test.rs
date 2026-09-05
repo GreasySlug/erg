@@ -3,19 +3,21 @@ use std::path::Path;
 use erg_common::spawn::safe_yield;
 use lsp_types::notification::{DidChangeConfiguration, DidChangeWatchedFiles};
 use lsp_types::request::{
-    CallHierarchyOutgoingCalls, CallHierarchyPrepare, ExecuteCommand, Formatting, GotoDeclaration,
-    GotoImplementation, GotoImplementationParams, LinkedEditingRange, MonikerRequest,
-    OnTypeFormatting, PrepareRenameRequest, RangeFormatting, WillRenameFiles, WorkspaceSymbol,
+    CallHierarchyOutgoingCalls, CallHierarchyPrepare, CodeActionRequest, ExecuteCommand,
+    Formatting, GotoDeclaration, GotoImplementation, GotoImplementationParams, LinkedEditingRange,
+    MonikerRequest, OnTypeFormatting, PrepareRenameRequest, RangeFormatting, WillRenameFiles,
+    WorkspaceSymbol,
 };
 use lsp_types::{
     ApplyWorkspaceEditParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    CompletionResponse, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeWatchedFilesParams, DocumentChanges, DocumentFormattingParams,
-    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbolResponse,
-    ExecuteCommandParams, FileChangeType, FileEvent, FileRename, FoldingRange, FoldingRangeKind,
-    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, HoverContents, InlayHintLabel,
-    LinkedEditingRangeParams, MarkedString, MonikerParams, Position, PrepareRenameResponse, Range,
-    RenameFilesParams, TextDocumentIdentifier, TextDocumentPositionParams, WorkspaceSymbolParams,
+    CodeActionContext, CodeActionOrCommand, CodeActionParams, CompletionResponse,
+    DiagnosticSeverity, DidChangeConfigurationParams, DidChangeWatchedFilesParams, DocumentChanges,
+    DocumentFormattingParams, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    DocumentSymbolResponse, ExecuteCommandParams, FileChangeType, FileEvent, FileRename,
+    FoldingRange, FoldingRangeKind, FormattingOptions, GotoDefinitionParams,
+    GotoDefinitionResponse, HoverContents, InlayHintLabel, LinkedEditingRangeParams, MarkedString,
+    MonikerParams, Position, PrepareRenameResponse, Range, RenameFilesParams,
+    TextDocumentIdentifier, TextDocumentPositionParams, TextEdit, WorkspaceSymbolParams,
 };
 const FILE_A: &str = "tests/a.er";
 const FILE_B: &str = "tests/b.er";
@@ -36,6 +38,7 @@ const FILE_INLAY_HINT: &str = "tests/inlay_hint.er";
 const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
 const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 const FILE_IME: &str = "tests/ime.er";
+const FILE_INLINE_VAR: &str = "tests/inline_var.er";
 
 use els::{
     DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, NormalizedUrl, Server,
@@ -1013,6 +1016,136 @@ fn test_eliminate_unused_vars() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .any(|e| e.new_text == "_" && e.range.start.line == 1),
         "unused parameter `i` should become `_`: {edits:?}"
+    );
+    Ok(())
+}
+
+fn code_action_titled(
+    client: &mut molc::FakeClient<Server>,
+    uri: &NormalizedUrl,
+    line: u32,
+    col: u32,
+    title: &str,
+) -> Result<lsp_types::CodeAction, Box<dyn std::error::Error>> {
+    let actions = client
+        .request_code_action(uri.clone().raw(), line, col)?
+        .ok_or("no code actions")?;
+    actions
+        .into_iter()
+        .find_map(|action| match action {
+            CodeActionOrCommand::CodeAction(action) if action.title == title => Some(action),
+            _ => None,
+        })
+        .ok_or_else(|| format!("`{title}` was not offered").into())
+}
+
+/// `Inline variable` deletes the definition and writes its body at every use.
+///
+/// Every step of that resolve used to `unwrap`. It runs on the
+/// code-action-resolve worker, which `start_service` never restarts, so one
+/// definition it could not read would have silenced code actions for the rest
+/// of the session.
+#[test]
+#[exec_new_thread]
+fn test_code_action_inline_variable() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INLINE_VAR).canonicalize()?)?;
+    client.notify_open(FILE_INLINE_VAR)?;
+    let action = code_action_titled(&mut client, &uri, 0, 0, "Inline variable")?;
+    assert!(action.edit.is_none(), "the edit comes from resolve");
+    let resolved = client.request_code_action_resolve(action)?;
+    let changes = resolved
+        .edit
+        .and_then(|edit| edit.changes)
+        .ok_or("resolve produced no edit")?;
+    let edits = changes
+        .get(&uri.raw())
+        .ok_or("no edits for inline_var.er")?;
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.new_text.is_empty() && e.range.start.line == 0),
+        "the definition should be deleted: {edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.new_text == "1" && e.range.start.line == 1),
+        "the use of `x` should become its body: {edits:?}"
+    );
+    Ok(())
+}
+
+/// `request_code_action` only sends a zero-width cursor, which is not a
+/// selection; the extract actions need a real range.
+fn code_action_over(
+    client: &mut molc::FakeClient<Server>,
+    uri: &NormalizedUrl,
+    range: Range,
+    title: &str,
+) -> Result<lsp_types::CodeAction, Box<dyn std::error::Error>> {
+    let params = CodeActionParams {
+        text_document: TextDocumentIdentifier::new(uri.clone().raw()),
+        range,
+        context: CodeActionContext {
+            diagnostics: vec![],
+            only: None,
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    let actions = client
+        .request::<CodeActionRequest>(params)?
+        .ok_or("no code actions")?;
+    actions
+        .into_iter()
+        .find_map(|action| match action {
+            CodeActionOrCommand::CodeAction(action) if action.title == title => Some(action),
+            _ => None,
+        })
+        .ok_or_else(|| format!("`{title}` was not offered").into())
+}
+
+fn resolved_edits(
+    client: &mut molc::FakeClient<Server>,
+    uri: &NormalizedUrl,
+    action: lsp_types::CodeAction,
+) -> Result<Vec<TextEdit>, Box<dyn std::error::Error>> {
+    let resolved = client.request_code_action_resolve(action)?;
+    let changes = resolved
+        .edit
+        .and_then(|edit| edit.changes)
+        .ok_or("resolve produced no edit")?;
+    changes
+        .get(&uri.clone().raw())
+        .cloned()
+        .ok_or_else(|| format!("no edits for {uri}").into())
+}
+
+/// `Extract into function` carries the request in `data` and reads the selected
+/// source back out of the file cache on resolve.
+#[test]
+#[exec_new_thread]
+fn test_code_action_extract_into_function() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_INLINE_VAR).canonicalize()?)?;
+    client.notify_open(FILE_INLINE_VAR)?;
+    // select `x + 1` on the second line
+    let selected = Range::new(Position::new(1, 4), Position::new(1, 9));
+    let action = code_action_over(&mut client, &uri, selected, "Extract into function")?;
+    assert!(action.data.is_some(), "resolve needs the request back");
+    let edits = resolved_edits(&mut client, &uri, action)?;
+    assert!(
+        edits.iter().any(|e| e.new_text.contains("new_func")),
+        "the extracted function should be introduced: {edits:?}"
+    );
+    assert!(
+        edits.iter().any(|e| e.range == selected),
+        "the selection itself should be replaced: {edits:?}"
     );
     Ok(())
 }

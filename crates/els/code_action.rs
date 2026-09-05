@@ -42,7 +42,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .filter(|warn| warn.core.kind == ErrorKind::UnusedWarning)
             .collect::<Vec<_>>();
         for warn in warns {
-            let uri = NormalizedUrl::new(Url::from_file_path(warn.input.full_path()).unwrap());
+            // Not every input is a file on disk (the REPL's is not), and a
+            // panic here would take down the code-action worker for good.
+            let Ok(uri) = NormalizedUrl::from_file_path(warn.input.full_path()) else {
+                continue;
+            };
             let Some(pos) = util::loc_to_pos(warn.core.loc) else {
                 continue;
             };
@@ -157,6 +161,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
 
     fn gen_extract_action(&self, params: &CodeActionParams) -> Vec<CodeAction> {
         let mut actions = vec![];
+        // `resolve` reads the request back out of `data`, so an action without
+        // it can never be applied -- offer nothing rather than a dead entry.
+        let Ok(data) = serde_json::to_value(params.clone()) else {
+            return vec![];
+        };
         if params.range.start.line == params.range.end.line {
             if params.range.start.character == params.range.end.character {
                 return vec![];
@@ -164,14 +173,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             actions.push(CodeAction {
                 title: "Extract into variable".to_string(),
                 kind: Some(CodeActionKind::REFACTOR_EXTRACT),
-                data: Some(serde_json::to_value(params.clone()).unwrap()),
+                data: Some(data.clone()),
                 ..Default::default()
             });
         }
         actions.push(CodeAction {
             title: "Extract into function".to_string(),
             kind: Some(CodeActionKind::REFACTOR_EXTRACT),
-            data: Some(serde_json::to_value(params.clone()).unwrap()),
+            data: Some(data),
             ..Default::default()
         });
         actions
@@ -180,37 +189,21 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     fn gen_inline_action(&self, params: &CodeActionParams) -> Option<CodeAction> {
         let uri = NormalizedUrl::new(params.text_document.uri.clone());
         let visitor = self.get_visitor(&uri)?;
-        match visitor.get_min_expr(params.range.start)? {
-            Expr::Def(def) => {
-                let title = if def.sig.is_subr() {
-                    "Inline function"
-                } else {
-                    "Inline variable"
-                };
-                let action = CodeAction {
-                    title: title.to_string(),
-                    kind: Some(CodeActionKind::REFACTOR_INLINE),
-                    data: Some(serde_json::to_value(params.clone()).unwrap()),
-                    ..Default::default()
-                };
-                Some(action)
-            }
-            Expr::Accessor(acc) => {
-                let title = if acc.ref_t().is_subr() {
-                    "Inline function"
-                } else {
-                    "Inline variable"
-                };
-                let action = CodeAction {
-                    title: title.to_string(),
-                    kind: Some(CodeActionKind::REFACTOR_INLINE),
-                    data: Some(serde_json::to_value(params.clone()).unwrap()),
-                    ..Default::default()
-                };
-                Some(action)
-            }
-            _ => None,
-        }
+        // See `gen_extract_action`: `resolve` needs this back.
+        let data = serde_json::to_value(params.clone()).ok()?;
+        let title = match visitor.get_min_expr(params.range.start)? {
+            Expr::Def(def) if def.sig.is_subr() => "Inline function",
+            Expr::Def(_) => "Inline variable",
+            Expr::Accessor(acc) if acc.ref_t().is_subr() => "Inline function",
+            Expr::Accessor(_) => "Inline variable",
+            _ => return None,
+        };
+        Some(CodeAction {
+            title: title.to_string(),
+            kind: Some(CodeActionKind::REFACTOR_INLINE),
+            data: Some(data),
+            ..Default::default()
+        })
     }
 
     fn send_normal_action(&self, params: &CodeActionParams) -> ELSResult<Vec<CodeAction>> {
@@ -316,12 +309,16 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             // add `return` to the last line
             if PYTHON_MODE {
-                let mut lines = code.lines().collect::<Vec<_>>();
-                let mut last_line = lines.last().unwrap().to_string();
-                let code_start = last_line.chars().position(|c| c != ' ').unwrap();
-                last_line.insert_str(code_start, "return ");
-                lines.pop();
-                lines.push(&last_line);
+                let mut lines = code.lines().map(String::from).collect::<Vec<_>>();
+                // An empty selection has no last line, and an all-blank one has
+                // no expression to return -- neither may panic here.
+                if let Some(last_line) = lines.last_mut() {
+                    // `find`, not `chars().position()`: `insert_str` indexes bytes.
+                    let code_start = last_line
+                        .find(|c: char| c != ' ')
+                        .unwrap_or(last_line.len());
+                    last_line.insert_str(code_start, "return ");
+                }
                 lines.join("\n")
             } else {
                 code
@@ -368,7 +365,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .ok_or("get_min_expr")?
         {
             Expr::Def(def) => {
-                action.edit = Some(WorkspaceEdit::new(self.inline_var_def(def)));
+                let changes = self.inline_var_def(def).ok_or("inline_var_def")?;
+                action.edit = Some(WorkspaceEdit::new(changes));
             }
             Expr::Accessor(acc) => {
                 let uri = NormalizedUrl::new(
@@ -384,7 +382,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let visitor = self.get_visitor(&uri).ok_or(format!("{uri} not found"))?;
                 let range = util::loc_to_range(acc.var_info().def_loc.loc).ok_or("loc_to_range")?;
                 if let Some(Expr::Def(def)) = visitor.get_min_expr(range.start) {
-                    action.edit = Some(WorkspaceEdit::new(self.inline_var_def(def)));
+                    let changes = self.inline_var_def(def).ok_or("inline_var_def")?;
+                    action.edit = Some(WorkspaceEdit::new(changes));
                 }
             }
             _ => {}
@@ -392,33 +391,44 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(action)
     }
 
-    fn inline_var_def(&self, def: &erg_compiler::hir::Def) -> HashMap<Url, Vec<TextEdit>> {
+    /// Deletes the definition and puts its body's source at every reference.
+    ///
+    /// `None` when any of that cannot be read -- a definition with no location,
+    /// a module that is not a file, a body the cache cannot range over. This
+    /// runs on the code-action-resolve worker, and `start_service` gives workers
+    /// no supervisor: a panic here ends the thread, and the feature stops
+    /// answering for the rest of the session.
+    fn inline_var_def(&self, def: &erg_compiler::hir::Def) -> Option<HashMap<Url, Vec<TextEdit>>> {
         let mut changes = HashMap::new();
-        let mut range = util::loc_to_range(def.loc()).unwrap();
+        let mut range = util::loc_to_range(def.loc())?;
         range.end.character = u32::MAX;
         let delete = TextEdit::new(range, "".to_string());
-        let uri = NormalizedUrl::new(
-            Url::from_file_path(def.sig.ident().vi.def_loc.module.as_ref().unwrap()).unwrap(),
-        );
-        let range = util::loc_to_range(def.body.block.loc()).unwrap();
-        let code = self.file_cache.get_ranged(&uri, range).unwrap().unwrap();
-        let expr = def.body.block.first().unwrap();
+        let def_loc = &def.sig.ident().vi.def_loc;
+        let uri = NormalizedUrl::from_file_path(def_loc.module.as_ref()?).ok()?;
+        let range = util::loc_to_range(def.body.block.loc())?;
+        let code = self.file_cache.get_ranged(&uri, range).ok()??;
+        let expr = def.body.block.first()?;
         let code = if expr.need_to_be_closed() {
             format!("({code})")
         } else {
             code
         };
         changes.insert(uri.raw(), vec![delete]);
-        if let Some(index) = self.shared.index.get_refs(&def.sig.ident().vi.def_loc) {
+        if let Some(index) = self.shared.index.get_refs(def_loc) {
             for ref_ in index.referrers.iter() {
                 let Some(path) = ref_.module.as_ref() else {
                     continue;
                 };
-                let edit = TextEdit::new(util::loc_to_range(ref_.loc).unwrap(), code.clone());
-                let uri = NormalizedUrl::new(Url::from_file_path(path).unwrap());
+                let (Some(range), Ok(uri)) = (
+                    util::loc_to_range(ref_.loc),
+                    NormalizedUrl::from_file_path(path),
+                ) else {
+                    continue;
+                };
+                let edit = TextEdit::new(range, code.clone());
                 changes.entry(uri.raw()).or_insert(vec![]).push(edit);
             }
         }
-        changes
+        Some(changes)
     }
 }

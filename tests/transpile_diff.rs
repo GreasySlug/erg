@@ -305,6 +305,41 @@ print! f(1)
 print! f(1, b := 2)
 ",
     ),
+    // A private method or class attribute is one name for the whole class.
+    (
+        "class_private_members",
+        "\
+P = Class()
+P::
+    one = 1
+    helper self = 10
+P.
+    zero = P::one - 1
+    go self = self::helper() + P::one
+print! P.zero
+print! P.new().go()
+",
+    ),
+    // The user's `__init__!` runs after the generated field assignments.
+    (
+        "class_user_init",
+        "\
+C = Class {.x = Int}
+C.
+    __init__! self =
+        print! \"init\", self.x
+c = C.new {.x = 3}
+print! c.x
+",
+    ),
+    // A raw identifier is spelled exactly (`unittest` looks tests up by name).
+    (
+        "raw_identifier",
+        "\
+'test_one' x = x + 1
+print! 'test_one'(1)
+",
+    ),
     // A parameter that is a Python keyword gets a `_`, at the definition and
     // at the keyword argument.
     (

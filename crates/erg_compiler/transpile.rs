@@ -1298,6 +1298,14 @@ impl PyScriptGenerator {
         if let Some(py_name) = &vi.py_name {
             return demangle(py_name);
         }
+        // a raw identifier (`'test_one'`, `'name'!`) is spelled exactly, as in
+        // the bytecode backend: `unittest` finds the test by that name
+        if let Some(inner) = name.strip_prefix('\'') {
+            return inner
+                .trim_end_matches('!')
+                .trim_end_matches('\'')
+                .to_string();
+        }
         let name = replace_non_symbolic(name);
         if vis.is_public() || &name == "_" {
             name.to_string()

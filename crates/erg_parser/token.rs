@@ -427,9 +427,12 @@ impl Locational for Token {
         }
     }
 
+    /// The stored `col_end` counts chars, like `col_begin` and `loc()`.
+    /// `content.len()` would count bytes and put the end of any non-ASCII
+    /// token past where it is.
     #[inline]
     fn col_end(&self) -> Option<u32> {
-        Some(self.col_begin + self.content.len() as u32)
+        Some(self.col_end)
     }
 }
 

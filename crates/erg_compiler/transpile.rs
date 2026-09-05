@@ -78,6 +78,28 @@ fn replace_non_symbolic(name: &str) -> String {
     replaced
 }
 
+/// Python's keywords: a name that is one of them gets a `_` so that it can be
+/// a parameter (and a keyword argument).
+const PY_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
+/// The Python name of a parameter: its own name, as the bytecode backend spells
+/// it, so that a keyword argument and a `**kwargs` key match it; a Python
+/// keyword gets a `_`. Used for the definition, the references and the
+/// keyword arguments alike.
+fn param_name(name: &str) -> String {
+    let name = replace_non_symbolic(name);
+    if PY_KEYWORDS.contains(&&name[..]) {
+        format!("{name}_")
+    } else {
+        name
+    }
+}
+
 /// The Python name of a private attribute or method: one name for the whole
 /// class (`x__`), where a private variable gets a name per definition
 /// (`x_L3_C4`). An attribute is reached through its object, so there is no
@@ -545,7 +567,6 @@ pub struct PyScriptGenerator {
     fresh_var_n: usize,
     namedtuple_loaded: bool,
     ratio_loaded: bool,
-    generic_alias_loaded: bool,
     /// Module-level text that goes above the program: the runtime modules and
     /// the imports it makes.
     prelude: String,
@@ -585,13 +606,6 @@ impl PyScriptGenerator {
         PyScript {
             filename: hir.name,
             code,
-        }
-    }
-
-    fn load_generic_alias_if_not(&mut self) {
-        if !self.generic_alias_loaded {
-            self.prelude += "from types import GenericAlias as GenericAlias__\n";
-            self.generic_alias_loaded = true;
         }
     }
 
@@ -1237,12 +1251,12 @@ impl PyScriptGenerator {
             out.push(',');
         }
         while let Some(arg) = args.try_remove_kw(0) {
-            // the parameter is named after the source (`transpile_name`), so
-            // the keyword is too; a Python API's keywords are its own
+            // the parameter is named by `param_name`, so the keyword is too; a
+            // Python API's keywords are its own
             if is_py_api {
                 out.push_str(&arg.keyword.content);
             } else {
-                out.push_str(&replace_non_symbolic(&arg.keyword.content));
+                out.push_str(&param_name(&arg.keyword.content));
             }
             out.push('=');
             self.write_expr(arg.expr, out);
@@ -1288,9 +1302,9 @@ impl PyScriptGenerator {
         if vis.is_public() || &name == "_" {
             name.to_string()
         } else if vi.is_parameter() {
-            // a parameter keeps its name, as in the bytecode backend: a keyword
-            // argument (`write_args`) and a `**kwargs` key have to match it
-            name
+            // a keyword argument (`write_args`) and a `**kwargs` key have to
+            // match the parameter
+            param_name(&name)
         } else {
             let def_line = vi.def_loc.loc.ln_begin().unwrap_or(0);
             let def_col = vi.def_loc.loc.col_begin().unwrap_or(0);
@@ -1474,14 +1488,21 @@ impl PyScriptGenerator {
                 }
             }
             Signature::Subr(subr) => {
-                for deco in subr.decorators.into_iter() {
-                    // `Override` and `Inheritable` are checked at compile time
-                    // and mean nothing at run time
-                    if matches!(deco.show_acc().as_deref(), Some("Override" | "Inheritable")) {
-                        continue;
-                    }
+                // `Override` and `Inheritable` are checked at compile time and
+                // mean nothing at run time. The set has no order of its own;
+                // sorting keeps the output the same from one run to the next.
+                let mut decos = subr
+                    .decorators
+                    .into_iter()
+                    .filter(|deco| {
+                        !matches!(deco.show_acc().as_deref(), Some("Override" | "Inheritable"))
+                    })
+                    .map(|deco| self.expr_to_string(deco))
+                    .collect::<Vec<_>>();
+                decos.sort();
+                for deco in decos {
                     out.push('@');
-                    self.write_expr(deco, out);
+                    out.push_str(&deco);
                     out.push('\n');
                     push_indent(out, self.level);
                 }
@@ -1516,10 +1537,11 @@ impl PyScriptGenerator {
         };
         writeln!(out, "class {class_name}({base}):").unwrap();
         if !classdef.obj.typ().is_monomorphic() {
-            // `Box[Int]` at run time forwards to `Box`
-            self.load_generic_alias_if_not();
+            // `Box[Int]` at run time forwards to `Box`; `_erg_type`'s
+            // `GenericAlias` is the standard one, or a stand-in before 3.9
+            self.load_module_if_not("_erg_type");
             push_indent(out, self.level + 1);
-            out.push_str("__class_getitem__ = classmethod(GenericAlias__)\n");
+            out.push_str("__class_getitem__ = classmethod(GenericAlias)\n");
         }
         let mut methods = ClassDef::take_all_methods(classdef.methods_list);
         let user_init = methods

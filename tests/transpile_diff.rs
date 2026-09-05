@@ -305,6 +305,15 @@ print! f(1)
 print! f(1, b := 2)
 ",
     ),
+    // A parameter that is a Python keyword gets a `_`, at the definition and
+    // at the keyword argument.
+    (
+        "keyword_named_param",
+        "\
+f(def: Int, class: Int) = def * 10 + class
+print! f(1, class := 2)
+",
+    ),
     (
         "var_args",
         "\

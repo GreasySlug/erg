@@ -186,6 +186,9 @@ let joined = ts.iter()
 
 ## 3. 構文解析 (`parse.rs` + `convert.rs` + `typespec.rs`)
 
+> 受理する構文の EBNF 風一覧と、文脈フラグ・優先順位・トークンによる分岐・回復といった解析状態の整理は
+> [erg-syntax-and-parse-states.md](erg-syntax-and-parse-states.md) にまとめてある。本節は実装構造の要約。
+
 ### 主要型
 
 - **`Parser`**: `counter: DefId`（定義ID採番）/ `tokens: TokenStream` / `parenthesized` / `warns` / `errs` を保持する再帰下降パーサー。

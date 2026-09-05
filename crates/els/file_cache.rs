@@ -44,6 +44,12 @@ pub struct FileCacheEntry {
     /// must clear it. Deciding this needs the lexer's view of what is a comment
     /// and what is a `#` inside a string, so it cannot be answered per-line.
     comment_spans: Option<Vec<Range>>,
+    /// The byte offset each line starts at, memoized by [`FileCacheEntry::get_line`].
+    /// `None` means "not computed for this `code` yet" -- every write to `code`
+    /// must clear it, as for `comment_spans`. Every position that goes to or
+    /// comes from the client is converted through a line of text, so a document
+    /// symbol request would otherwise scan the file once per symbol.
+    line_starts: Option<Vec<usize>>,
 }
 
 impl FileCacheEntry {
@@ -53,13 +59,27 @@ impl FileCacheEntry {
             ver,
             token_stream,
             comment_spans: None,
+            line_starts: None,
         }
     }
 
-    /// line: 0-based
-    pub fn get_line(&self, line0: u32) -> Option<String> {
-        let mut lines = self.code.lines();
-        lines.nth(line0 as usize).map(|s| s.to_string())
+    /// The 0-based line `line0`, without its `\n` or a `\r` before it, like
+    /// `str::lines` (so a file ending in `\n` has no empty line after it).
+    pub fn get_line(&mut self, line0: u32) -> Option<String> {
+        let starts = self.line_starts.get_or_insert_with(|| {
+            std::iter::once(0)
+                .chain(self.code.match_indices('\n').map(|(i, _)| i + 1))
+                .collect()
+        });
+        let start = *starts.get(line0 as usize)?;
+        if start >= self.code.len() {
+            return None;
+        }
+        let end = starts
+            .get(line0 as usize + 1)
+            .map_or(self.code.len(), |next| next - 1);
+        let line = &self.code[start..end];
+        Some(line.strip_suffix('\r').unwrap_or(line).to_string())
     }
 }
 
@@ -484,7 +504,7 @@ impl FileCache {
     /// 0-based
     pub(crate) fn get_line(&self, uri: &NormalizedUrl, line0: u32) -> Option<String> {
         let _ = self.load_once(uri);
-        self.files.borrow_mut().get(uri)?.get_line(line0)
+        self.files.borrow_mut().get_mut(uri)?.get_line(line0)
     }
 
     pub(crate) fn get_ranged(
@@ -549,6 +569,7 @@ impl FileCache {
         // entry.ver += 1;
         entry.token_stream = token_stream;
         entry.comment_spans = None;
+        entry.line_starts = None;
     }
 
     /// Applies a `textDocument/didChange`. Returns `false` when a change could
@@ -603,6 +624,7 @@ impl FileCache {
         entry.ver = params.text_document.version;
         entry.token_stream = token_stream;
         entry.comment_spans = None;
+        entry.line_starts = None;
         true
     }
 

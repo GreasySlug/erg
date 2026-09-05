@@ -230,8 +230,8 @@ impl<'a> HIRVisitor<'a> {
         self.get_exprs_ns(cur_ns, dummy.iter(), pos)
     }
 
-    /// Returns the smallest expression containing `token`. Literals, accessors, containers, etc. are returned.
-    /// The innermost expression at the LSP position `pos`.
+    /// The innermost expression at the LSP position `pos`: literals,
+    /// accessors, containers and so on are all candidates.
     ///
     /// The positions handed down from here count `char`s, as the HIR's
     /// locations do; the conversion happens once, at this boundary.

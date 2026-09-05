@@ -525,7 +525,7 @@ impl Token {
             raw: None,
             lineno,
             col_begin: 0,
-            col_end: 1,
+            col_end: cont.chars().count() as u32,
         }
     }
 

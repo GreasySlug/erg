@@ -24,7 +24,7 @@ use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::util::{self, NormalizedUrl};
 
 pub struct InlayHintGenerator<'s, C: BuildRunnable, P: Parsable> {
-    _server: &'s Server<C, P>,
+    server: &'s Server<C, P>,
     uri: Value,
     nuri: NormalizedUrl,
 }
@@ -46,7 +46,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
     /// The LSP position of line `ln` (1-based), column `col` (in chars, as the
     /// HIR counts them).
     fn lsp_pos(&self, ln: u32, col: u32) -> Position {
-        self._server
+        self.server
             .file_cache
             .to_lsp_pos(&self.nuri, Position::new(ln - 1, col))
     }
@@ -325,7 +325,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut result = vec![];
         let gen = InlayHintGenerator {
-            _server: self,
+            server: self,
             uri: uri.clone().raw().to_string().into(),
             nuri: uri.clone(),
         };

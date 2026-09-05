@@ -141,25 +141,32 @@ pub(crate) fn roughly_pos_in_loc<L: Locational>(loc: &L, pos: Position) -> bool 
     }
 }
 
+/// The byte offset of the LSP `pos` in `src`, always on a `char` boundary.
+///
+/// `Position::character` counts UTF-16 code units, not `char`s and not bytes,
+/// so every step has to advance the column by `len_utf16()` and the index by
+/// `len_utf8()`. A position past the end of the document -- or one landing
+/// inside a surrogate pair -- clamps to the nearest boundary at or after it;
+/// callers splice with `replace_range`, which panics on anything else.
 pub(crate) fn pos_to_byte_index(src: &str, pos: Position) -> usize {
-    if src.is_empty() {
-        return 0;
-    }
     let mut line = 0;
     let mut col = 0;
     for (index, c) in src.char_indices() {
-        if line == pos.line && col == pos.character {
+        // A column past the end of the line clamps to its newline, so a
+        // stale/short buffer cannot send the scan onto a later line.
+        if line == pos.line && (col >= pos.character || c == '\n') {
             return index;
         }
         if c == '\n' {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += c.len_utf16() as u32;
         }
     }
-    // EOF
-    src.char_indices().last().unwrap().0 + 1
+    // EOF: the end of the document is `src.len()`, not the start of its last
+    // character -- `+ 1` there sits inside any multi-byte final character.
+    src.len()
 }
 
 pub(crate) fn get_token_from_stream(
@@ -226,5 +233,66 @@ mod tests {
         assert_eq!(loc.ln_begin(), Some(2));
         assert_eq!(loc.col_begin(), Some(7));
         assert_eq!(loc_to_pos(loc), Some(pos));
+    }
+
+    /// Every index this returns is spliced with `replace_range`, which panics
+    /// unless both ends are `char` boundaries no greater than `len()`.
+    fn assert_usable(src: &str, pos: Position) -> usize {
+        let index = pos_to_byte_index(src, pos);
+        assert!(
+            index <= src.len() && src.is_char_boundary(index),
+            "{index} is not a usable index into {src:?}"
+        );
+        index
+    }
+
+    #[test]
+    fn a_position_is_a_byte_offset_into_the_line() {
+        let src = "one = 1\ntwo = 2\n";
+        assert_eq!(assert_usable(src, Position::new(0, 0)), 0);
+        assert_eq!(assert_usable(src, Position::new(0, 6)), 6);
+        assert_eq!(assert_usable(src, Position::new(1, 0)), 8);
+        assert_eq!(assert_usable(src, Position::new(2, 0)), 16);
+        assert_eq!(assert_usable("", Position::new(0, 0)), 0);
+    }
+
+    #[test]
+    fn columns_are_utf16_units_not_bytes() {
+        // `お` is 3 bytes but one UTF-16 unit, so column 1 is byte 3.
+        let src = "おは = 1\n";
+        assert_eq!(assert_usable(src, Position::new(0, 1)), 3);
+        assert_eq!(assert_usable(src, Position::new(0, 2)), 6);
+        assert_eq!(assert_usable(src, Position::new(0, 3)), 7);
+        // `𝒳` is 4 bytes and two UTF-16 units; a column inside the surrogate
+        // pair rounds up rather than splitting the character.
+        let src = "\u{1D4B3}x";
+        assert_eq!(assert_usable(src, Position::new(0, 1)), 4);
+        assert_eq!(assert_usable(src, Position::new(0, 2)), 4);
+        assert_eq!(assert_usable(src, Position::new(0, 3)), 5);
+    }
+
+    /// The IME crash: the last character of the buffer is multi-byte, so the
+    /// EOF fallback used to answer with the byte *after its first byte*.
+    #[test]
+    fn the_end_of_the_document_is_its_length() {
+        for src in ["one = 1\nお", "お", "one = 1\n", "x"] {
+            let index = assert_usable(src, Position::new(9, 9));
+            assert_eq!(index, src.len(), "{src:?}");
+        }
+        // and the next keystroke there splices cleanly
+        let mut code = String::from("one = 1\nお");
+        let at = pos_to_byte_index(&code, Position::new(1, 1));
+        code.replace_range(at..at, "あ");
+        assert_eq!(code, "one = 1\nおあ");
+    }
+
+    #[test]
+    fn a_column_past_the_end_of_a_line_clamps_to_its_newline() {
+        let src = "ab\ncd\n";
+        assert_eq!(assert_usable(src, Position::new(0, 99)), 2);
+        assert_eq!(assert_usable(src, Position::new(1, 99)), 5);
+        // a stale-but-shorter buffer must not walk onto a later line
+        let src = "お\nxyz\n";
+        assert_eq!(assert_usable(src, Position::new(0, 40)), 3);
     }
 }

@@ -254,7 +254,7 @@ bash tests/bytecode314/compare_bytecode.sh [python_path] [test_name]
 
 ### Thread Structure
 
-ELS spawns up to 30 threads at startup:
+ELS runs about 17 threads once initialized:
 
 | Thread | Location | Purpose |
 |--------|----------|---------|
@@ -264,25 +264,35 @@ ELS spawns up to 30 threads at startup:
 | `start_workspace_diagnostics` | diagnostics.rs | Initial workspace check (auto-terminates) |
 | `start_client_health_checker_sender` | diagnostics.rs | Health check requests |
 | `start_client_health_checker_receiver` | diagnostics.rs | Health check responses |
-| LSP workers (24) | server.rs | One per LSP feature (completion, hover, etc.) |
+| watchdog | diagnostics.rs | Kills a server stuck in a message or a request |
+| `els_dispatcher` | server.rs, multiplexer.rs | Owns every request channel's receiver; turns requests into jobs |
+| `els_worker_{0..MAX_WORKERS}` | thread_pool.rs | Run the request handlers; each owns a `Server` clone |
+
+There used to be one thread per LSP request type (three dozen). The request channels
+are still one per type (`SendChannels`), but a single dispatcher drains them and queues
+jobs on the pool, whose queue orders jobs by `RequestKind::priority`.
 
 ### Key Components
 
-- **`Server<Checker, Parser>`**: Main LSP server struct, cloned for each worker thread
-- **`SendChannels` / `ReceiveChannels`**: MPSC channels for worker communication
+- **`Server<Checker, Parser>`**: Main LSP server struct, cloned once per pool worker
+- **`SendChannels` / `ReceiveChannels`**: MPSC channels per request type, plus `wake`, rung after every send so the dispatcher looks
 - **`WorkerMessage<P>`**: Either `Request(id, params)` or `Kill` for graceful shutdown
-- **`Scheduler`**: Prioritizes LSP requests, limits concurrent workers to `MAX_WORKERS` (10)
+- **`ReceiverMultiplexer`** (multiplexer.rs): the dispatcher's view of all receivers; `recv_jobs` blocks on `wake`
+- **`ThreadPool<T>` / `Job<T>`** (thread_pool.rs): `MAX_WORKERS` threads over a priority queue; `close()` lets them finish the queue and exit; a panicking job does not kill its worker
+- **`Scheduler`**: Cancellation (`$/cancelRequest`) and the watchdog's view of running requests; `Server::execute_request` is the per-request protocol (register, acquire, cancel checks, answer)
+- **`WaitableFlag`** (server.rs): `client_initialized` / `workspace_checked` / `builtin_modules_loaded`, waited on with a `Condvar` instead of polled
 - **`Shared<T>`**: Thread-safe wrapper using `Arc<RwLock<T>>`
 
 ### Thread Termination
 
 There are no kill channels or join handles. `Server::restart` closes the request
-channels (`self.channels.close()`), and each LSP worker's `recv()` then errors and the
-worker breaks out of its loop. The two client-health-checker threads watch a generation
-counter (`flags.health_check_gen`, bumped by `restart`) and stop when it moves. The
-auto-diagnostics thread is started once and is not restarted; it keeps running on the
-shared file cache. (A `BackgroundThreads` type with kill channels exists only on the
-unmerged `fix-els-threads` branch.)
+channels (`self.channels.close()` sends `Kill` on each and rings `wake`) and replaces
+them; the dispatcher sees the `Kill`s, submits what was queued ahead of them, closes
+the pool and exits, and the workers exit once the queue is empty. The two
+client-health-checker threads watch a generation counter (`flags.health_check_gen`,
+bumped by `restart`) and stop when it moves. The auto-diagnostics thread is started
+once and is not restarted; it keeps running on the shared file cache.
+`crates/els/tests/test.rs::test_restart` covers a restart end to end.
 
 ### Testing ELS
 

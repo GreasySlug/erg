@@ -182,8 +182,9 @@ Codegen follows CPython's model; the pieces that have to agree are spread out:
   **not inlined** (`loop_body_needs_frame`, applied identically by the capture
   pre-scan and by `emit_for_instr`/`emit_while_instr`): it goes through `for__` /
   `while__` as a real function, like a body passed as a variable always did. Splicing
-  it in would leave one shared slot and Python's late binding. (The transpiler still
-  writes `for i in …:` and differs here.)
+  it in would leave one shared slot and Python's late binding. The transpiler applies
+  the same predicate and writes `for__(xs, body)` for such a body, `for i in …:` for
+  the rest.
 - Which locals need cells comes from `collect_captures` (a pre-scan over the HIR using
   the `captured_names` lowering records) plus a per-function walk at emit time
   (`frame_cells`). Lambdas that codegen inlines (`if` branches, `match` arms, loop
@@ -207,6 +208,21 @@ Codegen follows CPython's model; the pieces that have to agree are spread out:
   lowering at the moment; otherwise captures inside a `for!` body are never recorded.
 
 Regression file: `tests/should_ok/nested_closure.er` (run it on every Python version).
+The two backends are compared end to end by `tests/transpile_diff.rs`: each program is
+run through the bytecode backend and through the transpiled Python, and the outputs
+must match.
+
+### The transpiler's scopes
+
+A multi-line `if` (a `match`, a lambda of several chunks, a multi-chunk definition) is
+not an expression in Python, so the transpiler writes it as a function and calls it.
+That function is emitted **where it is used** (`PyScriptGenerator::pending`, flushed by
+`write_block` before each statement), not hoisted into the prelude at module level.
+Hoisted, it could see none of the locals around it, which is why every definition
+inside a block used to be written `global` — one variable per name for the whole
+program, so a recursive call overwrote its caller's and closures made in a loop shared
+one. A `lambda` cannot hold statements, so a one-chunk lambda that turns out to need
+them becomes a function too.
 
 ### Bytecode Test Suites
 

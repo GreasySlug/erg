@@ -174,13 +174,26 @@ const CONVERTORS_MODULES: &[&str] = &[
 
 /// The core modules are inlined into a single prelude, so their cross-imports
 /// must be removed.
+/// The core modules are inlined into one prelude, so the imports they make of
+/// each other have to go -- a whole statement at a time: a parenthesised import
+/// list runs over as many lines as it likes, and dropping only its first line
+/// left the rest of the names, and the closing paren, behind.
 fn strip_erg_imports(src: &str) -> String {
     let mut stripped = String::with_capacity(src.len());
+    let mut unclosed = 0usize;
     for line in src.lines() {
-        if !line.trim_start().starts_with("from _erg") {
-            stripped.push_str(line);
-            stripped.push('\n');
+        let opened = line.matches('(').count();
+        let closed = line.matches(')').count();
+        if unclosed > 0 {
+            unclosed = unclosed + opened - closed.min(unclosed + opened);
+            continue;
         }
+        if line.trim_start().starts_with("from _erg") {
+            unclosed = opened - closed.min(opened);
+            continue;
+        }
+        stripped.push_str(line);
+        stripped.push('\n');
     }
     stripped
 }

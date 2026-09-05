@@ -1,14 +1,30 @@
+# The prelude every generated program is built on: what it imports are
+# re-exports, there for the code below it to use by name, not uses of this
+# module's own.
+# ruff: noqa: F401
+
 # HACK: import MutType to suppress segfault in CPython 3.10 (cause unknown)
-from _erg_list import List, UnsizedList
 from _erg_bool import Bool
 from _erg_bytes import Bytes
 from _erg_contains_operator import contains_operator
 from _erg_dict import Dict
 from _erg_float import Float, FloatMut
 from _erg_int import Int, IntMut
+from _erg_iterable import (
+    iterable_all,
+    iterable_any,
+    iterable_chain,
+    iterable_filter,
+    iterable_find,
+    iterable_map,
+    iterable_nth,
+    iterable_position,
+    iterable_reduce,
+    iterable_skip,
+)
+from _erg_list import List, UnsizedList
 from _erg_mutate_operator import mutate_operator
 from _erg_nat import Nat, NatMut
-from _erg_ratio import Ratio, RatioMut
 from _erg_range import (
     ClosedRange,
     LeftOpenRange,
@@ -17,6 +33,7 @@ from _erg_range import (
     RangeIterator,
     RightOpenRange,
 )
+from _erg_ratio import Ratio, RatioMut
 from _erg_result import (
     Either,
     Error,
@@ -34,21 +51,8 @@ from _erg_result import (
 )
 from _erg_set import Set
 from _erg_str import Str, StrMut
-from _erg_type import Cell
+from _erg_type import Cell, StructuralType, is_ge, is_gt, is_le, is_lt, is_subtype
 from _erg_type import MutType as _MutType
-from _erg_type import StructuralType, is_ge, is_gt, is_le, is_lt, is_subtype
-from _erg_iterable import (
-    iterable_map,
-    iterable_filter,
-    iterable_reduce,
-    iterable_nth,
-    iterable_skip,
-    iterable_all,
-    iterable_any,
-    iterable_position,
-    iterable_find,
-    iterable_chain,
-)
 
 Record = tuple
 

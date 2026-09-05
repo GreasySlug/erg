@@ -1,5 +1,5 @@
-from _erg_result import Error
 from _erg_range import Range
+from _erg_result import Error
 
 
 class Bytes(bytes):

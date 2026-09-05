@@ -16,7 +16,9 @@ class Dict(dict):
         return Dict({k: v for k, v in self.items() if k not in other})
 
     # other: Iterable
-    def update(self, other={}, conflict_resolver=None, **kwargs):
+    def update(self, other=None, conflict_resolver=None, **kwargs):
+        if other is None:
+            other = {}
         if conflict_resolver is None:
             super().update(other, **kwargs)
         elif isinstance(other, dict):

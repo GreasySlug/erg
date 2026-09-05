@@ -10,9 +10,8 @@ class Eq(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Eq:
-            if any("__eq__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Eq and any("__eq__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -48,9 +47,8 @@ class Hash(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Hash:
-            if any("__hash__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Hash and any("__hash__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -61,9 +59,8 @@ class Sized(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Sized:
-            if any("__len__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Sized and any("__len__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -76,9 +73,8 @@ class Add(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Add:
-            if any("__add__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Add and any("__add__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -91,9 +87,8 @@ class Sub(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Sub:
-            if any("__sub__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Sub and any("__sub__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -106,9 +101,8 @@ class Mul(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Mul:
-            if any("__mul__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Mul and any("__mul__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -121,9 +115,8 @@ class Div(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Div:
-            if any("__truediv__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Div and any("__truediv__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -136,9 +129,8 @@ class Pos(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Pos:
-            if any("__pos__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Pos and any("__pos__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented
 
 
@@ -151,7 +143,6 @@ class Neg(ABC):
 
     @classmethod
     def __subclasshook__(cls, C):
-        if cls is Neg:
-            if any("__neg__" in B.__dict__ for B in C.__mro__):
-                return True
+        if cls is Neg and any("__neg__" in B.__dict__ for B in C.__mro__):
+            return True
         return NotImplemented

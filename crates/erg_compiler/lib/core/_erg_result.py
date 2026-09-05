@@ -13,7 +13,7 @@ class ErrorFrame:
         self.file = file
 
     def __repr__(self):
-        return '{}, line {}, file "{}"'.format(self.name, self.line, self.file)
+        return f'{self.name}, line {self.line}, file "{self.file}"'
 
 
 class Error:
@@ -41,7 +41,7 @@ class Error:
         return new
 
     def __repr__(self):
-        return "{}: {}".format(self.kind, self.msg)
+        return f"{self.kind}: {self.msg}"
 
 
 class _TypeAlias:
@@ -104,7 +104,7 @@ class OptionMut(MutType):
         self.value = value
 
     def __repr__(self):
-        return "Option!({})".format(repr(self.value))
+        return f"Option!({self.value!r})"
 
     def __eq__(self, other):
         if isinstance(other, MutType):
@@ -152,7 +152,7 @@ def _source_line(file, line):
         import linecache
 
         return linecache.getline(file, line).strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- rendering an error must not raise one
         return ""
 
 
@@ -167,18 +167,18 @@ def format_traceback(err, stack=None) -> str:
     if stack:
         lines.append("Traceback (most recent call first):")
         for frame in stack:
-            lines.append("  {}".format(frame))
+            lines.append(f"  {frame}")
             src = _source_line(frame.file, frame.line)
             if src:
-                lines.append("  {} | {}".format(frame.line, src))
+                lines.append(f"  {frame.line} | {src}")
     for context in getattr(err, "contexts", []):
-        lines.append("hint: {}".format(context))
+        lines.append(f"hint: {context}")
     if isinstance(err, Error):
-        lines.append("{}: {}".format(err.kind, err.msg))
+        lines.append(f"{err.kind}: {err.msg}")
     elif isinstance(err, BaseException):
-        lines.append("{}: {}".format(type(err).__name__, err))
+        lines.append(f"{type(err).__name__}: {err}")
     else:
-        lines.append("Error: {!r}".format(err))
+        lines.append(f"Error: {err!r}")
     return "\n".join(lines)
 
 
@@ -203,9 +203,9 @@ def result_unwrap(obj, msg=None):
         if obj is None:
             msg = "unwrapped a None value"
         elif isinstance(obj, Error):
-            msg = "unwrapped an error value ({}: {})".format(obj.kind, obj.msg)
+            msg = f"unwrapped an error value ({obj.kind}: {obj.msg})"
         else:
-            msg = "unwrapped an error value ({}: {})".format(type(obj).__name__, obj)
+            msg = f"unwrapped an error value ({type(obj).__name__}: {obj})"
     err = Error(msg, "UnwrappingError")
     # the `?` frames and hints the unwrapped error collected still apply
     err.stack = list(getattr(obj, "stack", []))

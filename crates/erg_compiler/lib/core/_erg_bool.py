@@ -1,5 +1,4 @@
-from _erg_nat import Nat
-from _erg_nat import NatMut
+from _erg_nat import Nat, NatMut
 from _erg_result import Error
 from _erg_type import MutType
 

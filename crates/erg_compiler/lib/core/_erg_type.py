@@ -51,7 +51,7 @@ class StructuralType:
         self.base = base
 
     def __repr__(self):
-        return "Structural({})".format(repr(self.base))
+        return f"Structural({self.base!r})"
 
     def __eq__(self, other):
         if isinstance(other, StructuralType):
@@ -158,7 +158,8 @@ def _isinstance(obj, classinfo) -> bool:
     else:
         try:
             return isinstance(obj, classinfo)
-        except:
+        except TypeError:
+            # `classinfo` is not a class or a tuple of them
             return False
 
 
@@ -181,7 +182,7 @@ class Cell(MutType):
         self.value = value
 
     def __repr__(self):
-        return "Cell!({})".format(repr(self.value))
+        return f"Cell!({self.value!r})"
 
     def __str__(self):
         return str(self.value)

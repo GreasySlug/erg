@@ -3,8 +3,7 @@ from _erg_control import then__
 from _erg_int import IntMut
 from _erg_nat import NatMut
 from _erg_range import Range
-from _erg_result import Error
-from _erg_result import is_ok
+from _erg_result import Error, is_ok
 from _erg_type import UnionType
 
 
@@ -64,7 +63,7 @@ class List(list):
     def __getitem__(self, index_or_slice):
         if isinstance(index_or_slice, slice):
             return List(list.__getitem__(self, index_or_slice))
-        elif isinstance(index_or_slice, NatMut) or isinstance(index_or_slice, IntMut):
+        elif isinstance(index_or_slice, (NatMut, IntMut)):
             return list.__getitem__(self, int(index_or_slice))
         elif isinstance(index_or_slice, Range):
             return List(list.__getitem__(self, index_or_slice.into_slice()))
@@ -75,7 +74,9 @@ class List(list):
         return hash(tuple(self))
 
     def update(self, f):
-        self = List(f(self))
+        # in place: rebinding `self` would leave the caller's list untouched,
+        # which is what `v.update! x -> x + [1]` used to do
+        self[:] = f(self)
 
     def type_check(self, t: type) -> bool:
         if isinstance(t, list):
@@ -88,7 +89,7 @@ class List(list):
         elif isinstance(t, set):
             return self in t
         elif isinstance(t, UnionType):
-            return any([self.type_check(_t) for _t in t.__args__])
+            return any(self.type_check(_t) for _t in t.__args__)
         elif not hasattr(t, "__args__"):
             return isinstance(self, t)
         elem_t = t.__args__[0]

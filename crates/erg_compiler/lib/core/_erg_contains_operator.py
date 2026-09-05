@@ -1,11 +1,13 @@
 from _erg_range import Range
 from _erg_result import is_ok
-from _erg_type import StructuralType
-from _erg_type import UnionType
-from _erg_type import _isinstance
-from _erg_type import _is_type_record
-from _erg_type import _record_fields
-from _erg_type import is_type
+from _erg_type import (
+    StructuralType,
+    UnionType,
+    _is_type_record,
+    _isinstance,
+    _record_fields,
+    is_type,
+)
 
 
 def _structurally_contains(type_record, elem) -> bool:
@@ -33,12 +35,10 @@ def contains_operator(y, elem) -> bool:
         base = y.base
         if _is_type_record(base):
             return _structurally_contains(base, elem)
-        if is_type(base) and _isinstance(elem, base):
-            return True
-        return False
+        return is_type(base) and _isinstance(elem, base)
 
     elif isinstance(y, UnionType):
-        return any([contains_operator(t, elem) for t in y.__args__])
+        return any(contains_operator(t, elem) for t in y.__args__)
     # 1 in Int
     elif is_type(y):
         if _isinstance(elem, y):
@@ -60,7 +60,7 @@ def contains_operator(y, elem) -> bool:
         and _isinstance(elem, list)
         and (len(y) == 0 or is_type(y[0]) or _isinstance(y[0], Range))
     ):
-        type_check = all(map(lambda x: contains_operator(x[0], x[1]), zip(y, elem)))
+        type_check = all(contains_operator(t, el) for t, el in zip(y, elem))
         len_check = len(elem) <= len(y)
         return type_check and len_check
     # (1, 2) in (Int, Int)
@@ -71,7 +71,7 @@ def contains_operator(y, elem) -> bool:
     ):
         if not hasattr(elem, "__iter__"):
             return False
-        type_check = all(map(lambda x: contains_operator(x[0], x[1]), zip(y, elem)))
+        type_check = all(contains_operator(t, el) for t, el in zip(y, elem))
         len_check = len(elem) <= len(y)
         return type_check and len_check
     # {1: 2} in {Int: Int}
@@ -82,9 +82,9 @@ def contains_operator(y, elem) -> bool:
     ):
         if len(y) == 1:
             key = next(iter(y.keys()))
-            key_check = all([contains_operator(key, el) for el in elem.keys()])
+            key_check = all(contains_operator(key, el) for el in elem)
             value = next(iter(y.values()))
-            value_check = all([contains_operator(value, el) for el in elem.values()])
+            value_check = all(contains_operator(value, el) for el in elem.values())
             return key_check and value_check
         type_check = True  # TODO:
         len_check = True  # It can be True even if either elem or y has the larger number of elems

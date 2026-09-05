@@ -18,7 +18,7 @@ use crate::artifact::{
     BuildRunnable, Buildable, CompleteArtifact, ErrorArtifact, IncompleteArtifact,
 };
 use crate::build_package::PackageBuilder;
-use crate::codegen::PyCodeGenerator;
+use crate::codegen::{loop_body_needs_frame, PyCodeGenerator};
 use crate::context::{Context, ContextProvider, ModuleContext};
 use crate::desugar_hir::HIRDesugarer;
 use crate::error::{CompileError, CompileErrors, CompileResult};
@@ -517,13 +517,26 @@ impl Transpiler {
 
 #[derive(Debug, Default)]
 pub struct PyScriptGenerator {
-    globals: HashSet<String>,
     loaded_mods: HashSet<&'static str>,
     level: usize,
     fresh_var_n: usize,
     namedtuple_loaded: bool,
     ratio_loaded: bool,
+    /// Module-level text that goes above the program: the runtime modules and
+    /// the imports it makes.
     prelude: String,
+    /// Statements that have to stand before the one being written, at its
+    /// indentation.
+    ///
+    /// A multi-line `if` (a `match`, a lambda of several chunks) is not an
+    /// expression in Python, so it is written as a function and called. That
+    /// function used to go into the prelude, at module level, where it could
+    /// see none of the locals around it -- so every definition inside a block
+    /// was written `global`, which made it one variable for the whole program:
+    /// a recursive call overwrote its caller's, and every closure made in a
+    /// loop shared one. Defined where it is used instead, it closes over them
+    /// the way Python's own scoping says.
+    pending: Vec<String>,
 }
 
 impl PyScriptGenerator {
@@ -534,9 +547,13 @@ impl PyScriptGenerator {
     pub fn transpile(&mut self, hir: HIR) -> PyScript {
         let mut code = String::new();
         for chunk in hir.module.into_iter() {
-            let start = code.len();
-            self.write_expr(chunk, &mut code);
-            if code.len() > start {
+            let mut line = String::new();
+            self.write_expr(chunk, &mut line);
+            for stmt in std::mem::take(&mut self.pending) {
+                code.push_str(&stmt);
+            }
+            if !line.is_empty() {
+                code.push_str(&line);
                 code.push('\n');
             }
         }
@@ -761,9 +778,11 @@ impl PyScriptGenerator {
             if attr.body.block.len() > 1 {
                 let name = format!("instant_block_{}__", self.fresh_var_n);
                 self.fresh_var_n += 1;
-                let mut instant = format!("def {name}():\n");
+                let mut instant = String::new();
+                push_indent(&mut instant, self.level);
+                instant += &format!("def {name}():\n");
                 self.write_block(attr.body.block, Return, &mut instant);
-                self.prelude += &instant;
+                self.pending.push(instant);
                 values += &name;
                 values += "(),";
             } else {
@@ -931,43 +950,76 @@ impl PyScriptGenerator {
                 out.push_str("))");
             }
             Some("if" | "if!") => self.write_if(call, out),
-            Some("for" | "for!") => {
-                out.push_str("for ");
-                let iter = call.args.remove(0);
-                let Expr::Lambda(block) = call.args.remove(0) else {
-                    todo!()
-                };
-                let non_default = block.params.non_defaults.first().unwrap();
-                let param_token = match &non_default.raw.pat {
-                    ParamPattern::VarName(name) => name.token(),
-                    ParamPattern::Discard(token) => token,
-                    _ => unreachable!(),
-                };
-                out.push_str(&Self::transpile_name(
-                    &VisibilityModifier::Private,
-                    param_token.inspect(),
-                    &non_default.vi,
-                ));
-                out.push_str(" in ");
-                self.write_expr(iter, out);
-                out.push_str(":\n");
-                self.write_block(block.body, Discard, out);
-            }
-            Some("while" | "while!") => {
-                out.push_str("while ");
-                let Expr::Lambda(mut cond) = call.args.remove(0) else {
-                    todo!()
-                };
-                let Expr::Lambda(block) = call.args.remove(0) else {
-                    todo!()
-                };
-                self.write_expr(cond.body.remove(0), out);
-                out.push_str(":\n");
-                self.write_block(block.body, Discard, out);
-            }
+            Some("for" | "for!") => self.write_for(call, out),
+            Some("while" | "while!") => self.write_while(call, out),
             Some("match" | "match!") => self.write_match(call, out),
             _ => self.write_simple_call(call, out),
         }
+    }
+
+    /// `for__(iterable, body)` / `while__(cond, body)`: the loop written as a
+    /// call, with the body a function of its own.
+    fn write_loop_call(&mut self, helper: &str, args: Vec<Expr>, out: &mut String) {
+        self.load_builtin_controls_if_not();
+        out.push_str(helper);
+        out.push('(');
+        for arg in args {
+            self.write_expr(arg, out);
+            out.push(',');
+        }
+        out.push(')');
+    }
+
+    /// `for! xs, i => ...`
+    ///
+    /// The body is a procedure called once per element, so a binding of its
+    /// own -- its parameter, a local -- is fresh on every iteration, and a
+    /// closure made in the body keeps that iteration's value. Python's `for`
+    /// reuses one variable for the whole loop, so a body one of whose own
+    /// bindings is captured is written as a function called per element
+    /// instead: the same decision, by the same predicate, that the bytecode
+    /// backend makes when it declines to splice the body in.
+    fn write_for(&mut self, mut call: Call, out: &mut String) {
+        let iter = call.args.remove(0);
+        let body = call.args.remove(0);
+        let block = match body {
+            Expr::Lambda(block) if !loop_body_needs_frame(&block) => block,
+            // a body that needs a frame of its own, or one written as a
+            // procedure elsewhere (`for! xs, body!`): a call per element
+            body => return self.write_loop_call("for__", vec![iter, body], out),
+        };
+        out.push_str("for ");
+        let non_default = block.params.non_defaults.first().unwrap();
+        let param_token = match &non_default.raw.pat {
+            ParamPattern::VarName(name) => name.token(),
+            ParamPattern::Discard(token) => token,
+            _ => unreachable!(),
+        };
+        out.push_str(&Self::transpile_name(
+            &VisibilityModifier::Private,
+            param_token.inspect(),
+            &non_default.vi,
+        ));
+        out.push_str(" in ");
+        self.write_expr(iter, out);
+        out.push_str(":\n");
+        self.write_block(block.body, Discard, out);
+    }
+
+    /// `while! cond, body`, on the same terms as `write_for`.
+    fn write_while(&mut self, mut call: Call, out: &mut String) {
+        let cond = call.args.remove(0);
+        let body = call.args.remove(0);
+        let (mut cond, block) = match (cond, body) {
+            (Expr::Lambda(cond), Expr::Lambda(block)) if !loop_body_needs_frame(&block) => {
+                (cond, block)
+            }
+            (cond, body) => return self.write_loop_call("while__", vec![cond, body], out),
+        };
+        out.push_str("while ");
+        self.write_expr(cond.body.remove(0), out);
+        out.push_str(":\n");
+        self.write_block(block.body, Discard, out);
     }
 
     fn write_if(&mut self, mut call: Call, out: &mut String) {
@@ -1005,26 +1057,27 @@ impl PyScriptGenerator {
         self.fresh_var_n += 1;
         let tmp_func = Str::from(format!("if_tmp_func_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
-        let mut code = format!("def {tmp_func}():\n    if {cond}:\n");
-        let level = self.level;
-        self.level = 1;
+        let mut code = String::new();
+        push_indent(&mut code, self.level);
+        code += &format!("def {tmp_func}():\n");
+        self.level += 1;
+        push_indent(&mut code, self.level);
+        code += &format!("if {cond}:\n");
         self.write_block(then_block.body, StoreTmp(tmp.clone()), &mut code);
-        self.level = level;
+        push_indent(&mut code, self.level);
+        code += "else:\n";
         if let Some(else_block) = else_block {
-            code += "    else:\n";
-            let level = self.level;
-            self.level = 1;
             self.write_block(else_block.body, StoreTmp(tmp.clone()), &mut code);
-            self.level = level;
         } else {
-            code += "    else:\n";
-            code += &format!("        {tmp} = None\n");
+            push_indent(&mut code, self.level + 1);
+            code += &format!("{tmp} = None\n");
         }
-        code += &format!("    return {tmp}\n");
-        self.prelude += &code;
-        // ~~ NOTE: In Python, the variable environment of a function is determined at call time
-        // This is a very bad design, but can be used for this code ~~
-        // FIXME: this trick only works in the global namespace
+        push_indent(&mut code, self.level);
+        code += &format!("return {tmp}\n");
+        self.level -= 1;
+        // defined where it is called, so that it closes over the locals around
+        // it -- see `pending`
+        self.pending.push(code);
         out.push_str(&tmp_func);
         out.push_str("()");
     }
@@ -1034,7 +1087,9 @@ impl PyScriptGenerator {
         self.fresh_var_n += 1;
         let tmp_func = Str::from(format!("match_tmp_func_{}__", self.fresh_var_n));
         self.fresh_var_n += 1;
-        let mut code = format!("def {tmp_func}():\n");
+        let mut code = String::new();
+        push_indent(&mut code, self.level);
+        code += &format!("def {tmp_func}():\n");
         self.level += 1;
         push_indent(&mut code, self.level);
         code += "match ";
@@ -1107,8 +1162,8 @@ impl PyScriptGenerator {
         }
         push_indent(&mut code, self.level);
         code += &format!("return {tmp}\n");
-        self.prelude += &code;
         self.level -= 1;
+        self.pending.push(code);
         out.push_str(&tmp_func);
         out.push_str("()");
     }
@@ -1188,6 +1243,13 @@ impl PyScriptGenerator {
     fn write_params(&mut self, params: Params, out: &mut String) {
         for non_default in params.non_defaults {
             match non_default.raw.pat {
+                // `_` names a parameter whose value is discarded, and stays `_`
+                // everywhere else; Python has no such spelling and rejects the
+                // name twice in one signature (`__exit__ self, _, _, _`)
+                ParamPattern::VarName(param) if &param.inspect()[..] == "_" => {
+                    write!(out, "_{},", self.fresh_var_n).unwrap();
+                    self.fresh_var_n += 1;
+                }
                 ParamPattern::VarName(param) => {
                     out.push_str(&Self::transpile_name(
                         &VisibilityModifier::Private,
@@ -1230,62 +1292,89 @@ impl PyScriptGenerator {
         self.level += 1;
         let last = block.len().saturating_sub(1);
         for (i, chunk) in block.into_iter().enumerate() {
-            push_indent(out, self.level);
+            let mut line = String::new();
             if i == last {
                 match last_op {
                     Return => {
-                        out.push_str("return ");
+                        line.push_str("return ");
                     }
                     Discard => {}
                     StoreTmp(ref tmp) => {
-                        out.push_str(tmp);
-                        out.push_str(" = ");
+                        line.push_str(tmp);
+                        line.push_str(" = ");
                     }
                 }
             }
-            let start = out.len();
-            self.write_expr(chunk, out);
-            if out.len() > start {
+            let start = line.len();
+            // the chunk is written aside: writing it may ask for statements of
+            // its own above it, which belong to this block, not to the one the
+            // chunk is nested in
+            let outer = std::mem::take(&mut self.pending);
+            self.write_expr(chunk, &mut line);
+            for stmt in std::mem::replace(&mut self.pending, outer) {
+                out.push_str(&stmt);
+            }
+            if line.len() > start {
+                push_indent(out, self.level);
+                out.push_str(&line);
                 out.push('\n');
             }
         }
         self.level -= 1;
     }
 
-    fn write_lambda(&mut self, lambda: Lambda, out: &mut String) {
-        if lambda.body.len() > 1 {
+    fn write_lambda(&mut self, mut lambda: Lambda, out: &mut String) {
+        if lambda.body.len() == 1 {
+            // One chunk can be the body of a Python `lambda` -- unless writing
+            // it asks for statements of its own (a multi-line `if` becomes a
+            // function), which no `lambda` can hold. That is only known once
+            // it is written, so it is written aside first.
+            let outer = std::mem::take(&mut self.pending);
+            let mut expr = String::new();
+            self.level += 1;
+            self.write_expr(lambda.body.remove(0), &mut expr);
+            self.level -= 1;
+            let needed = std::mem::replace(&mut self.pending, outer);
+            if needed.is_empty() {
+                out.push_str("(lambda ");
+                self.write_params(lambda.params, out);
+                out.push(':');
+                out.push_str(&expr);
+                out.push(')');
+                return;
+            }
             let name = format!("lambda_{}__", self.fresh_var_n);
             self.fresh_var_n += 1;
-            let mut code = format!("def {name}(");
+            let mut code = String::new();
+            push_indent(&mut code, self.level);
+            code += &format!("def {name}(");
             self.write_params(lambda.params, &mut code);
             code += "):\n";
-            self.write_block(lambda.body, Return, &mut code);
-            self.prelude += &code;
+            for stmt in needed {
+                code.push_str(&stmt);
+            }
+            push_indent(&mut code, self.level + 1);
+            code += "return ";
+            code.push_str(&expr);
+            code.push('\n');
+            self.pending.push(code);
             out.push_str(&name);
-        } else {
-            out.push_str("(lambda ");
-            self.write_params(lambda.params, out);
-            out.push(':');
-            self.write_block(lambda.body, Discard, out);
-            out.pop(); // \n
-            out.push(')');
+            return;
         }
+        let name = format!("lambda_{}__", self.fresh_var_n);
+        self.fresh_var_n += 1;
+        let mut code = String::new();
+        push_indent(&mut code, self.level);
+        code += &format!("def {name}(");
+        self.write_params(lambda.params, &mut code);
+        code += "):\n";
+        self.write_block(lambda.body, Return, &mut code);
+        self.pending.push(code);
+        out.push_str(&name);
     }
 
     // TODO: trait definition
     fn write_def(&mut self, mut def: Def, out: &mut String) {
-        // HACK: allow reference to local variables in tmp functions
-        if self.level > 0 {
-            let ident = def.sig.ident();
-            let name = Self::transpile_name(ident.vis(), ident.inspect(), &ident.vi);
-            if !self.globals.contains(&name) {
-                out.push_str("global ");
-                out.push_str(&name);
-                out.push('\n');
-                push_indent(out, self.level);
-                self.globals.insert(name);
-            }
-        }
         match def.sig {
             Signature::Var(var) => {
                 out.push_str(&Self::transpile_ident(var.ident));
@@ -1293,9 +1382,11 @@ impl PyScriptGenerator {
                 if def.body.block.len() > 1 {
                     let name = format!("instant_block_{}__", self.fresh_var_n);
                     self.fresh_var_n += 1;
-                    let mut instant = format!("def {name}():\n");
+                    let mut instant = String::new();
+                    push_indent(&mut instant, self.level);
+                    instant += &format!("def {name}():\n");
                     self.write_block(def.body.block, Return, &mut instant);
-                    self.prelude += &instant;
+                    self.pending.push(instant);
                     out.push_str(&name);
                     out.push_str("()");
                 } else {
@@ -1364,9 +1455,11 @@ impl PyScriptGenerator {
         if redef.block.len() > 1 {
             let name = format!("instant_block_{}__", self.fresh_var_n);
             self.fresh_var_n += 1;
-            let mut instant = format!("def {name}():\n");
+            let mut instant = String::new();
+            push_indent(&mut instant, self.level);
+            instant += &format!("def {name}():\n");
             self.write_block(redef.block, Return, &mut instant);
-            self.prelude += &instant;
+            self.pending.push(instant);
             out.push_str(&name);
             out.push_str("()");
         } else {

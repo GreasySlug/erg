@@ -254,7 +254,7 @@ impl HostFrame {
 /// closures of every iteration share, each reading the last iteration's
 /// value. (What the body reads from outside is not affected: that is the
 /// enclosing frame's, whether the body is spliced in or called.)
-fn loop_body_needs_frame(lambda: &Lambda) -> bool {
+pub(crate) fn loop_body_needs_frame(lambda: &Lambda) -> bool {
     let mut caps = Captures::default();
     let mut walk = CaptureWalk {
         caps: &mut caps,

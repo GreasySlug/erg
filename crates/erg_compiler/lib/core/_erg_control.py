@@ -17,7 +17,8 @@ def while__(cond_block, body):
 
 def with__(obj, body):
     with obj as o:
-        body(o)
+        return body(o)
+
 
 def discard__(obj):
     pass

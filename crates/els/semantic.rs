@@ -15,20 +15,26 @@ use lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensParams, SemanticTokensResult,
 };
 
+use crate::file_cache::utf16_col;
 use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::util::{self, NormalizedUrl};
 
 #[derive(Debug)]
 struct ASTSemanticState {
+    /// The source, one entry per line: the AST's columns count chars and the
+    /// client's UTF-16 units, and telling them apart needs the text.
+    lines: Vec<String>,
     prev_line: u32,
+    /// In UTF-16 units, like the deltas that are sent.
     prev_col: u32,
     namespaces: Vec<Dict<String, SemanticTokenType>>,
     tokens: Vec<SemanticToken>,
 }
 
 impl ASTSemanticState {
-    fn new() -> Self {
+    fn new(src: &str) -> Self {
         Self {
+            lines: src.lines().map(String::from).collect(),
             prev_line: 1,
             prev_col: 0,
             namespaces: vec![Dict::new()],
@@ -95,21 +101,33 @@ impl ASTSemanticState {
     }
 
     fn gen_token(&mut self, loc: Location, token_type: SemanticTokenType) -> SemanticToken {
-        let delta_line = loc.ln_begin().unwrap_or(1).saturating_sub(self.prev_line);
+        let ln = loc.ln_begin();
+        let line = ln
+            .and_then(|ln| self.lines.get(ln.saturating_sub(1) as usize))
+            .map_or("", String::as_str);
+        // the columns go out in UTF-16 units
+        let col = loc.col_begin().map(|col| utf16_col(line, col));
+        let length = match (loc.ln_end(), loc.col_end(), col) {
+            (Some(ln_end), Some(col_end), Some(col)) if Some(ln_end) == ln => {
+                utf16_col(line, col_end).saturating_sub(col)
+            }
+            _ => loc.length().unwrap_or(1),
+        };
+        let delta_line = ln.unwrap_or(1).saturating_sub(self.prev_line);
         let delta_start = if delta_line == 0 {
-            loc.col_begin().unwrap_or(0).saturating_sub(self.prev_col)
+            col.unwrap_or(0).saturating_sub(self.prev_col)
         } else {
-            loc.col_begin().unwrap_or(0)
+            col.unwrap_or(0)
         };
         let token = SemanticToken {
             delta_line,
             delta_start,
-            length: loc.length().unwrap_or(1),
+            length,
             token_type: Self::token_type_as_u32(token_type),
             token_modifiers_bitset: 0,
         };
-        self.prev_line = loc.ln_begin().unwrap_or(self.prev_line);
-        self.prev_col = loc.col_begin().unwrap_or(self.prev_col);
+        self.prev_line = ln.unwrap_or(self.prev_line);
+        self.prev_col = col.unwrap_or(self.prev_col);
         token
     }
 
@@ -304,10 +322,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let uri = NormalizedUrl::new(params.text_document.uri);
         let path = util::uri_to_path(&uri);
         let src = self.file_cache.get_entire_code(&uri)?;
+        let mut state = ASTSemanticState::new(&src);
         let mut builder = ASTBuilder::new(self.cfg.inherit(path));
         let result = match builder.build_without_desugaring(src) {
             Ok(artifact) => {
-                let mut state = ASTSemanticState::new();
                 let tokens = state.enumerate_tokens(artifact.ast);
                 Some(SemanticTokensResult::Tokens(tokens))
             }

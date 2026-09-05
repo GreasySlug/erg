@@ -63,19 +63,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                                     .and_then(|ctx| ctx.get_mod_with_t(mod_t))
                                     .and_then(|mod_ctx| mod_ctx.get_var_info(token.inspect()))
                                 {
-                                    let Some(path) = vi.def_loc.module.as_ref() else {
-                                        return Ok(None);
-                                    };
-                                    let def_uri = Url::from_file_path(path).unwrap();
-                                    return Ok(Some(lsp_types::Location::new(
-                                        def_uri,
-                                        util::loc_to_range(vi.def_loc.loc).unwrap(),
-                                    )));
+                                    return Ok(self.abs_loc_to_lsp_loc(&vi.def_loc));
                                 }
                             }
                         } else if let Some(Expr::Accessor(acc)) = def.body.block.last() {
                             let vi = acc.var_info();
-                            match (&vi.def_loc.module, util::loc_to_range(vi.def_loc.loc)) {
+                            match (&vi.def_loc.module, self.abs_loc_to_range(&vi.def_loc)) {
                                 (Some(path), Some(range)) => {
                                     let def_uri = NormalizedUrl::try_from(path.as_path()).unwrap();
                                     let def_file = if PYTHON_MODE {
@@ -102,7 +95,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         }
                     }
                 }
-                match (vi.def_loc.module, util::loc_to_range(vi.def_loc.loc)) {
+                let range = self.abs_loc_to_range(&vi.def_loc);
+                match (vi.def_loc.module, range) {
                     (Some(path), Some(range)) => {
                         let def_uri = Url::from_file_path(path).unwrap();
                         Ok(Some(lsp_types::Location::new(def_uri, range)))
@@ -147,7 +141,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let Some(vi) = self.get_definition(uri, &token)? else {
             return Ok(None);
         };
-        match (vi.def_loc.module, util::loc_to_range(vi.def_loc.loc)) {
+        let range = self.abs_loc_to_range(&vi.def_loc);
+        match (vi.def_loc.module, range) {
             (Some(path), Some(range)) => {
                 let def_uri = Url::from_file_path(path).unwrap();
                 Ok(Some(Location::new(def_uri, range)))

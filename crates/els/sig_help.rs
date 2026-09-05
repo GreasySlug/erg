@@ -12,7 +12,7 @@ use lsp_types::{
 
 use crate::hir_visitor::GetExprKind;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{loc_to_pos, pos_to_loc, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
@@ -89,7 +89,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let token = self.file_cache.get_token_relatively(uri, pos, offset)?;
         crate::_log!(self, "token: {token}");
         if let Some(visitor) = self.get_visitor(uri) {
-            if let Some(expr) = visitor.get_min_expr(loc_to_pos(token.loc())?) {
+            if let Some(expr) = visitor.get_min_expr(self.loc_to_pos(uri, token.loc())?) {
                 return Some((token, expr.clone()));
             }
         }
@@ -113,7 +113,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .as_ref()
             .map(|(l, _)| l.loc())
             .unwrap_or_else(|| call.obj.loc());
-        let loc = pos_to_loc(pos);
+        let loc = self.pos_to_loc(uri, pos);
         let tks = self.file_cache.get_token_stream(uri).unwrap_or_default();
         let mut paren = 0usize;
         // we should use the latest commas
@@ -203,7 +203,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
 
     fn type_app_at(&mut self, uri: &NormalizedUrl, pos: Position) -> Option<(Expr, u32)> {
         let tokens = self.file_cache.get_token_stream(uri)?;
-        let loc = pos_to_loc(pos);
+        let loc = self.pos_to_loc(uri, pos);
         let mut open_bar = None;
         for (i, tk) in tokens.iter().enumerate() {
             if tk.loc() > loc {
@@ -235,7 +235,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 return None;
             }
         }
-        let bar_pos = loc_to_pos(tokens[open].loc())?;
+        let bar_pos = self.loc_to_pos(uri, tokens[open].loc())?;
         let (_tok, expr) = self.get_min_expr(uri, bar_pos, -1)?;
         let mut nth = 0u32;
         for tk in tokens.iter().skip(open + 1) {

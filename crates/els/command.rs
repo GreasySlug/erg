@@ -14,7 +14,7 @@ use lsp_types::{
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{self, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_execute_command(
@@ -144,10 +144,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let Ok(uri) = referee.module.ok_or(()).and_then(Url::from_file_path) else {
             return Ok(None);
         };
-        let uri = serde_json::to_value(uri)?;
-        let Some(position) = util::loc_to_pos(referee.loc) else {
+        let Some(position) = self.loc_to_pos(&NormalizedUrl::new(uri.clone()), referee.loc) else {
             return Ok(None);
         };
+        let uri = serde_json::to_value(uri)?;
         let position = serde_json::to_value(position)?;
         Ok(Some(Command {
             title: format!("{impl_len} {noun}"),

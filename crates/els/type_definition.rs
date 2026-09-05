@@ -7,10 +7,10 @@ use erg_compiler::erg_parser::parse::Parsable;
 
 use erg_compiler::ty::{HasType, Type};
 use lsp_types::request::{GotoTypeDefinitionParams, GotoTypeDefinitionResponse};
-use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
+use lsp_types::{GotoDefinitionResponse, Location, Position};
 
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{self, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_goto_type_definition(
@@ -31,12 +31,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             .map(|ent| MappedRwLockReadGuard::map(ent, |ent| &ent.module))
             .or_else(|| self.get_mod_ctx(uri))?;
         let (_, typ_info) = module.context.get_type_info(typ)?;
-        let path = typ_info.def_loc.module.as_ref()?;
-        let def_uri = Url::from_file_path(path).ok()?;
-        Some(Location::new(
-            def_uri,
-            util::loc_to_range(typ_info.def_loc.loc)?,
-        ))
+        self.abs_loc_to_lsp_loc(&typ_info.def_loc)
     }
 
     fn get_type_def(&self, uri: &NormalizedUrl, pos: Position) -> Option<GotoDefinitionResponse> {

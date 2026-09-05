@@ -14,10 +14,14 @@ use lsp_types::{
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::symbol::symbol_kind;
-use crate::util::{abs_loc_to_lsp_loc, loc_to_pos, loc_to_range, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
-fn hierarchy_item(name: String, vi: &VarInfo) -> Option<CallHierarchyItem> {
-    let loc = abs_loc_to_lsp_loc(&vi.def_loc)?;
+fn hierarchy_item<C: BuildRunnable, P: Parsable>(
+    server: &Server<C, P>,
+    name: String,
+    vi: &VarInfo,
+) -> Option<CallHierarchyItem> {
+    let loc = server.abs_loc_to_lsp_loc(&vi.def_loc)?;
     Some(CallHierarchyItem {
         name,
         kind: symbol_kind(vi),
@@ -52,18 +56,23 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 else {
                     continue;
                 };
-                let Some(pos) = loc_to_pos(referrer_loc.loc) else {
+                let Some(pos) = self.loc_to_pos(&uri, referrer_loc.loc) else {
                     continue;
                 };
                 if let Some(def) = self.get_min::<Def>(&uri, pos) {
                     if def.sig.is_subr() {
-                        let Some(from) =
-                            hierarchy_item(def.sig.inspect().to_string(), &def.sig.ident().vi)
-                        else {
+                        let Some(from) = hierarchy_item(
+                            self,
+                            def.sig.inspect().to_string(),
+                            &def.sig.ident().vi,
+                        ) else {
                             continue;
                         };
                         // the call site within the caller (`from`)
-                        let from_ranges = loc_to_range(referrer_loc.loc).into_iter().collect();
+                        let from_ranges = self
+                            .loc_to_range(&uri, referrer_loc.loc)
+                            .into_iter()
+                            .collect();
                         let call = CallHierarchyIncomingCall { from, from_ranges };
                         res.push(call);
                     }
@@ -88,94 +97,99 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             return Ok(None);
         };
         let uri = NormalizedUrl::from_file_path(module)?;
-        let Some(pos) = loc_to_pos(loc.loc) else {
+        let Some(pos) = self.loc_to_pos(&uri, loc.loc) else {
             return Ok(None);
         };
         let mut calls = vec![];
         if let Some(def) = self.get_min::<Def>(&uri, pos) {
             for chunk in def.body.block.iter() {
-                calls.extend(self.gen_outgoing_call(chunk));
+                calls.extend(self.gen_outgoing_call(&uri, chunk));
             }
         }
         Ok(Some(calls))
     }
 
     /// Indirect calls are excluded. For example, calls in an anonymous function.
-    #[allow(clippy::only_used_in_recursion)]
-    fn gen_outgoing_call(&self, expr: &Expr) -> Vec<CallHierarchyOutgoingCall> {
+    fn gen_outgoing_call(
+        &self,
+        uri: &NormalizedUrl,
+        expr: &Expr,
+    ) -> Vec<CallHierarchyOutgoingCall> {
         let mut calls = vec![];
         match expr {
             Expr::Call(call) => {
                 for arg in call.args.pos_args.iter() {
-                    calls.extend(self.gen_outgoing_call(&arg.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &arg.expr));
                 }
                 if let Some(var) = call.args.var_args.as_ref() {
-                    calls.extend(self.gen_outgoing_call(&var.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &var.expr));
                 }
                 for arg in call.args.kw_args.iter() {
-                    calls.extend(self.gen_outgoing_call(&arg.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &arg.expr));
                 }
                 if let Some(attr) = call.attr_name.as_ref() {
-                    let Some(to) = hierarchy_item(attr.inspect().to_string(), &attr.vi) else {
-                        return calls;
-                    };
-                    // the call site (the callee name) within the current item
-                    let from_ranges = loc_to_range(attr.loc()).into_iter().collect();
-                    calls.push(CallHierarchyOutgoingCall { to, from_ranges });
-                } else if let Expr::Accessor(acc) = call.obj.as_ref() {
-                    let Some(to) = hierarchy_item(acc.last_name().to_string(), acc.var_info())
+                    let Some(to) = hierarchy_item(self, attr.inspect().to_string(), &attr.vi)
                     else {
                         return calls;
                     };
-                    let from_ranges = loc_to_range(acc.loc()).into_iter().collect();
+                    // the call site (the callee name) within the current item
+                    let from_ranges = self.loc_to_range(uri, attr.loc()).into_iter().collect();
+                    calls.push(CallHierarchyOutgoingCall { to, from_ranges });
+                } else if let Expr::Accessor(acc) = call.obj.as_ref() {
+                    let Some(to) =
+                        hierarchy_item(self, acc.last_name().to_string(), acc.var_info())
+                    else {
+                        return calls;
+                    };
+                    let from_ranges = self.loc_to_range(uri, acc.loc()).into_iter().collect();
                     calls.push(CallHierarchyOutgoingCall { to, from_ranges });
                 }
                 calls
             }
-            Expr::TypeAsc(tasc) => self.gen_outgoing_call(&tasc.expr),
-            Expr::Accessor(Accessor::Attr(attr)) => self.gen_outgoing_call(&attr.obj),
+            Expr::TypeAsc(tasc) => self.gen_outgoing_call(uri, &tasc.expr),
+            Expr::Accessor(Accessor::Attr(attr)) => self.gen_outgoing_call(uri, &attr.obj),
             Expr::BinOp(binop) => {
-                calls.extend(self.gen_outgoing_call(&binop.lhs));
-                calls.extend(self.gen_outgoing_call(&binop.rhs));
+                calls.extend(self.gen_outgoing_call(uri, &binop.lhs));
+                calls.extend(self.gen_outgoing_call(uri, &binop.rhs));
                 calls
             }
-            Expr::UnaryOp(unop) => self.gen_outgoing_call(&unop.expr),
+            Expr::UnaryOp(unop) => self.gen_outgoing_call(uri, &unop.expr),
             Expr::List(List::Normal(lis)) => {
                 for arg in lis.elems.pos_args.iter() {
-                    calls.extend(self.gen_outgoing_call(&arg.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &arg.expr));
                 }
                 calls
             }
             Expr::Dict(Dict::Normal(dict)) => {
                 for KeyValue { key, value } in dict.kvs.iter() {
-                    calls.extend(self.gen_outgoing_call(key));
-                    calls.extend(self.gen_outgoing_call(value));
+                    calls.extend(self.gen_outgoing_call(uri, key));
+                    calls.extend(self.gen_outgoing_call(uri, value));
                 }
                 calls
             }
             Expr::Set(Set::Normal(set)) => {
                 for arg in set.elems.pos_args.iter() {
-                    calls.extend(self.gen_outgoing_call(&arg.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &arg.expr));
                 }
                 calls
             }
             Expr::Tuple(Tuple::Normal(tuple)) => {
                 for arg in tuple.elems.pos_args.iter() {
-                    calls.extend(self.gen_outgoing_call(&arg.expr));
+                    calls.extend(self.gen_outgoing_call(uri, &arg.expr));
                 }
                 calls
             }
             Expr::Record(rec) => {
                 for attr in rec.attrs.iter() {
                     for chunk in attr.body.block.iter() {
-                        calls.extend(self.gen_outgoing_call(chunk));
+                        calls.extend(self.gen_outgoing_call(uri, chunk));
                     }
                 }
                 calls
             }
             Expr::Def(def) if !def.sig.is_subr() => {
                 for chunk in def.body.block.iter() {
-                    calls.extend(self.gen_outgoing_call(chunk));
+                    calls.extend(self.gen_outgoing_call(uri, chunk));
                 }
                 calls
             }
@@ -193,7 +207,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let pos = params.text_document_position_params.position;
         if let Some(token) = self.file_cache.get_symbol(&uri, pos) {
             if let Some(vi) = self.get_definition(&uri, &token)? {
-                let Some(item) = hierarchy_item(token.content.to_string(), &vi) else {
+                let Some(item) = hierarchy_item(self, token.content.to_string(), &vi) else {
                     return Ok(None);
                 };
                 res.push(item);

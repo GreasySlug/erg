@@ -7,7 +7,7 @@ use lsp_types::{Position, SelectionRange, SelectionRangeParams};
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{loc_to_range, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_selection_range(
@@ -34,7 +34,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let Some(token) = self.file_cache.get_token(uri, pos) else {
                 continue;
             };
-            let Some(range) = loc_to_range(token.loc()) else {
+            let Some(range) = self.loc_to_range(uri, token.loc()) else {
                 continue;
             };
             let mut selection_range = SelectionRange {
@@ -47,7 +47,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let Some(parent) = visitor.get_parent(expr.loc()) else {
                     break;
                 };
-                let Some(range) = loc_to_range(parent.loc()) else {
+                let Some(range) = self.loc_to_range(uri, parent.loc()) else {
                     break;
                 };
                 *parent_range = Some(Box::new(SelectionRange {

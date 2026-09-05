@@ -310,7 +310,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(())
     }
 
-    fn error_to_diagnostic(err: &CompileError) -> Diagnostic {
+    fn error_to_diagnostic(&self, uri: &NormalizedUrl, err: &CompileError) -> Diagnostic {
         let loc = err.core.get_loc_with_fallback();
         let mut message = remove_style(&err.core.main_message);
         for sub in err.core.sub_messages.iter() {
@@ -329,6 +329,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             loc.col_begin().unwrap_or(0),
         );
         let end = Position::new(loc.ln_end().unwrap_or(1) - 1, loc.col_end().unwrap_or(0));
+        // `loc` counts columns in chars; the client wants UTF-16 units
+        let range = self.file_cache.to_lsp_range(uri, Range::new(start, end));
         let severity = if err.core.kind.is_warning() {
             DiagnosticSeverity::WARNING
         } else {
@@ -336,7 +338,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         let source = if PYTHON_MODE { "pylyzer" } else { "els" };
         Diagnostic::new(
-            Range::new(start, end),
+            range,
             Some(severity),
             Some(NumberOrString::String(format!("E{}", err.core.errno))),
             Some(source.to_string()),
@@ -371,10 +373,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let path = NormalizedPathBuf::from(util::uri_to_path(uri));
         let mut diags = Vec::new();
         for err in self.shared.errors.get(&path).into_iter() {
-            diags.push(Self::error_to_diagnostic(&err));
+            diags.push(self.error_to_diagnostic(uri, &err));
         }
         for warn in self.shared.warns.get(&path).into_iter() {
-            diags.push(Self::error_to_diagnostic(&warn));
+            diags.push(self.error_to_diagnostic(uri, &warn));
         }
         diags
     }
@@ -442,7 +444,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 crate::_log!(self, "failed to get uri: {}", err.input.path().display());
                 continue;
             };
-            let diag = Self::error_to_diagnostic(&err);
+            let diag = self.error_to_diagnostic(&NormalizedUrl::new(err_uri.clone()), &err);
             if let Some((_, diags)) = uri_and_diags.iter_mut().find(|x| x.0 == err_uri) {
                 diags.push(diag);
             } else {

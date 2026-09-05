@@ -75,11 +75,33 @@ fn span_contains(span: Range, pos: Position) -> bool {
 /// The lexer counts `Token::col_begin` in `char`s, while LSP positions count
 /// UTF-16 code units. They agree until a line contains a character outside the
 /// BMP -- `x = "𝒳" # hi` puts the `#` at char column 8 but UTF-16 column 9.
-fn utf16_col(line: &str, char_col: u32) -> u32 {
-    line.chars()
-        .take(char_col as usize)
-        .map(|c| c.len_utf16() as u32)
-        .sum()
+pub(crate) fn utf16_col(line: &str, char_col: u32) -> u32 {
+    let mut seen = 0;
+    let mut chars = 0;
+    for c in line.chars().take(char_col as usize) {
+        seen += c.len_utf16() as u32;
+        chars += 1;
+    }
+    seen + char_col.saturating_sub(chars)
+}
+
+/// The `char` column of UTF-16 column `utf16_col` in `line`: the inverse of
+/// [`utf16_col`].
+///
+/// A column inside a surrogate pair rounds up to the next `char`. A column past
+/// the end of the line keeps its excess (`len + k` maps to `chars + k`), so a
+/// position that was pushed past the end on purpose stays past the end.
+fn char_col(line: &str, utf16_col: u32) -> u32 {
+    let mut seen = 0;
+    let mut chars = 0;
+    for c in line.chars() {
+        if seen >= utf16_col {
+            return chars;
+        }
+        seen += c.len_utf16() as u32;
+        chars += 1;
+    }
+    chars + utf16_col.saturating_sub(seen)
 }
 
 /// The byte offset of UTF-16 column `col` in `line`, or `None` when the line is
@@ -336,17 +358,55 @@ impl FileCache {
         found
     }
 
+    /// The LSP position (UTF-16 column) of the Erg position `pos` (`char`
+    /// column, as the lexer counts) in `uri`.
+    ///
+    /// The two agree until the line holds a character outside the BMP, which
+    /// is one `char` but two UTF-16 units. Every `Location` that goes out in a
+    /// response has to pass through here (or [`Server::loc_to_range`]). When
+    /// the line cannot be read the column is returned as it is.
+    pub(crate) fn to_lsp_pos(&self, uri: &NormalizedUrl, pos: Position) -> Position {
+        match self.get_line(uri, pos.line) {
+            Some(line) => Position::new(pos.line, utf16_col(&line, pos.character)),
+            None => pos,
+        }
+    }
+
+    pub(crate) fn to_lsp_range(&self, uri: &NormalizedUrl, range: Range) -> Range {
+        Range::new(
+            self.to_lsp_pos(uri, range.start),
+            self.to_lsp_pos(uri, range.end),
+        )
+    }
+
+    /// The Erg position (`char` column) of the LSP position `pos` (UTF-16
+    /// column) in `uri`: the inverse of [`Self::to_lsp_pos`]. Compare the result
+    /// with token and HIR locations, never the LSP position itself.
+    pub(crate) fn to_erg_pos(&self, uri: &NormalizedUrl, pos: Position) -> Position {
+        match self.get_line(uri, pos.line) {
+            Some(line) => Position::new(pos.line, char_col(&line, pos.character)),
+            None => pos,
+        }
+    }
+
+    /// The token under the LSP position `pos`.
     pub fn get_token(&self, uri: &NormalizedUrl, pos: Position) -> Option<Token> {
+        let pos = self.to_erg_pos(uri, pos);
+        self.token_at(uri, pos)
+    }
+
+    /// `erg_pos` counts `char`s, like the tokens it is compared with.
+    fn token_at(&self, uri: &NormalizedUrl, erg_pos: Position) -> Option<Token> {
         let _ = self.load_once(uri);
         let ent = self.files.borrow_mut();
         let tokens = ent.get(uri)?.token_stream.as_ref()?;
         for tok in tokens.iter() {
-            if util::pos_in_loc(tok, pos) {
+            if util::pos_in_loc(tok, erg_pos) {
                 return Some(tok.clone());
             }
         }
         for tok in tokens.iter() {
-            if util::roughly_pos_in_loc(tok, pos) {
+            if util::roughly_pos_in_loc(tok, erg_pos) {
                 return Some(tok.clone());
             }
         }
@@ -355,46 +415,59 @@ impl FileCache {
 
     /// a{pos}\n -> \n -> a
     pub fn get_symbol(&self, uri: &NormalizedUrl, pos: Position) -> Option<Token> {
-        let mut token = self.get_token(uri, pos)?;
+        let pos = self.to_erg_pos(uri, pos);
+        let mut token = self.token_at(uri, pos)?;
         let mut offset = 0;
         while !matches!(token.category(), TokenCategory::Symbol) {
             offset -= 1;
-            token = self.get_token_relatively(uri, pos, offset)?;
+            token = self.token_relative_to(uri, pos, offset)?;
         }
         Some(token)
     }
 
     pub fn get_receiver(&self, uri: &NormalizedUrl, attr_marker_pos: Position) -> Option<Token> {
-        let mut token = self.get_token(uri, attr_marker_pos)?;
+        let attr_marker_pos = self.to_erg_pos(uri, attr_marker_pos);
+        let mut token = self.token_at(uri, attr_marker_pos)?;
         let mut offset = 0;
         while !matches!(token.kind, TokenKind::Dot | TokenKind::DblColon) {
             offset -= 1;
-            token = self.get_token_relatively(uri, attr_marker_pos, offset)?;
+            token = self.token_relative_to(uri, attr_marker_pos, offset)?;
         }
         offset -= 1;
-        self.get_token_relatively(uri, attr_marker_pos, offset)
+        self.token_relative_to(uri, attr_marker_pos, offset)
     }
 
+    /// The token `offset` tokens away from the one under the LSP position `pos`.
     pub fn get_token_relatively(
         &self,
         uri: &NormalizedUrl,
         pos: Position,
         offset: isize,
     ) -> Option<Token> {
+        let pos = self.to_erg_pos(uri, pos);
+        self.token_relative_to(uri, pos, offset)
+    }
+
+    fn token_relative_to(
+        &self,
+        uri: &NormalizedUrl,
+        erg_pos: Position,
+        offset: isize,
+    ) -> Option<Token> {
         if offset == 0 {
-            return self.get_token(uri, pos);
+            return self.token_at(uri, erg_pos);
         }
         let _ = self.load_once(uri);
         let ent = self.files.borrow_mut();
         let tokens = ent.get(uri)?.token_stream.as_ref()?;
         let index = (|| {
             for (i, tok) in tokens.iter().enumerate() {
-                if util::pos_in_loc(tok, pos) {
+                if util::pos_in_loc(tok, erg_pos) {
                     return Some(i);
                 }
             }
             for (i, tok) in tokens.iter().enumerate() {
-                if util::roughly_pos_in_loc(tok, pos) {
+                if util::roughly_pos_in_loc(tok, erg_pos) {
                     return Some(i);
                 }
             }
@@ -672,6 +745,24 @@ mod tests {
     /// A magic completion pastes this text back into the document, so an
     /// off-by-bytes slice is how the buffer's Japanese ends up auto-inserted.
     #[test]
+    fn char_and_utf16_columns_convert_both_ways() {
+        // `x = "𝒳", y`: the `𝒳` is char 5 and UTF-16 units 5-6, so `y` is
+        // char 9 but UTF-16 column 10.
+        let line = "x = \"𝒳\", y";
+        assert_eq!(utf16_col(line, 9), 10);
+        assert_eq!(char_col(line, 10), 9);
+        // a plain line converts to itself
+        assert_eq!(utf16_col("x = 1", 3), 3);
+        assert_eq!(char_col("x = 1", 3), 3);
+        // inside the surrogate pair: round up to the next char
+        assert_eq!(char_col(line, 6), 6);
+        // past the end of the line the excess is kept
+        assert_eq!(utf16_col(line, 12), 13);
+        assert_eq!(char_col(line, 13), 12);
+        assert_eq!(char_col(line, u32::MAX), u32::MAX - 1);
+    }
+
+    #[test]
     fn a_receiver_after_a_japanese_line_is_not_shifted() {
         let code = "お = 1\nお.\n";
         assert_eq!(ranged(code, at(1, 0, 1, 1)).as_deref(), Some("お"));
@@ -703,6 +794,33 @@ mod update_tests {
         let uri = NormalizedUrl::from_file_path(format!("/tmp/els_update_{name}.er")).unwrap();
         cache.update(&uri, code.to_string(), Some(1));
         (cache, uri)
+    }
+
+    #[test]
+    fn positions_convert_between_char_and_utf16_columns() {
+        let (cache, uri) = cache("astral", "y = 1\npair = (\"𝒳\", y)\n");
+        // `y` on the second line: char 13, UTF-16 unit 14
+        assert_eq!(
+            cache.to_erg_pos(&uri, Position::new(1, 14)),
+            Position::new(1, 13)
+        );
+        assert_eq!(
+            cache.to_lsp_pos(&uri, Position::new(1, 13)),
+            Position::new(1, 14)
+        );
+        // nothing to convert on an ASCII line
+        assert_eq!(
+            cache.to_erg_pos(&uri, Position::new(0, 4)),
+            Position::new(0, 4)
+        );
+        // the token lookup takes the LSP column
+        let token = cache.get_token(&uri, Position::new(1, 14)).unwrap();
+        assert_eq!(&token.content[..], "y");
+        // a line the file does not have: the column is kept
+        assert_eq!(
+            cache.to_lsp_pos(&uri, Position::new(9, 3)),
+            Position::new(9, 3)
+        );
     }
 
     fn edit(

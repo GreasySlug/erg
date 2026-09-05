@@ -131,6 +131,14 @@ const CASES: &[&str] = &[
     "5 in 1..<5",
     "1 in 1<..5",
     "3 in 1<..<5",
+    // indexing every interval kind: `start + index` if the range contains it,
+    // as the runtime `Range.__getitem__` does (a closed range used to be indexed
+    // as if its end were exclusive, so `(1..3)[2]` was a compile-time IndexError)
+    "(1..3)[2]",
+    "(1..3)[0]",
+    "(1..<3)[1]",
+    "(1<..3)[1]",
+    "(1<..<4)[1]",
     // `if` is a compile-time function
     "if(True, do 1, do 0)",
     "if(False, do 1, do 0)",

@@ -23,3 +23,11 @@ m(l: List(Int, N | N >= 3)) = l
 lis: List(Int, 3) = [1, 2, 3]
 _ = m lis
 _ = m [4, 5, 6, 7]
+
+# set-builder notation binds a type like any other type expression
+Positive = {I: Int | I >= 1}
+_: Positive = 4
+h(x: Positive): Int = x
+_ = h 2
+Small = {I: Int | I < 5 and I != 3}
+_: Small = 4

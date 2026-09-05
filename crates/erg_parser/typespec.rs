@@ -86,6 +86,20 @@ impl Parser {
                     );
                     Ok(ConstExpr::Set(ConstSet::Comprehension(const_set_comp)))
                 }
+                // a set comprehension is only ever a refinement in a constant
+                // position, so the two share one node there
+                Set::Refinement(set) => {
+                    let typ = Self::validate_const_expr(*set.typ)?;
+                    let pred = Self::validate_const_expr(*set.pred)?;
+                    let const_set_comp = ConstSetComprehension::new(
+                        set.l_brace,
+                        set.r_brace,
+                        None,
+                        vec![(set.var, typ)],
+                        Some(pred),
+                    );
+                    Ok(ConstExpr::Set(ConstSet::Comprehension(const_set_comp)))
+                }
                 other => Err(ParseError::feature_error(
                     line!() as usize,
                     other.loc(),
@@ -431,6 +445,12 @@ impl Parser {
                 } else {
                     Err(ParseError::simple_syntax_error(line!() as usize, loc))
                 }
+            }
+            Set::Refinement(set) => {
+                let typ = Self::expr_to_type_spec(*set.typ)?;
+                let pred = Self::validate_const_expr(*set.pred)?;
+                let refine = RefinementTypeSpec::new(set.var.name.into_token(), typ, pred);
+                Ok(TypeSpec::Refinement(refine))
             }
         }
     }

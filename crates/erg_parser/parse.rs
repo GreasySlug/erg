@@ -1087,9 +1087,9 @@ impl Parser {
             })?;
         let l_brace = Token::new_with_loc(LBrace, "{", var.loc());
         let r_brace = Token::new_with_loc(RBrace, "}", pred.loc());
-        let comp = SetComprehension::new(l_brace, r_brace, None, vec![(var, typ)], Some(pred));
+        let refine = RefinementSet::new(l_brace, r_brace, var, typ, pred);
         debug_exit_info!(self);
-        Ok(Expr::Set(Set::Comprehension(comp)))
+        Ok(Expr::Set(Set::Refinement(refine)))
     }
 
     fn try_reduce_restriction(&mut self) -> ParseResult<VisRestriction> {
@@ -3799,14 +3799,13 @@ impl Parser {
                 debug_exit_info!(self);
                 return Err(());
             };
-            let generators = vec![(var, rhs)];
-            let guard = self
+            let pred = self
                 .try_reduce_chunk(false, false)
                 .map_err(|_| self.stack_dec(fn_name!()))?;
             let r_brace = expect_pop!(self, fail_next RBrace);
-            let set_comp = SetComprehension::new(l_brace, r_brace, None, generators, Some(guard));
+            let refine = RefinementSet::new(l_brace, r_brace, var, rhs, pred);
             debug_exit_info!(self);
-            Ok(BraceContainer::Set(Set::Comprehension(set_comp)))
+            Ok(BraceContainer::Set(Set::Refinement(refine)))
         } else {
             let dict = self
                 .try_reduce_normal_dict(l_brace, lhs, rhs)

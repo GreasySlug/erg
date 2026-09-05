@@ -1139,7 +1139,7 @@ fn exec_recursive_fn_err() -> Result<(), ()> {
 
 #[test]
 fn exec_refinement_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/refinement.er", 0, 13)
+    expect_compile_failure("tests/should_err/refinement.er", 0, 15)
 }
 
 #[test]

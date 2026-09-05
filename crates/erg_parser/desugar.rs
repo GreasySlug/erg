@@ -18,8 +18,8 @@ use crate::ast::{
     ListComprehension, ListTypeSpec, ListWithLength, Literal, Methods, MixedRecord, Module,
     NonDefaultParamSignature, NormalDict, NormalList, NormalRecord, NormalSet, NormalTuple,
     ParamPattern, ParamRecordAttr, ParamTuplePattern, Params, PatchDef, PosArg, ReDef, Record,
-    RecordAttrOrIdent, RecordAttrs, RecordTypeSpec, Set as astSet, SetComprehension, SetWithLength,
-    Signature, SubrSignature, Tuple, TupleComprehension, TupleTypeSpec, TypeAppArgs,
+    RecordAttrOrIdent, RecordAttrs, RecordTypeSpec, RefinementSet, Set as astSet, SetComprehension,
+    SetWithLength, Signature, SubrSignature, Tuple, TupleComprehension, TupleTypeSpec, TypeAppArgs,
     TypeAppArgsKind, TypeBoundSpec, TypeBoundSpecs, TypeSpec, TypeSpecWithOp, UnaryOp, VarName,
     VarPattern, VarRecordAttr, VarSignature, VisModifierSpec, AST,
 };
@@ -337,6 +337,12 @@ impl Desugarer {
                         new_guard,
                     );
                     Expr::Set(astSet::Comprehension(set))
+                }
+                astSet::Refinement(set) => {
+                    let typ = desugar(*set.typ);
+                    let pred = desugar(*set.pred);
+                    let set = RefinementSet::new(set.l_brace, set.r_brace, set.var, typ, pred);
+                    Expr::Set(astSet::Refinement(set))
                 }
             },
             Expr::Dict(dict) => match dict {

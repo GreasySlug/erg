@@ -23,3 +23,9 @@ _ = f 1 # ERR
 m(l: List(Int, N | N >= 3)) = l
 _ = m [1, 2] # ERR
 z: Int | z >= 3 = 1 # ERR
+
+# a named refinement type refines just as much as the one written in place
+Positive = {I: Int | I >= 1}
+_: Positive = 0 # ERR
+h(x: Positive): Int = x
+_ = h 0 # ERR

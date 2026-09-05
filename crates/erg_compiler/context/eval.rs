@@ -1537,6 +1537,15 @@ impl Context {
                     Err((set, errs))
                 }
             }
+            // set-builder notation: `Odd = {N: Int | N % 2 == 1}` is a type,
+            // the same one a type spec in that position would give
+            AstSet::Refinement(refine) => {
+                let expr = Expr::Set(AstSet::Refinement(refine.clone()));
+                match self.expr_to_type(expr) {
+                    Ok(t) => Ok(ValueObj::builtin_type(t)),
+                    Err((t, es)) => Err((ValueObj::builtin_type(t), es)),
+                }
+            }
             _ => Err((
                 ValueObj::Failure,
                 EvalErrors::from(EvalError::not_const_expr(

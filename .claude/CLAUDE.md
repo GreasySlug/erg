@@ -65,6 +65,20 @@ Common shortcuts: `cargo rd` (run with debug), `cargo b_full_re` (full release b
 - `HIR`: High-level Intermediate Representation with type information
 - `CodeObj`: Python bytecode output
 
+### Builtin classes and stack size
+
+`Context::init_builtin_classes` (erg_compiler/context/initialize/classes.rs) builds the
+~200 builtin classes in groups, one builder function each, and registers them in one
+place afterwards (`register_builtin_classes`). Keep it that way: a debug build gives
+every temporary of a function its own stack slot, and as one function its frame was
+1.9 MiB, which overflowed the 2 MiB thread `tests/embed.rs` (and any program embedding
+the compiler) runs on. When adding a class, build it in the builder of its group, add
+its context to that group's struct, and register it in `register_builtin_classes`.
+Registration order is observable (`register_methods` keeps method candidates in
+registration order), so do not move a registration. The type variables (`QVars`) are
+made once and handed down; a named variable carries a fresh id, so do not remake them.
+`cargo test -p erg --test embed` runs on a plain 2 MiB thread and is the regression check.
+
 ## Feature Flags
 
 - `parallel` (default): Compiler parallelization

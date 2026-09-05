@@ -464,6 +464,12 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 Type::Failure,
                 hir::Args::empty(),
             ))),
+            ast::Set::Refinement(set) => Ok(hir::Set::Normal(hir::NormalSet::new(
+                set.l_brace,
+                set.r_brace,
+                Type::Failure,
+                hir::Args::empty(),
+            ))),
         }
     }
 

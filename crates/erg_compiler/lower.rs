@@ -845,7 +845,24 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 "set comprehension"
             )
             .map_err(|es| (None, es)),
+            // a refinement is a type, not a set of values: `lower_expr` takes it
+            // before this is reached
+            ast::Set::Refinement(_) => {
+                unreachable_error!(LowerErrors, LowerError, self.module.context)
+                    .map_err(|es| (None, es))
+            }
         }
+    }
+
+    /// `{N: Int | N % 2 == 1}` is set-builder notation for a type, so what it
+    /// denotes is a compile-time value: `Odd = {N: Int | N % 2 == 1}` binds the
+    /// type, and the predicate is checked wherever `Odd` is used as one (the
+    /// constant is registered by `eval_const_set`).
+    /// Nothing in Python holds a predicate, so what is emitted is the base type
+    /// -- the same thing `Odd = Int` emits.
+    fn lower_refinement_set(&mut self, set: ast::RefinementSet) -> FailableOption<hir::Expr> {
+        log!(info "entered {}({set})", fn_name!());
+        self.lower_expr(*set.typ, None)
     }
 
     fn lower_normal_set(
@@ -4437,6 +4454,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 self.lower_record(rec, expect)
                     .map_err(|(rec, es)| (Some(hir::Expr::Record(rec)), es))?,
             ),
+            ast::Expr::Set(ast::Set::Refinement(set)) => self.lower_refinement_set(set)?,
             ast::Expr::Set(set) => hir::Expr::Set(
                 self.lower_set(set, expect)
                     .map_err(|(set, es)| (set.map(hir::Expr::Set), es))?,

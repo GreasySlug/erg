@@ -2067,18 +2067,67 @@ impl SetComprehension {
     }
 }
 
+/// Set-builder notation for a type: `{N: Int | N % 2 == 1}`.
+///
+/// A comprehension of one generator and a guard (`{n <- xs | n > 1}`) has the
+/// same shape, and nothing about the two can be told apart afterwards -- a
+/// range is as much a type as `Int` is, so `{i <- 1..10 | i <= 5}` would read
+/// as a refinement just as well. What separates them is which of the two was
+/// written, so the parser records it here.
+#[pyclass]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RefinementSet {
+    pub l_brace: Token,
+    pub r_brace: Token,
+    pub var: Identifier,
+    pub typ: Box<Expr>,
+    pub pred: Box<Expr>,
+}
+
+impl NestedDisplay for RefinementSet {
+    fn fmt_nest(&self, f: &mut fmt::Formatter<'_>, _level: usize) -> fmt::Result {
+        write!(f, "{{{}: {} | {}}}", self.var, self.typ, self.pred)
+    }
+}
+
+impl_display_from_nested!(RefinementSet);
+impl_locational!(RefinementSet, l_brace, r_brace);
+
+impl Traversable for RefinementSet {
+    type Target = Expr;
+    fn traverse(&self, f: &mut impl FnMut(&Expr)) {
+        f(&self.typ);
+        f(&self.pred);
+    }
+}
+
+#[pymethods]
+impl RefinementSet {
+    #[staticmethod]
+    pub fn new(l_brace: Token, r_brace: Token, var: Identifier, typ: Expr, pred: Expr) -> Self {
+        Self {
+            l_brace,
+            r_brace,
+            var,
+            typ: Box::new(typ),
+            pred: Box::new(pred),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Set {
     Normal(NormalSet),
     WithLength(SetWithLength),
     Comprehension(SetComprehension),
+    Refinement(RefinementSet),
 }
 
-impl_nested_display_for_enum!(Set; Normal, WithLength, Comprehension);
-impl_display_for_enum!(Set; Normal, WithLength, Comprehension);
-impl_locational_for_enum!(Set; Normal, WithLength, Comprehension);
-impl_into_py_for_enum!(Set; Normal, WithLength, Comprehension);
-impl_from_py_for_enum!(Set; Normal(NormalSet), WithLength(SetWithLength), Comprehension(SetComprehension));
+impl_nested_display_for_enum!(Set; Normal, WithLength, Comprehension, Refinement);
+impl_display_for_enum!(Set; Normal, WithLength, Comprehension, Refinement);
+impl_locational_for_enum!(Set; Normal, WithLength, Comprehension, Refinement);
+impl_into_py_for_enum!(Set; Normal, WithLength, Comprehension, Refinement);
+impl_from_py_for_enum!(Set; Normal(NormalSet), WithLength(SetWithLength), Comprehension(SetComprehension), Refinement(RefinementSet));
 
 impl Traversable for Set {
     type Target = Expr;
@@ -2087,6 +2136,7 @@ impl Traversable for Set {
             Self::Normal(set) => set.traverse(f),
             Self::WithLength(set) => set.traverse(f),
             Self::Comprehension(set) => set.traverse(f),
+            Self::Refinement(set) => set.traverse(f),
         }
     }
 }

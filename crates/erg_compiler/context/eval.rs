@@ -1537,6 +1537,15 @@ impl Context {
                     Err((set, errs))
                 }
             }
+            // set-builder notation: `Odd = {N: Int | N % 2 == 1}` is a type,
+            // the same one a type spec in that position would give
+            AstSet::Refinement(refine) => {
+                let expr = Expr::Set(AstSet::Refinement(refine.clone()));
+                match self.expr_to_type(expr) {
+                    Ok(t) => Ok(ValueObj::builtin_type(t)),
+                    Err((t, es)) => Err((ValueObj::builtin_type(t), es)),
+                }
+            }
             _ => Err((
                 ValueObj::Failure,
                 EvalErrors::from(EvalError::not_const_expr(
@@ -2619,11 +2628,15 @@ impl Context {
                 let lhs = match Self::convert_value_into_tp(lhs) {
                     Ok(tp) => tp,
                     Err(lhs) => {
-                        return feature_error!(
-                            self,
-                            Location::Unknown,
-                            &format!("{lhs} {op} {rhs}")
-                        );
+                        return self
+                            .eval_bin_tp_operands(op, &lhs, &rhs)
+                            .unwrap_or_else(|| {
+                                feature_error!(
+                                    self,
+                                    Location::Unknown,
+                                    &format!("{lhs} {op} {rhs}")
+                                )
+                            });
                     }
                 };
                 self.eval_bin_tp(op, lhs, rhs)
@@ -2632,17 +2645,37 @@ impl Context {
                 let rhs = match Self::convert_value_into_tp(rhs) {
                     Ok(tp) => tp,
                     Err(rhs) => {
-                        return feature_error!(
-                            self,
-                            Location::Unknown,
-                            &format!("{lhs} {op} {rhs}")
-                        );
+                        return self
+                            .eval_bin_tp_operands(op, &lhs, &rhs)
+                            .unwrap_or_else(|| {
+                                feature_error!(
+                                    self,
+                                    Location::Unknown,
+                                    &format!("{lhs} {op} {rhs}")
+                                )
+                            });
                     }
                 };
                 self.eval_bin_tp(op, lhs, rhs)
             }
-            (l, r) => feature_error!(self, Location::Unknown, &format!("{l} {op} {r}")),
+            (l, r) => self.eval_bin_tp_operands(op, &l, &r).unwrap_or_else(|| {
+                feature_error!(self, Location::Unknown, &format!("{l} {op} {r}"))
+            }),
         }
+    }
+
+    /// The operands of a nested term (`(X * 2) + 1`, once `X` is bound to a
+    /// value) have to be computed before the operation is one of the shapes
+    /// `eval_bin_tp` knows. `None` when there was nothing left to compute.
+    fn eval_bin_tp_operands(
+        &self,
+        op: OpKind,
+        lhs: &TyParam,
+        rhs: &TyParam,
+    ) -> Option<EvalResult<TyParam>> {
+        let evaled_l = self.eval_tp(lhs.clone()).unwrap_or_else(|_| lhs.clone());
+        let evaled_r = self.eval_tp(rhs.clone()).unwrap_or_else(|_| rhs.clone());
+        (&evaled_l != lhs || &evaled_r != rhs).then(|| self.eval_bin_tp(op, evaled_l, evaled_r))
     }
 
     fn eval_unary_val(&self, op: OpKind, val: ValueObj, loc: Location) -> EvalResult<ValueObj> {
@@ -4821,6 +4854,16 @@ impl Context {
         let mut errs = EvalErrors::empty();
         let pred = match p {
             Predicate::Value(_) | Predicate::Const(_) | Predicate::Failure => p,
+            // the refinement variable is bound to a value by `Predicate::substitute`
+            // before this, so a term over it becomes a value here
+            Predicate::Tp(tp) => match self.eval_tp(tp) {
+                Ok(TyParam::Value(value)) => Predicate::Value(value),
+                Ok(tp) => Predicate::Tp(tp),
+                Err((tp, es)) => {
+                    errs.extend(es);
+                    Predicate::Tp(tp)
+                }
+            },
             Predicate::Call {
                 receiver,
                 name,

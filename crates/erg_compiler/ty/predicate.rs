@@ -18,6 +18,11 @@ impl Immutable for Predicate {}
 pub enum Predicate {
     Value(ValueObj), // True/False
     Const(Str),
+    /// A term that is not a proposition of its own: `N % 2` in `N % 2 == 1`.
+    /// `Value` and `Const` are its closed forms; anything else stays symbolic
+    /// until the refinement variable is bound to a value, when `eval_pred`
+    /// computes it (this is what makes arithmetic usable in a predicate).
+    Tp(TyParam),
     Call {
         receiver: TyParam,
         name: Option<Str>,
@@ -91,6 +96,7 @@ impl fmt::Display for Predicate {
                 )
             }
             Self::Attr { receiver, name } => write!(f, "{receiver}.{name}"),
+            Self::Tp(tp) => write!(f, "{tp}"),
             Self::Equal { lhs, rhs } => write!(f, "{lhs} == {rhs}"),
             Self::GreaterEqual { lhs, rhs } => write!(f, "{lhs} >= {rhs}"),
             Self::LessEqual { lhs, rhs } => write!(f, "{lhs} <= {rhs}"),
@@ -141,6 +147,7 @@ impl LimitedDisplay for Predicate {
                 )
             }
             Self::Attr { receiver, name } => write!(f, "{receiver}.{name}"),
+            Self::Tp(tp) => tp.limited_fmt(f, limit),
             Self::Equal { lhs, rhs } => {
                 write!(f, "{lhs} == ")?;
                 rhs.limited_fmt(f, limit - 1)
@@ -229,6 +236,7 @@ impl StructuralEq for Predicate {
                     name: n,
                 },
             ) => receiver.structural_eq(r) && name == n,
+            (Self::Tp(tp), Self::Tp(other)) => tp.structural_eq(other),
             (
                 Self::Call {
                     receiver,
@@ -300,6 +308,7 @@ impl HasLevel for Predicate {
                 .zip(args.iter().map(|a| a.level().unwrap_or(usize::MAX)).min())
                 .map(|(a, b)| a.min(b)),
             Self::Attr { receiver, .. } => receiver.level(),
+            Self::Tp(tp) => tp.level(),
         }
     }
 
@@ -315,6 +324,7 @@ impl HasLevel for Predicate {
             Self::Attr { receiver, .. } => {
                 receiver.set_level(level);
             }
+            Self::Tp(tp) => tp.set_level(level),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -616,6 +626,7 @@ impl Predicate {
             | Self::Const(_)
             | Self::Call { .. }
             | Self::Attr { .. }
+            | Self::Tp(_)
             | Self::Failure => self,
         }
     }
@@ -665,25 +676,39 @@ impl Predicate {
                 receiver: receiver.substitute(var, tp),
                 name,
             },
+            Self::Tp(term) => Self::Tp(term.substitute(var, tp)),
             Self::Value(_) | Self::Const(_) | Self::Failure => self,
         }
     }
 
+    /// Does the predicate say anything about `name`?
+    ///
+    /// A refinement whose predicate does not mention its own variable puts no
+    /// constraint on the values, so it is its base type -- which is why every
+    /// place the variable can hide has to be looked into. It used to be read
+    /// off the comparisons alone, and `{N: Int | IsOdd(N)}` (the variable only
+    /// inside a call) was therefore taken for plain `Int`.
     pub fn mentions(&self, name: &str) -> bool {
         match self {
             Self::Const(n) => &n[..] == name,
-            Self::Equal { lhs, .. }
-            | Self::LessEqual { lhs, .. }
-            | Self::GreaterEqual { lhs, .. }
-            | Self::NotEqual { lhs, .. } => &lhs[..] == name,
+            Self::Equal { lhs, rhs }
+            | Self::LessEqual { lhs, rhs }
+            | Self::GreaterEqual { lhs, rhs }
+            | Self::NotEqual { lhs, rhs } => &lhs[..] == name || rhs.variables().contains(name),
             Self::GeneralEqual { lhs, rhs }
             | Self::GeneralLessEqual { lhs, rhs }
             | Self::GeneralGreaterEqual { lhs, rhs }
             | Self::GeneralNotEqual { lhs, rhs } => lhs.mentions(name) || rhs.mentions(name),
+            Self::Call { receiver, args, .. } => {
+                receiver.variables().contains(name)
+                    || args.iter().any(|arg| arg.variables().contains(name))
+            }
+            Self::Attr { receiver, .. } => receiver.variables().contains(name),
+            Self::Tp(tp) => tp.variables().contains(name),
             Self::Not(pred) => pred.mentions(name),
             Self::And(lhs, rhs) => lhs.mentions(name) || rhs.mentions(name),
             Self::Or(preds) => preds.iter().any(|p| p.mentions(name)),
-            _ => false,
+            Self::Value(_) | Self::Failure => false,
         }
     }
 
@@ -723,6 +748,7 @@ impl Predicate {
                 set
             }
             Self::Attr { receiver, .. } => receiver.qvars(),
+            Self::Tp(tp) => tp.qvars(),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -747,6 +773,7 @@ impl Predicate {
                 receiver.has_type_satisfies(f) || args.iter().any(|a| a.has_type_satisfies(f))
             }
             Self::Attr { receiver, .. } => receiver.has_type_satisfies(f),
+            Self::Tp(tp) => tp.has_type_satisfies(f),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -771,6 +798,7 @@ impl Predicate {
                 receiver.has_qvar() || args.iter().any(|a| a.has_qvar())
             }
             Self::Attr { receiver, .. } => receiver.has_qvar(),
+            Self::Tp(tp) => tp.has_qvar(),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -793,6 +821,7 @@ impl Predicate {
                 receiver.has_unbound_var() || args.iter().any(|a| a.has_unbound_var())
             }
             Self::Attr { receiver, .. } => receiver.has_unbound_var(),
+            Self::Tp(tp) => tp.has_unbound_var(),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -816,6 +845,7 @@ impl Predicate {
                     || args.iter().any(|a| a.has_undoable_linked_var())
             }
             Self::Attr { receiver, .. } => receiver.has_undoable_linked_var(),
+            Self::Tp(tp) => tp.has_undoable_linked_var(),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -867,6 +897,7 @@ impl Predicate {
     pub fn typarams(&self) -> Vec<&TyParam> {
         match self {
             Self::Value(_) | Self::Const(_) | Self::Attr { .. } | Self::Failure => vec![],
+            Self::Tp(tp) => vec![tp],
             // REVIEW: Should the receiver be included?
             Self::Call { args, .. } => {
                 let mut vec = vec![];
@@ -974,6 +1005,7 @@ impl Predicate {
                 set
             }
             Self::Attr { receiver, .. } => receiver.variables(),
+            Self::Tp(tp) => tp.variables(),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -998,6 +1030,7 @@ impl Predicate {
                 receiver.contains_value(value) || args.iter().any(|a| a.contains_value(value))
             }
             Self::Attr { receiver, .. } => receiver.contains_value(value),
+            Self::Tp(tp) => tp.contains_value(value),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -1022,6 +1055,7 @@ impl Predicate {
                 receiver.contains_tp(tp) || args.iter().any(|a| a.contains_tp(tp))
             }
             Self::Attr { receiver, .. } => receiver.contains_tp(tp),
+            Self::Tp(tp) => tp.contains_tp(tp),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -1044,6 +1078,7 @@ impl Predicate {
                 receiver.contains_type(t) || args.iter().any(|a| a.contains_type(t))
             }
             Self::Attr { receiver, .. } => receiver.contains_type(t),
+            Self::Tp(tp) => tp.contains_type(t),
             Self::Equal { rhs, .. }
             | Self::GreaterEqual { rhs, .. }
             | Self::LessEqual { rhs, .. }
@@ -1098,6 +1133,7 @@ impl Predicate {
                 receiver: receiver.map_t(f, tvs),
                 name,
             },
+            Self::Tp(tp) => Self::Tp(tp.map_t(f, tvs)),
             Self::Equal { lhs, rhs } => Self::Equal {
                 lhs,
                 rhs: rhs.map_t(f, tvs),
@@ -1156,6 +1192,7 @@ impl Predicate {
                 receiver: receiver.map(f, tvs),
                 name,
             },
+            Self::Tp(tp) => Self::Tp(tp.map(f, tvs)),
             Self::Equal { lhs, rhs } => Self::Equal {
                 lhs,
                 rhs: rhs.map(f, tvs),
@@ -1217,6 +1254,7 @@ impl Predicate {
                 receiver: f(receiver)?,
                 name,
             }),
+            Self::Tp(tp) => Ok(Self::Tp(f(tp)?)),
             Self::Equal { lhs, rhs } => Ok(Self::Equal { lhs, rhs: f(rhs)? }),
             Self::GreaterEqual { lhs, rhs } => Ok(Self::GreaterEqual { lhs, rhs: f(rhs)? }),
             Self::LessEqual { lhs, rhs } => Ok(Self::LessEqual { lhs, rhs: f(rhs)? }),

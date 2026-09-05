@@ -1298,7 +1298,7 @@ impl Parser {
     }
 
     /// Parses the `| pred` guard of a refinement pattern and desugars the whole
-    /// pattern into a set comprehension, that is, a refinement type.
+    /// pattern into a refinement set, `Set::Refinement`.
     ///
     /// `X: T | Pred` becomes `X: {X: T | Pred}`, and `X | Pred`, with the type
     /// omitted, becomes `{X: _ | Pred}`. The cursor must be on the `|`.
@@ -1316,8 +1316,8 @@ impl Parser {
         })?;
         let l_brace = Token::new_with_loc(LBrace, "{", var.loc());
         let r_brace = Token::new_with_loc(RBrace, "}", pred.loc());
-        let comp = SetComprehension::new(l_brace, r_brace, None, vec![(var, typ)], Some(pred));
-        Ok(Expr::Set(Set::Comprehension(comp)))
+        let refine = RefinementSet::new(l_brace, r_brace, var, typ, pred);
+        Ok(Expr::Set(Set::Refinement(refine)))
     }
 
     /// Parses the visibility restriction `[...]` of `::[...]name`, cursor on the
@@ -3465,7 +3465,8 @@ impl Parser {
     /// cursor on the `:`.
     ///
     /// `{k: v, ...}` is a dict, `{k: v | x <- xs}` a dict comprehension, and
-    /// `{x: T | pred}` a refinement type, read as a set comprehension over `x`.
+    /// `{x: T | pred}` a refinement type, kept apart from a comprehension as
+    /// `Set::Refinement`.
     fn try_reduce_normal_dict_or_refine_type(
         &mut self,
         l_brace: Token,
@@ -3496,11 +3497,10 @@ impl Parser {
             let Expr::Accessor(Accessor::Ident(var)) = lhs else {
                 return self.fail(ParseError::simple_syntax_error(line!() as usize, lhs.loc()));
             };
-            let generators = vec![(var, rhs)];
-            let guard = self.try_reduce_expr(ExprCtx::CHUNK)?;
+            let pred = self.try_reduce_expr(ExprCtx::CHUNK)?;
             let r_brace = self.expect_or_skip_line(RBrace)?;
-            let set_comp = SetComprehension::new(l_brace, r_brace, None, generators, Some(guard));
-            Ok(BraceContainer::Set(Set::Comprehension(set_comp)))
+            let refine = RefinementSet::new(l_brace, r_brace, var, rhs, pred);
+            Ok(BraceContainer::Set(Set::Refinement(refine)))
         } else {
             let dict = self.try_reduce_normal_dict(l_brace, lhs, rhs)?;
             Ok(BraceContainer::Dict(Dict::Normal(dict)))

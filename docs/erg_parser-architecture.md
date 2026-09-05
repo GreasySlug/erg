@@ -253,7 +253,7 @@ fn try_reduce_ident(&mut self) -> ParseResult<Identifier> {
 - **`typespec.rs`** … 型注釈位置の `Expr` → `TypeSpec`:
   - `expr_to_type_spec`（種別で分岐するエントリ）
   - `accessor_to_type_spec` / `call_to_predecl_type_spec` / `lambda_to_subr_type_spec` / `list/dict/set/record/tuple_to_*_type_spec`
-  - `BinOp` の範囲演算子→区間型、`Or`/`And`→合併/交差型、`Set::Comprehension`（単一ジェネレータ+ガード）→リファインメント型。
+  - `BinOp` の範囲演算子→区間型、`Or`/`And`→合併/交差型、`Set::Refinement`（`{x: T | pred}`。内包表記 `Set::Comprehension` とはパース時に区別される）→リファインメント型。
   - `validate_const_expr`：コンパイル時評価可能性を検査して `ConstExpr` 化。
 
 ### エラー回復・補完判定

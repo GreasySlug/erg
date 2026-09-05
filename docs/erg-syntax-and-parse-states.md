@@ -188,7 +188,7 @@ BraceBody  ::= ε | "=" | ":"                                        -- {} {=} {
              | ( Def | Name ";" ) { Sep ( Def | Name ) } [ Sep ]    -- レコード         try_reduce_record
              | Expr ":" Expr { "," Expr ":" Expr } [ "," ]          -- 辞書             try_reduce_normal_dict
              | Expr ":" Expr "|" Generators                         -- 辞書内包表記
-             | Name ":" TypeSpec "|" Pred                           -- 篩型 → SetComprehension
+             | Name ":" TypeSpec "|" Pred                           -- 篩型 → RefinementSet
              | Expr { "," Expr } [ "," ]                            -- 集合             try_reduce_set
              | AccHead ";" Expr                                     -- {T; n}  n 要素の集合型
              | Name "<-" Expr "|" Pred | Expr "|" Generators        -- 集合内包表記
@@ -317,7 +317,7 @@ flowchart TD
     K -- "Colon" --> COL["値を Expr[in_type_args] で読む"]
     COL --> C2{"次のトークン"}
     C2 -- "VBar + .. + Inclusion" --> DC["辞書内包表記  {k: v | x <- xs}"]
-    C2 -- "VBar" --> RT["篩型  {x: T | pred} → SetComprehension"]
+    C2 -- "VBar" --> RT["篩型  {x: T | pred} → RefinementSet"]
     C2 -- "その他" --> DICT["辞書  {k: v, ..}"]
     K -- "Inclusion" --> SC1["集合内包表記（レイアウト無し）  {x <- xs | p}"]
     K -- "VBar" --> SC2["集合内包表記  {f x | x <- xs}"]

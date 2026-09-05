@@ -66,7 +66,9 @@ class StructuralType:
 
 
 def is_type(x) -> bool:
-    return isinstance(x, (type, FakeGenericAlias, GenericAlias, UnionType, StructuralType))
+    return isinstance(
+        x, (type, FakeGenericAlias, GenericAlias, UnionType, StructuralType)
+    )
 
 
 def _record_fields(obj):
@@ -111,7 +113,12 @@ def is_subtype(lhs, rhs):
         return lhs.issubset(rhs)
     lf = _record_fields(lhs)
     rf = _record_fields(rhs)
-    if lf is not None and rf is not None and _is_type_record(lhs) and _is_type_record(rhs):
+    if (
+        lf is not None
+        and rf is not None
+        and _is_type_record(lhs)
+        and _is_type_record(rhs)
+    ):
         for name, rty in rf.items():
             if name not in lf:
                 return False

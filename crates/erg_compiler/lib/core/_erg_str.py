@@ -59,6 +59,7 @@ class Str(str):
     def from_(self, nth: int):
         return self[nth:]
 
+
 class StrMut(MutType):  # Inherits Str
     value: Str
 

@@ -44,7 +44,6 @@ class Error:
         return "{}: {}".format(self.kind, self.msg)
 
 
-
 class _TypeAlias:
     """A type-level alias, usable at runtime as both `Alias(T)` and `Alias[T]`.
 

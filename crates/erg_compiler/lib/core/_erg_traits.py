@@ -2,9 +2,11 @@ from abc import ABC, abstractmethod
 
 from _erg_float import Float
 
+
 class Eq(ABC):
     @abstractmethod
-    def __eq__(self, other): pass
+    def __eq__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -13,12 +15,20 @@ class Eq(ABC):
                 return True
         return NotImplemented
 
+
 class Ord(ABC):
     @abstractmethod
-    def __lt__(self, other): pass
-    def __gt__(self, other): pass
-    def __le__(self, other): pass
-    def __ge__(self, other): pass
+    def __lt__(self, other):
+        pass
+
+    def __gt__(self, other):
+        pass
+
+    def __le__(self, other):
+        pass
+
+    def __ge__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -30,9 +40,11 @@ class Ord(ABC):
                 return True
         return NotImplemented
 
+
 class Hash(ABC):
     @abstractmethod
-    def __hash__(self): pass
+    def __hash__(self):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -41,9 +53,11 @@ class Hash(ABC):
                 return True
         return NotImplemented
 
+
 class Sized(ABC):
     @abstractmethod
-    def __len__(self): pass
+    def __len__(self):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -52,11 +66,13 @@ class Sized(ABC):
                 return True
         return NotImplemented
 
+
 class Add(ABC):
     Output: type
 
     @abstractmethod
-    def __add__(self, other): pass
+    def __add__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -65,11 +81,13 @@ class Add(ABC):
                 return True
         return NotImplemented
 
+
 class Sub(ABC):
     Output: type
 
     @abstractmethod
-    def __sub__(self, other): pass
+    def __sub__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -78,11 +96,13 @@ class Sub(ABC):
                 return True
         return NotImplemented
 
+
 class Mul(ABC):
     Output: type
 
     @abstractmethod
-    def __mul__(self, other): pass
+    def __mul__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -91,11 +111,13 @@ class Mul(ABC):
                 return True
         return NotImplemented
 
+
 class Div(ABC):
     Output: type
 
     @abstractmethod
-    def __truediv__(self, other): pass
+    def __truediv__(self, other):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -104,11 +126,13 @@ class Div(ABC):
                 return True
         return NotImplemented
 
+
 class Pos(ABC):
     Output: type
 
     @abstractmethod
-    def __pos__(self): pass
+    def __pos__(self):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):
@@ -117,11 +141,13 @@ class Pos(ABC):
                 return True
         return NotImplemented
 
+
 class Neg(ABC):
     Output: type
 
     @abstractmethod
-    def __neg__(self): pass
+    def __neg__(self):
+        pass
 
     @classmethod
     def __subclasshook__(cls, C):

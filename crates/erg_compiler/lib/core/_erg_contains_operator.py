@@ -7,6 +7,7 @@ from _erg_type import _is_type_record
 from _erg_type import _record_fields
 from _erg_type import is_type
 
+
 def _structurally_contains(type_record, elem) -> bool:
     fields = _record_fields(type_record)
     if fields is None:
@@ -35,6 +36,7 @@ def contains_operator(y, elem) -> bool:
         if is_type(base) and _isinstance(elem, base):
             return True
         return False
+
     elif isinstance(y, UnionType):
         return any([contains_operator(t, elem) for t in y.__args__])
     # 1 in Int

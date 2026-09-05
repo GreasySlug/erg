@@ -15,22 +15,302 @@ use crate::context::{Context, ParamSpec};
 use crate::varinfo::Mutability;
 use Mutability::*;
 
+/// The type variables the builtin classes are declared over. They are made once,
+/// in [`Context::init_builtin_classes`], and handed to every group, so that all
+/// the classes quantify over the same `T` as they did when one function built
+/// them all: a named variable carries a fresh id, and making a second `T` would
+/// not be the same `T`.
+struct QVars {
+    T: Type,
+    U: Type,
+    L: Type,
+    R: Type,
+    N: TyParam,
+    M: TyParam,
+}
+
+/// `Complex`, `Float`, `Ratio`, `Int`, `Nat` and `Bool`.
+struct NumClasses {
+    complex: Context,
+    float: Context,
+    ratio: Context,
+    int: Context,
+    nat: Context,
+    bool_: Context,
+}
+
+/// `Str` and `NoneType`.
+struct TextClasses {
+    str_: Context,
+    nonetype: Context,
+}
+
+/// `Type` and its subclasses, `Code`, `Frame` and the module classes.
+struct MetaClasses {
+    type_: Context,
+    class_type: Context,
+    trait_type: Context,
+    code: Context,
+    frame: Context,
+    g_module_t: Type,
+    generic_module: Context,
+    module_t: Type,
+    module: Context,
+    py_module_t: Type,
+    py_module: Context,
+}
+
+/// `GenericList`, `UnsizedList` and `Slice`. `List(T, N)` itself is a
+/// [`ListClass`], registered together with `List!` by
+/// [`Context::init_list_mut_class`], as it always was.
+struct ListClasses {
+    generic_list: Context,
+    unsized_list_t: Type,
+    unsized_list: Context,
+    slice: Context,
+}
+
+/// `List(T, N)` with its type.
+struct ListClass {
+    lis_t: Type,
+    list_: Context,
+}
+
+/// `GenericSet` and `Set(T, N)`.
+struct SetClasses {
+    generic_set: Context,
+    set_t: Type,
+    set_: Context,
+}
+
+/// `GenericDict` and `Dict(D)`, with the type variables `Dict!` is declared
+/// over too.
+struct DictClasses {
+    g_dict_t: Type,
+    generic_dict: Context,
+    dic_t: Type,
+    dict_: Context,
+    D: TyParam,
+    K: Type,
+    V: Type,
+}
+
+/// `GenericTuple`, `HomogenousTuple(T)` and `Tuple(Ts)`, plus the slice type
+/// `NamedTuple` indexes by as well.
+struct TupleClasses {
+    generic_tuple: Context,
+    homo_tup_t: Type,
+    homo_tuple: Context,
+    tuple_t: Type,
+    tuple_: Context,
+    slice_t: Type,
+}
+
+/// `Record`, `RecordMetaType` and `GenericNamedTuple`.
+struct RecordClasses {
+    record: Context,
+    record_meta_type: Context,
+    generic_named_tuple: Context,
+}
+
+/// `Or`, the iterator classes, `FrozenSet` and `MemoryView`.
+struct IteratorClasses {
+    or_t: Type,
+    or: Context,
+    str_iterator: Context,
+    list_iterator: Context,
+    set_iterator: Context,
+    tuple_iterator: Context,
+    range_iterator: Context,
+    dict_keys: Context,
+    dict_values: Context,
+    dict_items: Context,
+    enumerate: Context,
+    filter: Context,
+    map: Context,
+    reversed: Context,
+    zip: Context,
+    fset_t: Type,
+    frozenset: Context,
+    memview_t: Type,
+    memoryview: Context,
+}
+
+/// The mutable classes of the value types: `Obj!`, `Float!`, `Ratio!`, `Int!`,
+/// `Nat!`, `Bool!`, `Str!` and `File!`. (`Option!` and `Cell!` are registered
+/// as soon as they are built.)
+struct MutClasses {
+    obj_mut: Context,
+    float_mut: Context,
+    ratio_mut: Context,
+    int_mut: Context,
+    nat_mut: Context,
+    bool_mut: Context,
+    str_mut: Context,
+    file_mut: Context,
+}
+
+/// `ByteArray!`, `Dict!` and `Set!`.
+struct MutCollectionClasses {
+    bytearray_mut_t: Type,
+    bytearray_mut: Context,
+    dict_mut_t: Type,
+    dict_mut: Context,
+    set_mut_t: Type,
+    set_mut_: Context,
+}
+
+/// `Range`, `Subroutine`, `Generator` and `Coroutine`.
+struct SubrClasses {
+    range_t: Type,
+    range: Context,
+    subr: Context,
+    generator_t: Type,
+    generator: Context,
+    coro_t: Type,
+    coroutine: Context,
+}
+
+/// `Dimension`.
+struct DimensionClass {
+    dimension_t: Type,
+    dimension: Context,
+}
+
+/// `BaseException`, `Error` and the Python exception hierarchy.
+struct ExceptionClasses {
+    base_exception: Context,
+    traceback: Context,
+    error_frame: Context,
+    error: Context,
+    exception: Context,
+    system_exit: Context,
+    keyboard_interrupt: Context,
+    generator_exit: Context,
+    stop_iteration: Context,
+    stop_async_iteration: Context,
+    arithmetic_error: Context,
+    floating_point_error: Context,
+    overflow_error: Context,
+    zero_division_error: Context,
+    assertion_error: Context,
+    attribute_error: Context,
+    buffer_error: Context,
+    eof_error: Context,
+    import_error: Context,
+    module_not_found_error: Context,
+    lookup_error: Context,
+    index_error: Context,
+    key_error: Context,
+    memory_error: Context,
+    name_error: Context,
+    unbound_local_error: Context,
+    os_error: Context,
+    blocking_io_error: Context,
+    child_process_error: Context,
+    connection_error: Context,
+    broken_pipe_error: Context,
+    connection_aborted_error: Context,
+    connection_refused_error: Context,
+    connection_reset_error: Context,
+    file_exists_error: Context,
+    file_not_found_error: Context,
+    interrupted_error: Context,
+    is_a_directory_error: Context,
+    not_a_directory_error: Context,
+    permission_error: Context,
+    process_lookup_error: Context,
+    timeout_error: Context,
+    reference_error: Context,
+    runtime_error: Context,
+    not_implemented_error: Context,
+    recursion_error: Context,
+    syntax_error: Context,
+    indentation_error: Context,
+    tab_error: Context,
+    system_error: Context,
+    type_error: Context,
+    value_error: Context,
+    unicode_error: Context,
+    unicode_encode_error: Context,
+    unicode_decode_error: Context,
+    unicode_translate_error: Context,
+    warning: Context,
+    deprecation_warning: Context,
+    pending_deprecation_warning: Context,
+    runtime_warning: Context,
+    syntax_warning: Context,
+    user_warning: Context,
+    future_warning: Context,
+    import_warning: Context,
+    unicode_warning: Context,
+    bytes_warning: Context,
+    resource_warning: Context,
+}
+
+/// `Proc`, `Func` and their named, quantified and meta variants.
+struct FuncClasses {
+    proc: Context,
+    named_proc: Context,
+    func: Context,
+    named_func: Context,
+    quant: Context,
+    qproc: Context,
+    qfunc: Context,
+    proc_meta_type: Context,
+    func_meta_type: Context,
+    qproc_meta_type: Context,
+    qfunc_meta_type: Context,
+}
+
+/// Every builtin class group, built and waiting to be registered.
+struct BuiltinClasses {
+    obj: Box<Context>,
+    num: Box<NumClasses>,
+    text: Box<TextClasses>,
+    meta: Box<MetaClasses>,
+    list: Box<ListClasses>,
+    set: Box<SetClasses>,
+    dict: Box<DictClasses>,
+    bytes: Box<Context>,
+    record: Box<RecordClasses>,
+    iterators: Box<IteratorClasses>,
+    mutable: Box<MutClasses>,
+    mut_coll: Box<MutCollectionClasses>,
+    subr: Box<SubrClasses>,
+    dimension: Box<DimensionClass>,
+    exc: Box<ExceptionClasses>,
+    func: Box<FuncClasses>,
+}
+
 impl Context {
     // NOTE: Registering traits that a class implements requires type checking,
     // which means that registering a class requires that the preceding types have already been registered,
     // so `register_builtin_type` should be called as early as possible.
+    /// Builds and registers the builtin classes.
+    ///
+    /// The classes are built in groups, one function each, and registered
+    /// afterwards in one place, [`Self::register_builtin_classes`], in the order
+    /// they always were (a few are registered as soon as they are built, as they
+    /// always were too). The groups only decide what is on the stack at once: a
+    /// debug build gives every temporary of a function its own slot, and when
+    /// one function built every class its frame was 1.9 MiB, which overflowed the
+    /// 2 MiB thread a test, or a program embedding the compiler, runs on by
+    /// default.
     pub(super) fn init_builtin_classes(&mut self) {
         let vis = if PYTHON_MODE {
             Visibility::BUILTIN_PUBLIC
         } else {
             Visibility::BUILTIN_PRIVATE
         };
-        let T = mono_q(TY_T, instanceof(Type));
-        let U = mono_q(TY_U, instanceof(Type));
-        let L = mono_q(TY_L, instanceof(Type));
-        let R = mono_q(TY_R, instanceof(Type));
-        let N = mono_q_tp(TY_N, instanceof(Nat));
-        let M = mono_q_tp(TY_M, instanceof(Nat));
+        let qv = QVars {
+            T: mono_q(TY_T, instanceof(Type)),
+            U: mono_q(TY_U, instanceof(Type)),
+            L: mono_q(TY_L, instanceof(Type)),
+            R: mono_q(TY_R, instanceof(Type)),
+            N: mono_q_tp(TY_N, instanceof(Nat)),
+            M: mono_q_tp(TY_M, instanceof(Nat)),
+        };
         let never = Self::builtin_mono_class(NEVER, 1);
         self.register_builtin_type(Never, never, vis.clone(), Const, Some(NEVER));
         // `Panic` has no instance either, but it means abnormal termination, where
@@ -39,6 +319,68 @@ impl Context {
         let panic = Self::builtin_mono_class(PANIC, 1);
         self.register_builtin_type(mono(PANIC), panic, vis.clone(), Const, Some(PANIC));
         /* Obj */
+        let obj = Self::build_obj_class();
+        let num = self.build_num_classes(&obj);
+        let text = self.build_text_classes(&obj, &vis);
+        let meta = self.build_meta_classes(&obj);
+        let (list, sized_list) = self.build_list_classes(&obj, &qv, &vis);
+        let set = self.build_set_classes(&obj, &qv, &vis);
+        let dict = self.build_dict_classes(&obj, &qv, &vis);
+        let bytes = self.build_bytes_class(&obj);
+        let tuple = self.build_tuple_classes(&obj, &qv, &vis);
+        let record = Self::build_record_classes(&obj, &meta.type_, &tuple, &qv, &vis);
+        self.register_builtin_type(
+            mono(GENERIC_TUPLE),
+            tuple.generic_tuple,
+            vis.clone(),
+            Const,
+            Some(FUNC_TUPLE),
+        );
+        self.register_builtin_type(
+            tuple.homo_tup_t,
+            tuple.homo_tuple,
+            vis.clone(),
+            Const,
+            Some(FUNC_TUPLE),
+        );
+        self.register_builtin_type(
+            tuple.tuple_t,
+            tuple.tuple_,
+            vis.clone(),
+            Const,
+            Some(FUNC_TUPLE),
+        );
+        let iterators = self.build_iterator_classes(&obj, &qv, &vis);
+        let mutable = self.build_mut_classes(&obj, &num, &text, &qv, &vis);
+        self.init_list_mut_class(*sized_list, &qv, &vis);
+        let mut_coll = self.build_mut_collection_classes(&bytes, &set, &dict, &qv);
+        let subr = self.build_subr_classes(&obj, &meta.type_, &qv, &vis);
+        let dimension = self.build_dimension_class();
+        let exc = Self::build_exception_classes(&obj, &vis);
+        let func = self.build_func_classes(&subr.subr, &meta.type_);
+        let classes = BuiltinClasses {
+            obj,
+            num,
+            text,
+            meta,
+            list,
+            set,
+            dict,
+            bytes,
+            record,
+            iterators,
+            mutable,
+            mut_coll,
+            subr,
+            dimension,
+            exc,
+            func,
+        };
+        self.register_builtin_classes(vis, &qv, classes);
+    }
+
+    /// `Obj`, the class every other class descends from.
+    fn build_obj_class() -> Box<Context> {
         let mut obj = Self::builtin_mono_class(OBJ, 2);
         obj.register_py_builtin(
             FUNDAMENTAL_DICT,
@@ -100,8 +442,13 @@ impl Context {
             Some(FUNDAMENTAL_CALL),
         );
         // Obj does not implement Eq
+        Box::new(obj)
+    }
+
+    /// `Complex`, `Float`, `Ratio`, `Int`, `Nat` and `Bool`.
+    fn build_num_classes(&self, obj: &Context) -> Box<NumClasses> {
         let mut complex = Self::builtin_mono_class(COMPLEX, 2);
-        complex.register_superclass(Obj, &obj);
+        complex.register_superclass(Obj, obj);
         // TODO: support multi platform
         complex.register_builtin_const(
             EPSILON,
@@ -1001,8 +1348,20 @@ impl Context {
         let t = fn0_met(Bool, Bool);
         bool_.register_py_builtin(FUNC_INVERT, t, Some(FUNC_INVERT), 9);
         /* Str */
+        Box::new(NumClasses {
+            complex,
+            float,
+            ratio,
+            int,
+            nat,
+            bool_,
+        })
+    }
+
+    /// `Str` and `NoneType`.
+    fn build_text_classes(&self, obj: &Context, vis: &Visibility) -> Box<TextClasses> {
         let mut str_ = Self::builtin_mono_class(STR, 10);
-        str_.register_superclass(Obj, &obj);
+        str_.register_superclass(Obj, obj);
         str_.register_py_builtin(OP_GT, fn1_met(Str, Str, Bool), Some(OP_GT), 0);
         str_.register_py_builtin(OP_GE, fn1_met(Str, Str, Bool), Some(OP_GE), 0);
         str_.register_py_builtin(OP_LT, fn1_met(Str, Str, Bool), Some(OP_LT), 0);
@@ -1516,7 +1875,7 @@ impl Context {
             .unwrap();
         /* NoneType */
         let mut nonetype = Self::builtin_mono_class(NONE_TYPE, 10);
-        nonetype.register_superclass(Obj, &obj);
+        nonetype.register_superclass(Obj, obj);
         let mut nonetype_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         nonetype_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -1543,8 +1902,13 @@ impl Context {
         );
         nonetype.register_trait_methods(NoneType, nonetype_show);
         /* Type */
+        Box::new(TextClasses { str_, nonetype })
+    }
+
+    /// `Type`, `ClassType`, `TraitType`, `Code`, `Frame` and the module classes.
+    fn build_meta_classes(&self, obj: &Context) -> Box<MetaClasses> {
         let mut type_ = Self::builtin_mono_class(TYPE, 2);
-        type_.register_superclass(Obj, &obj);
+        type_.register_superclass(Obj, obj);
         type_.register_builtin_erg_impl(
             FUNC_MRO,
             fn0_met(Type, out_list_t(Type, TyParam::erased(Nat))),
@@ -1632,7 +1996,7 @@ impl Context {
         );
         trait_type.register_trait_methods(TraitType, trait_eq);
         let mut code = Self::builtin_mono_class(CODE, 10);
-        code.register_superclass(Obj, &obj);
+        code.register_superclass(Obj, obj);
         code.register_builtin_erg_impl(
             FUNC_CO_ARGCOUNT,
             Nat,
@@ -1755,7 +2119,7 @@ impl Context {
         );
         let g_module_t = mono(GENERIC_MODULE);
         let mut generic_module = Self::builtin_mono_class(GENERIC_MODULE, 2);
-        generic_module.register_superclass(Obj, &obj);
+        generic_module.register_superclass(Obj, obj);
         generic_module.register_trait(self, mono(NAMED)).unwrap();
         let mut generic_module_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         generic_module_eq.register_builtin_erg_impl(
@@ -1784,8 +2148,31 @@ impl Context {
             py_module.register_superclass(g_module_t.clone(), &generic_module);
         }
         /* GenericList */
+        Box::new(MetaClasses {
+            type_,
+            class_type,
+            trait_type,
+            code,
+            frame,
+            g_module_t,
+            generic_module,
+            module_t,
+            module,
+            py_module_t,
+            py_module,
+        })
+    }
+
+    /// `GenericList`, `UnsizedList`, `List(T, N)` and `Slice`.
+    fn build_list_classes(
+        &self,
+        obj: &Context,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> (Box<ListClasses>, Box<ListClass>) {
+        let QVars { T, U, N, M, .. } = qv;
         let mut generic_list = Self::builtin_mono_class(GENERIC_LIST, 1);
-        generic_list.register_superclass(Obj, &obj);
+        generic_list.register_superclass(Obj, obj);
         let mut list_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         list_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -1838,7 +2225,7 @@ impl Context {
         let unsized_list_t = poly(UNSIZED_LIST, vec![ty_tp(T.clone())]);
         let mut unsized_list =
             Self::builtin_poly_class(UNSIZED_LIST, vec![ParamSpec::t_nd(TY_T)], 1);
-        unsized_list.register_superclass(Obj, &obj);
+        unsized_list.register_superclass(Obj, obj);
         unsized_list.register_builtin_decl(KW_ELEM, T.clone(), vis.clone(), Some(KW_ELEM));
         /* List */
         let mut list_ =
@@ -2244,13 +2631,25 @@ impl Context {
         list_.register_builtin_const(FUNC_REVERSED, Visibility::BUILTIN_PUBLIC, None, reversed);
         /* Slice */
         let mut slice = Self::builtin_mono_class(SLICE, 3);
-        slice.register_superclass(Obj, &obj);
+        slice.register_superclass(Obj, obj);
         slice.register_builtin_erg_impl(KW_START, Int, Immutable, Visibility::BUILTIN_PUBLIC);
         slice.register_builtin_erg_impl(KW_STOP, Int, Immutable, Visibility::BUILTIN_PUBLIC);
         slice.register_builtin_erg_impl(KW_STEP, Int, Immutable, Visibility::BUILTIN_PUBLIC);
         /* GenericSet */
+        let lists = ListClasses {
+            generic_list,
+            unsized_list_t,
+            unsized_list,
+            slice,
+        };
+        (Box::new(lists), Box::new(ListClass { lis_t, list_ }))
+    }
+
+    /// `GenericSet` and `Set(T, N)`.
+    fn build_set_classes(&self, obj: &Context, qv: &QVars, vis: &Visibility) -> Box<SetClasses> {
+        let QVars { T, .. } = qv;
         let mut generic_set = Self::builtin_mono_class(GENERIC_SET, 1);
-        generic_set.register_superclass(Obj, &obj);
+        generic_set.register_superclass(Obj, obj);
         let mut set_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         set_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -2429,9 +2828,19 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         set_.register_trait_methods(set_t.clone(), set_show);
+        Box::new(SetClasses {
+            generic_set,
+            set_t,
+            set_,
+        })
+    }
+
+    /// `GenericDict` and `Dict(D)`.
+    fn build_dict_classes(&self, obj: &Context, qv: &QVars, vis: &Visibility) -> Box<DictClasses> {
+        let QVars { T, U, .. } = qv;
         let g_dict_t = mono(GENERIC_DICT);
         let mut generic_dict = Self::builtin_mono_class(GENERIC_DICT, 2);
-        generic_dict.register_superclass(Obj, &obj);
+        generic_dict.register_superclass(Obj, obj);
         let mut generic_dict_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         generic_dict_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -2675,8 +3084,21 @@ impl Context {
         )));
         dict_.register_builtin_const(FUNC_DIFF, Visibility::BUILTIN_PUBLIC, None, diff);
         /* Bytes */
+        Box::new(DictClasses {
+            g_dict_t,
+            generic_dict,
+            dic_t,
+            dict_,
+            D,
+            K,
+            V,
+        })
+    }
+
+    /// `Bytes`.
+    fn build_bytes_class(&self, obj: &Context) -> Box<Context> {
         let mut bytes = Self::builtin_mono_class(BYTES, 2);
-        bytes.register_superclass(Obj, &obj);
+        bytes.register_superclass(Obj, obj);
         bytes.register_py_builtin(
             OP_GT,
             fn1_met(mono(BYTES), mono(BYTES), Bool),
@@ -3033,8 +3455,19 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         /* GenericTuple */
+        Box::new(bytes)
+    }
+
+    /// `GenericTuple`, `HomogenousTuple(T)` and `Tuple(Ts)`.
+    fn build_tuple_classes(
+        &self,
+        obj: &Context,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> Box<TupleClasses> {
+        let QVars { T, N, .. } = qv;
         let mut generic_tuple = Self::builtin_mono_class(GENERIC_TUPLE, 1);
-        generic_tuple.register_superclass(Obj, &obj);
+        generic_tuple.register_superclass(Obj, obj);
         // tuple doesn't have a constructor, use `List` instead
         let mut tuple_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         tuple_eq.register_builtin_erg_impl(
@@ -3182,8 +3615,32 @@ impl Context {
             Some(FUNDAMENTAL_GETITEM),
         );
         /* record */
+        Box::new(TupleClasses {
+            generic_tuple,
+            homo_tup_t,
+            homo_tuple,
+            tuple_t: _tuple_t,
+            tuple_,
+            slice_t,
+        })
+    }
+
+    /// `Record`, `RecordMetaType` and `GenericNamedTuple`.
+    fn build_record_classes(
+        obj: &Context,
+        type_: &Context,
+        tuple: &TupleClasses,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> Box<RecordClasses> {
+        let QVars { N, .. } = qv;
+        let TupleClasses {
+            generic_tuple,
+            slice_t,
+            ..
+        } = tuple;
         let mut record = Self::builtin_mono_class(RECORD, 2);
-        record.register_superclass(Obj, &obj);
+        record.register_superclass(Obj, obj);
         let mut record_eq = Self::builtin_methods(Some(mono(EQ)), 2);
         record_eq.register_builtin_erg_impl(
             OP_EQ,
@@ -3211,10 +3668,10 @@ impl Context {
         );
         let mut record_meta_type = Self::builtin_mono_class(RECORD_META_TYPE, 2);
         record_meta_type.register_superclass(mono(RECORD), &record);
-        record_meta_type.register_superclass(Type, &type_);
+        record_meta_type.register_superclass(Type, type_);
         /* GenericNamedTuple */
         let mut generic_named_tuple = Self::builtin_mono_class(GENERIC_NAMED_TUPLE, 2);
-        generic_named_tuple.register_superclass(mono(GENERIC_TUPLE), &generic_tuple);
+        generic_named_tuple.register_superclass(mono(GENERIC_TUPLE), generic_tuple);
         let Slf = mono_q(SELF, subtypeof(mono(GENERIC_NAMED_TUPLE)));
         let input_t = tp_enum(Nat, set! {N.clone()});
         let return_t = proj_call(ty_tp(Slf.clone()), FUNDAMENTAL_GETITEM, vec![N.clone()]);
@@ -3286,22 +3743,28 @@ impl Context {
             None,
             union,
         );
-        self.register_builtin_type(
-            mono(GENERIC_TUPLE),
-            generic_tuple,
-            vis.clone(),
-            Const,
-            Some(FUNC_TUPLE),
-        );
-        self.register_builtin_type(homo_tup_t, homo_tuple, vis.clone(), Const, Some(FUNC_TUPLE));
-        self.register_builtin_type(_tuple_t, tuple_, vis.clone(), Const, Some(FUNC_TUPLE));
+        Box::new(RecordClasses {
+            record,
+            record_meta_type,
+            generic_named_tuple,
+        })
+    }
+
+    /// `Or`, the iterator classes, `FrozenSet` and `MemoryView`.
+    fn build_iterator_classes(
+        &self,
+        obj: &Context,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> Box<IteratorClasses> {
+        let QVars { T, U, L, R, .. } = qv;
         /* Or (true or type) */
-        let or_t = poly(OR, vec![ty_tp(L), ty_tp(R)]);
+        let or_t = poly(OR, vec![ty_tp(L.clone()), ty_tp(R.clone())]);
         let mut or = Self::builtin_poly_class(OR, vec![PS::t_nd(TY_L), PS::t_nd(TY_R)], 2);
-        or.register_superclass(Obj, &obj);
+        or.register_superclass(Obj, obj);
         /* Iterators */
         let mut str_iterator = Self::builtin_mono_class(STR_ITERATOR, 1);
-        str_iterator.register_superclass(Obj, &obj);
+        str_iterator.register_superclass(Obj, obj);
         str_iterator
             .register_trait(self, poly(ITERATOR, vec![ty_tp(Str)]))
             .unwrap();
@@ -3309,7 +3772,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(Str)]))
             .unwrap();
         let mut list_iterator = Self::builtin_poly_class(LIST_ITERATOR, vec![PS::t_nd(TY_T)], 1);
-        list_iterator.register_superclass(Obj, &obj);
+        list_iterator.register_superclass(Obj, obj);
         list_iterator
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3317,7 +3780,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut set_iterator = Self::builtin_poly_class(SET_ITERATOR, vec![PS::t_nd(TY_T)], 1);
-        set_iterator.register_superclass(Obj, &obj);
+        set_iterator.register_superclass(Obj, obj);
         set_iterator
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3325,7 +3788,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut tuple_iterator = Self::builtin_poly_class(TUPLE_ITERATOR, vec![PS::t_nd(TY_T)], 1);
-        tuple_iterator.register_superclass(Obj, &obj);
+        tuple_iterator.register_superclass(Obj, obj);
         tuple_iterator
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3333,7 +3796,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut range_iterator = Self::builtin_poly_class(RANGE_ITERATOR, vec![PS::t_nd(TY_T)], 1);
-        range_iterator.register_superclass(Obj, &obj);
+        range_iterator.register_superclass(Obj, obj);
         range_iterator
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3341,7 +3804,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut dict_keys = Self::builtin_poly_class(DICT_KEYS, vec![PS::t_nd(TY_T)], 1);
-        dict_keys.register_superclass(Obj, &obj);
+        dict_keys.register_superclass(Obj, obj);
         dict_keys
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3349,7 +3812,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut dict_values = Self::builtin_poly_class(DICT_VALUES, vec![PS::t_nd(TY_T)], 1);
-        dict_values.register_superclass(Obj, &obj);
+        dict_values.register_superclass(Obj, obj);
         dict_values
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3357,7 +3820,7 @@ impl Context {
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         let mut dict_items = Self::builtin_poly_class(DICT_ITEMS, vec![PS::t_nd(TY_T)], 1);
-        dict_items.register_superclass(Obj, &obj);
+        dict_items.register_superclass(Obj, obj);
         dict_items
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3366,7 +3829,7 @@ impl Context {
             .unwrap();
         /* Enumerate */
         let mut enumerate = Self::builtin_poly_class(ENUMERATE, vec![PS::t_nd(TY_T)], 2);
-        enumerate.register_superclass(Obj, &obj);
+        enumerate.register_superclass(Obj, obj);
         enumerate
             .register_trait(
                 self,
@@ -3378,7 +3841,7 @@ impl Context {
             .unwrap();
         /* Filter */
         let mut filter = Self::builtin_poly_class(FILTER, vec![PS::t_nd(TY_T)], 2);
-        filter.register_superclass(Obj, &obj);
+        filter.register_superclass(Obj, obj);
         filter
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3387,14 +3850,14 @@ impl Context {
             .unwrap();
         /* Map */
         let mut map = Self::builtin_poly_class(MAP, vec![PS::t_nd(TY_T)], 2);
-        map.register_superclass(Obj, &obj);
+        map.register_superclass(Obj, obj);
         map.register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
         map.register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         /* Reversed */
         let mut reversed = Self::builtin_poly_class(REVERSED, vec![PS::t_nd(TY_T)], 2);
-        reversed.register_superclass(Obj, &obj);
+        reversed.register_superclass(Obj, obj);
         reversed
             .register_trait(self, poly(ITERATOR, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3403,7 +3866,7 @@ impl Context {
             .unwrap();
         /* Zip */
         let mut zip = Self::builtin_poly_class(ZIP, vec![PS::t_nd(TY_T), PS::t_nd(TY_U)], 2);
-        zip.register_superclass(Obj, &obj);
+        zip.register_superclass(Obj, obj);
         zip.register_trait(
             self,
             poly(ITERATOR, vec![ty_tp(tuple_t(vec![T.clone(), U.clone()]))]),
@@ -3415,7 +3878,7 @@ impl Context {
             .unwrap();
         let fset_t = poly(FROZENSET, vec![ty_tp(T.clone())]);
         let mut frozenset = Self::builtin_poly_class(FROZENSET, vec![PS::t_nd(TY_T)], 2);
-        frozenset.register_superclass(Obj, &obj);
+        frozenset.register_superclass(Obj, obj);
         frozenset
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -3488,9 +3951,52 @@ impl Context {
         frozenset.register_py_builtin(FUNC_UNION, bin_t, Some(FUNC_UNION), 3);
         let memview_t = mono(MEMORYVIEW);
         let mut memoryview = Self::builtin_mono_class(MEMORYVIEW, 2);
-        memoryview.register_superclass(Obj, &obj);
+        memoryview.register_superclass(Obj, obj);
+        Box::new(IteratorClasses {
+            or_t,
+            or,
+            str_iterator,
+            list_iterator,
+            set_iterator,
+            tuple_iterator,
+            range_iterator,
+            dict_keys,
+            dict_values,
+            dict_items,
+            enumerate,
+            filter,
+            map,
+            reversed,
+            zip,
+            fset_t,
+            frozenset,
+            memview_t,
+            memoryview,
+        })
+    }
+
+    /// `Obj!`, `Option!`, `Cell!`, `Float!`, `Ratio!`, `Int!`, `Nat!`, `Bool!`, `Str!` and `File!`.
+    /// `Option!` and `Cell!` are registered here, as they always were.
+    fn build_mut_classes(
+        &mut self,
+        obj: &Context,
+        num: &NumClasses,
+        text: &TextClasses,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> Box<MutClasses> {
+        let QVars { T, .. } = qv;
+        let NumClasses {
+            float,
+            ratio,
+            int,
+            nat,
+            bool_,
+            ..
+        } = num;
+        let TextClasses { str_, .. } = text;
         let mut obj_mut = Self::builtin_mono_class(MUTABLE_OBJ, 2);
-        obj_mut.register_superclass(Obj, &obj);
+        obj_mut.register_superclass(Obj, obj);
         let mut obj_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
         obj_mut_immutizable.register_builtin_const(
             IMMUT_TYPE,
@@ -3521,7 +4027,7 @@ impl Context {
         let opt_mut_t = poly(MUT_OPTION, vec![ty_tp(T.clone())]);
         let opt_t = crate::ty::constructors::or(T.clone(), NoneType);
         let mut option_mut = Self::builtin_poly_class(MUT_OPTION, vec![PS::t_nd(TY_T)], 4);
-        option_mut.register_superclass(Obj, &obj);
+        option_mut.register_superclass(Obj, obj);
         // covariant, as `List!` is: without it an empty `Option!()` is an `Option! Never`
         // and could not be given to anything, since its `T` is fixed before the
         // expected type is known
@@ -3574,7 +4080,7 @@ impl Context {
         // infer `x` as `Cell!` instead of `Int!` (see `mutizable.er`).
         let cell_t = poly(MUT_CELL, vec![ty_tp(T.clone())]);
         let mut cell = Self::builtin_poly_class(MUT_CELL, vec![PS::t_nd(TY_T)], 4);
-        cell.register_superclass(Obj, &obj);
+        cell.register_superclass(Obj, obj);
         cell.register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
         cell.register_builtin_py_impl(
@@ -3614,7 +4120,7 @@ impl Context {
         self.register_builtin_type(cell_t, cell, vis.clone(), Const, Some(CELL));
         /* Float! */
         let mut float_mut = Self::builtin_mono_class(MUT_FLOAT, 2);
-        float_mut.register_superclass(Float, &float);
+        float_mut.register_superclass(Float, float);
         let mut float_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
         float_mut_immutizable.register_builtin_const(
             IMMUT_TYPE,
@@ -3676,7 +4182,7 @@ impl Context {
         float_mut.register_trait_methods(mono(MUT_FLOAT), float_mut_copy);
         /* Ratio! */
         let mut ratio_mut = Self::builtin_mono_class(MUT_RATIO, 2);
-        ratio_mut.register_superclass(Ratio, &ratio);
+        ratio_mut.register_superclass(Ratio, ratio);
         let mut ratio_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
         ratio_mut_immutizable.register_builtin_const(
             IMMUT_TYPE,
@@ -3739,7 +4245,7 @@ impl Context {
         ratio_mut.register_trait_methods(mono(MUT_RATIO), ratio_mut_copy);
         /* Int! */
         let mut int_mut = Self::builtin_mono_class(MUT_INT, 2);
-        int_mut.register_superclass(Int, &int);
+        int_mut.register_superclass(Int, int);
         int_mut.register_superclass(mono(MUT_FLOAT), &float_mut);
         let t = pr_met(mono(MUT_INT), vec![], None, vec![kw(KW_I, Int)], NoneType);
         int_mut.register_builtin_py_impl(
@@ -3788,7 +4294,7 @@ impl Context {
         );
         int_mut.register_trait_methods(mono(MUT_INT), int_mut_copy);
         let mut nat_mut = Self::builtin_mono_class(MUT_NAT, 2);
-        nat_mut.register_superclass(Nat, &nat);
+        nat_mut.register_superclass(Nat, nat);
         nat_mut.register_superclass(mono(MUT_INT), &int_mut);
         /* Nat! */
         let mut nat_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
@@ -3824,7 +4330,7 @@ impl Context {
         nat_mut.register_trait_methods(mono(MUT_NAT), nat_mut_copy);
         /* Bool! */
         let mut bool_mut = Self::builtin_mono_class(MUT_BOOL, 2);
-        bool_mut.register_superclass(Bool, &bool_);
+        bool_mut.register_superclass(Bool, bool_);
         bool_mut.register_superclass(mono(MUT_NAT), &nat_mut);
         let mut bool_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
         bool_mut_immutizable.register_builtin_const(
@@ -3867,7 +4373,7 @@ impl Context {
         );
         /* Str! */
         let mut str_mut = Self::builtin_mono_class(MUT_STR, 2);
-        str_mut.register_superclass(Str, &str_);
+        str_mut.register_superclass(Str, str_);
         let mut str_mut_immutizable = Self::builtin_methods(Some(mono(IMMUTIZABLE)), 2);
         str_mut_immutizable.register_builtin_const(
             IMMUT_TYPE,
@@ -3989,6 +4495,22 @@ impl Context {
             .register_trait(self, mono(CONTEXT_MANAGER))
             .unwrap();
         /* List! */
+        Box::new(MutClasses {
+            obj_mut,
+            float_mut,
+            ratio_mut,
+            int_mut,
+            nat_mut,
+            bool_mut,
+            str_mut,
+            file_mut,
+        })
+    }
+
+    /// `List!(T, N)`, registered together with `List(T, N)`.
+    fn init_list_mut_class(&mut self, list: ListClass, qv: &QVars, vis: &Visibility) {
+        let QVars { T, N, .. } = qv;
+        let ListClass { lis_t, list_ } = list;
         let list_mut_t = list_mut(T.clone(), N.clone());
         let mut list_mut_ =
             Self::builtin_poly_class(MUT_LIST, vec![PS::t_nd(TY_T), PS::default(TY_N, Nat)], 2);
@@ -4124,11 +4646,31 @@ impl Context {
         list_mut_.register_trait_methods(list_mut_t.clone(), list_mut_immutizable);
         self.register_builtin_type(lis_t, list_, vis.clone(), Const, Some(LIST));
         self.register_builtin_type(list_mut_t, list_mut_, vis.clone(), Const, Some(LIST));
+    }
+
+    /// `ByteArray!`, `Dict!` and `Set!`.
+    fn build_mut_collection_classes(
+        &self,
+        bytes: &Context,
+        set: &SetClasses,
+        dict: &DictClasses,
+        qv: &QVars,
+    ) -> Box<MutCollectionClasses> {
+        let QVars { T, N, .. } = qv;
+        let SetClasses { set_t, set_, .. } = set;
+        let DictClasses {
+            dic_t,
+            dict_,
+            D,
+            K,
+            V,
+            ..
+        } = dict;
         /* ByteArray! */
         let bytearray_mut_t = mono(MUT_BYTEARRAY);
         let mut bytearray_mut = Self::builtin_mono_class(MUT_BYTEARRAY, 2);
         // TODO: different class
-        bytearray_mut.register_superclass(mono(BYTES), &bytes);
+        bytearray_mut.register_superclass(mono(BYTES), bytes);
         let mut bytearray_seq = Self::builtin_methods(Some(poly(SEQUENCE, vec![ty_tp(Int)])), 2);
         bytearray_seq.register_builtin_erg_impl(
             FUNDAMENTAL_LEN,
@@ -4245,7 +4787,7 @@ impl Context {
         let dict_mut_kv_t = poly(MUT_DICT, vec![dict! { K.clone() => V.clone() }.into()]);
         let mut dict_mut =
             Self::builtin_poly_class(MUT_DICT, vec![PS::named_nd(TY_D, mono(GENERIC_DICT))], 3);
-        dict_mut.register_superclass(dic_t.clone(), &dict_);
+        dict_mut.register_superclass(dic_t.clone(), dict_);
         let K = type_q(TY_K);
         let V = type_q(TY_V);
         let insert_t = pr_met(
@@ -4309,10 +4851,10 @@ impl Context {
         .quantify();
         dict_mut.register_py_builtin(PROC_MERGE, merge_t, Some(FUNC_MERGE), 32);
         /* Set! */
-        let set_mut_t = poly(MUT_SET, vec![ty_tp(T.clone()), N]);
+        let set_mut_t = poly(MUT_SET, vec![ty_tp(T.clone()), N.clone()]);
         let mut set_mut_ =
             Self::builtin_poly_class(MUT_SET, vec![PS::t_nd(TY_T), PS::default(TY_N, Nat)], 2);
-        set_mut_.register_superclass(set_t.clone(), &set_);
+        set_mut_.register_superclass(set_t.clone(), set_);
         let mut set_mut_copy = Self::builtin_methods(Some(mono(COPY)), 1);
         set_mut_copy.register_py_builtin(
             FUNC_COPY,
@@ -4472,10 +5014,29 @@ impl Context {
             Some(FUNC_INTERSECTION_UPDATE),
         );
         /* Range */
+        Box::new(MutCollectionClasses {
+            bytearray_mut_t,
+            bytearray_mut,
+            dict_mut_t,
+            dict_mut,
+            set_mut_t,
+            set_mut_,
+        })
+    }
+
+    /// `Range`, `Subroutine`, `Generator` and `Coroutine`.
+    fn build_subr_classes(
+        &self,
+        obj: &Context,
+        type_: &Context,
+        qv: &QVars,
+        vis: &Visibility,
+    ) -> Box<SubrClasses> {
+        let QVars { T, .. } = qv;
         let range_t = poly(RANGE, vec![TyParam::t(T.clone())]);
         let mut range = Self::builtin_poly_class(RANGE, vec![PS::t_nd(TY_T)], 2);
         // range.register_superclass(Obj, &obj);
-        range.register_superclass(Type, &type_);
+        range.register_superclass(Type, type_);
         range
             .register_trait(self, poly(OUTPUT, vec![ty_tp(T.clone())]))
             .unwrap();
@@ -4521,7 +5082,7 @@ impl Context {
             get_item,
         );
         let mut subr = Self::builtin_mono_class(SUBROUTINE, 2);
-        subr.register_superclass(Obj, &obj);
+        subr.register_superclass(Obj, obj);
         let t_return = fn1_met(mono(SUBROUTINE), Obj, Never).quantify();
         subr.register_builtin_erg_impl(
             FUNC_RETURN,
@@ -4550,6 +5111,19 @@ impl Context {
             .unwrap();
         // TODO: non-builtin
         /* Dimension */
+        Box::new(SubrClasses {
+            range_t,
+            range,
+            subr,
+            generator_t,
+            generator,
+            coro_t,
+            coroutine,
+        })
+    }
+
+    /// `Dimension`.
+    fn build_dimension_class(&self) -> Box<DimensionClass> {
         let Ty = type_q("Ty");
         let M = mono_q_tp("M", instanceof(Int));
         let L = mono_q_tp("L", instanceof(Int));
@@ -4758,8 +5332,16 @@ impl Context {
             ValueObj::builtin_class(dimension_t.clone()),
         );
         dimension.register_trait_methods(dimension_t.clone(), dimension_rdiv);
+        Box::new(DimensionClass {
+            dimension_t,
+            dimension,
+        })
+    }
+
+    /// `BaseException`, `Error` and the Python exception hierarchy.
+    fn build_exception_classes(obj: &Context, vis: &Visibility) -> Box<ExceptionClasses> {
         let mut base_exception = Self::builtin_mono_class(BASE_EXCEPTION, 2);
-        base_exception.register_superclass(Obj, &obj);
+        base_exception.register_superclass(Obj, obj);
         base_exception.register_builtin_erg_impl(
             ATTR_ARGS,
             unknown_len_list_t(Str),
@@ -4798,7 +5380,7 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         let mut traceback = Self::builtin_mono_class(TRACEBACK, 2);
-        traceback.register_superclass(Obj, &obj);
+        traceback.register_superclass(Obj, obj);
         traceback.register_builtin_erg_impl(ATTR_TB_FRAME, Frame, Immutable, vis.clone());
         traceback.register_builtin_erg_impl(ATTR_TB_LASTI, Nat, Immutable, vis.clone());
         traceback.register_builtin_erg_impl(ATTR_TB_LINENO, Nat, Immutable, vis.clone());
@@ -4810,7 +5392,7 @@ impl Context {
         );
         /* Error (Erg's own recoverable error, see lib/core/_erg_result.py) */
         let mut error_frame = Self::builtin_mono_class(ERROR_FRAME, 3);
-        error_frame.register_superclass(Obj, &obj);
+        error_frame.register_superclass(Obj, obj);
         error_frame.register_builtin_erg_impl(
             ATTR_NAME,
             Str,
@@ -4830,7 +5412,7 @@ impl Context {
             Visibility::BUILTIN_PUBLIC,
         );
         let mut error = Self::builtin_mono_class(ERROR, 5);
-        error.register_superclass(Obj, &obj);
+        error.register_superclass(Obj, obj);
         error.register_builtin_erg_impl(ATTR_MSG, Str, Immutable, Visibility::BUILTIN_PUBLIC);
         error.register_builtin_erg_impl(ATTR_KIND, Str, Immutable, Visibility::BUILTIN_PUBLIC);
         // the subroutines `?` propagated this error out of, innermost call first
@@ -4993,8 +5575,81 @@ impl Context {
         let mut resource_warning = Self::builtin_mono_class(RESOURCE_WARNING, 2);
         resource_warning.register_superclass(mono(WARNING), &warning);
         /* Proc */
+        Box::new(ExceptionClasses {
+            base_exception,
+            traceback,
+            error_frame,
+            error,
+            exception,
+            system_exit,
+            keyboard_interrupt,
+            generator_exit,
+            stop_iteration,
+            stop_async_iteration,
+            arithmetic_error,
+            floating_point_error,
+            overflow_error,
+            zero_division_error,
+            assertion_error,
+            attribute_error,
+            buffer_error,
+            eof_error,
+            import_error,
+            module_not_found_error,
+            lookup_error,
+            index_error,
+            key_error,
+            memory_error,
+            name_error,
+            unbound_local_error,
+            os_error,
+            blocking_io_error,
+            child_process_error,
+            connection_error,
+            broken_pipe_error,
+            connection_aborted_error,
+            connection_refused_error,
+            connection_reset_error,
+            file_exists_error,
+            file_not_found_error,
+            interrupted_error,
+            is_a_directory_error,
+            not_a_directory_error,
+            permission_error,
+            process_lookup_error,
+            timeout_error,
+            reference_error,
+            runtime_error,
+            not_implemented_error,
+            recursion_error,
+            syntax_error,
+            indentation_error,
+            tab_error,
+            system_error,
+            type_error,
+            value_error,
+            unicode_error,
+            unicode_encode_error,
+            unicode_decode_error,
+            unicode_translate_error,
+            warning,
+            deprecation_warning,
+            pending_deprecation_warning,
+            runtime_warning,
+            syntax_warning,
+            user_warning,
+            future_warning,
+            import_warning,
+            unicode_warning,
+            bytes_warning,
+            resource_warning,
+        })
+    }
+
+    /// `Proc`, `Func` and their named, quantified and meta variants.
+    fn build_func_classes(&self, subr: &Context, type_: &Context) -> Box<FuncClasses> {
         let mut proc = Self::builtin_mono_class(PROC, 2);
-        proc.register_superclass(mono(SUBROUTINE), &subr);
+        proc.register_superclass(mono(SUBROUTINE), subr);
         let mut named_proc = Self::builtin_mono_class(NAMED_PROC, 2);
         named_proc.register_superclass(mono(PROC), &proc);
         named_proc.register_trait(self, mono(NAMED)).unwrap();
@@ -5013,7 +5668,7 @@ impl Context {
         qfunc.register_superclass(mono(FUNC), &func);
         let mut proc_meta_type = Self::builtin_mono_class(PROC_META_TYPE, 2);
         proc_meta_type.register_superclass(mono(PROC), &proc);
-        proc_meta_type.register_superclass(Type, &type_);
+        proc_meta_type.register_superclass(Type, type_);
         let mut func_meta_type = Self::builtin_mono_class(FUNC_META_TYPE, 2);
         func_meta_type.register_superclass(mono(FUNC), &func);
         func_meta_type.register_superclass(mono(PROC_META_TYPE), &proc_meta_type);
@@ -5023,6 +5678,158 @@ impl Context {
         let mut qfunc_meta_type = Self::builtin_mono_class(QUANTIFIED_FUNC_META_TYPE, 2);
         qfunc_meta_type.register_superclass(mono(QUANTIFIED_PROC_META_TYPE), &qproc_meta_type);
         qfunc_meta_type.register_superclass(mono(QUANTIFIED_FUNC), &qfunc);
+        Box::new(FuncClasses {
+            proc,
+            named_proc,
+            func,
+            named_func,
+            quant,
+            qproc,
+            qfunc,
+            proc_meta_type,
+            func_meta_type,
+            qproc_meta_type,
+            qfunc_meta_type,
+        })
+    }
+
+    /// Registers every class [`Self::init_builtin_classes`] built, in the order
+    /// the classes were registered when one function built and registered them.
+    /// The order is visible: `register_methods` lists the classes that have a
+    /// method in registration order, and a union made of them starts from the
+    /// first.
+    fn register_builtin_classes(&mut self, vis: Visibility, qv: &QVars, classes: BuiltinClasses) {
+        let QVars { T, U, .. } = qv;
+        let BuiltinClasses {
+            obj,
+            num,
+            text,
+            meta,
+            list,
+            set,
+            dict,
+            bytes,
+            record,
+            iterators,
+            mutable,
+            mut_coll,
+            subr,
+            dimension,
+            exc,
+            func,
+        } = classes;
+        let obj = *obj;
+        let NumClasses {
+            complex,
+            float,
+            ratio,
+            int,
+            nat,
+            bool_,
+        } = *num;
+        let TextClasses { str_, nonetype } = *text;
+        let MetaClasses {
+            type_,
+            class_type,
+            trait_type,
+            code,
+            frame,
+            g_module_t,
+            generic_module,
+            module_t,
+            module,
+            py_module_t,
+            py_module,
+        } = *meta;
+        let ListClasses {
+            generic_list,
+            unsized_list_t,
+            unsized_list,
+            slice,
+        } = *list;
+        let SetClasses {
+            generic_set,
+            set_t,
+            set_,
+        } = *set;
+        let DictClasses {
+            g_dict_t,
+            generic_dict,
+            dic_t,
+            dict_,
+            ..
+        } = *dict;
+        let bytes = *bytes;
+        let RecordClasses {
+            record,
+            record_meta_type,
+            generic_named_tuple,
+        } = *record;
+        let IteratorClasses {
+            or_t,
+            or,
+            str_iterator,
+            list_iterator,
+            set_iterator,
+            tuple_iterator,
+            range_iterator,
+            dict_keys,
+            dict_values,
+            dict_items,
+            enumerate,
+            filter,
+            map,
+            reversed,
+            zip,
+            fset_t,
+            frozenset,
+            memview_t,
+            memoryview,
+        } = *iterators;
+        let MutClasses {
+            obj_mut,
+            float_mut,
+            ratio_mut,
+            int_mut,
+            nat_mut,
+            bool_mut,
+            str_mut,
+            file_mut,
+        } = *mutable;
+        let MutCollectionClasses {
+            bytearray_mut_t,
+            bytearray_mut,
+            dict_mut_t,
+            dict_mut,
+            set_mut_t,
+            set_mut_,
+        } = *mut_coll;
+        let SubrClasses {
+            range_t,
+            range,
+            subr,
+            generator_t,
+            generator,
+            coro_t,
+            coroutine,
+        } = *subr;
+        let DimensionClass {
+            dimension_t,
+            dimension,
+        } = *dimension;
+        let FuncClasses {
+            proc,
+            named_proc,
+            func,
+            named_func,
+            quant,
+            qproc,
+            qfunc,
+            proc_meta_type,
+            func_meta_type,
+            qproc_meta_type,
+            qfunc_meta_type,
+        } = *func;
         self.register_builtin_type(Obj, obj, vis.clone(), Const, Some(FUNC_OBJECT));
         // self.register_type(mono(RECORD), vec![], record, Visibility::BUILTIN_PRIVATE, Const);
         let name = if PYTHON_MODE { FUNC_INT } else { INT };
@@ -5183,7 +5990,7 @@ impl Context {
             Some(FUNC_REVERSED),
         );
         self.register_builtin_type(
-            poly(ZIP, vec![ty_tp(T), ty_tp(U)]),
+            poly(ZIP, vec![ty_tp(T.clone()), ty_tp(U.clone())]),
             zip,
             Visibility::BUILTIN_PRIVATE,
             Const,
@@ -5217,6 +6024,171 @@ impl Context {
         self.register_builtin_type(generator_t, generator, vis.clone(), Const, Some(GENERATOR));
         self.register_builtin_type(coro_t, coroutine, vis.clone(), Const, Some(FUNC_COROUTINE));
         self.register_builtin_type(dimension_t, dimension, vis.clone(), Const, Some(DIMENSION));
+        self.register_exception_classes(&vis, exc);
+        self.register_builtin_type(mono(PROC), proc, vis.clone(), Const, Some(PROC));
+        self.register_builtin_type(mono(FUNC), func, vis.clone(), Const, Some(FUNC));
+        self.register_builtin_type(range_t, range, vis.clone(), Const, Some(FUNC_RANGE));
+        if ERG_MODE {
+            self.register_builtin_type(module_t, module, vis.clone(), Const, Some(MODULE_TYPE));
+            self.register_builtin_type(
+                mono(MUTABLE_OBJ),
+                obj_mut,
+                vis.clone(),
+                Const,
+                Some(FUNC_OBJECT),
+            );
+            self.register_builtin_type(mono(MUT_INT), int_mut, vis.clone(), Const, Some(FUNC_INT));
+            self.register_builtin_type(mono(MUT_NAT), nat_mut, vis.clone(), Const, Some(NAT));
+            self.register_builtin_type(
+                mono(MUT_FLOAT),
+                float_mut,
+                vis.clone(),
+                Const,
+                Some(FUNC_FLOAT),
+            );
+            self.register_builtin_type(mono(MUT_RATIO), ratio_mut, vis.clone(), Const, Some(RATIO));
+            self.register_builtin_type(mono(MUT_BOOL), bool_mut, vis.clone(), Const, Some(BOOL));
+            self.register_builtin_type(mono(MUT_STR), str_mut, vis, Const, Some(STR));
+            self.register_builtin_type(
+                mono(NAMED_PROC),
+                named_proc,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(NAMED_PROC),
+            );
+            self.register_builtin_type(
+                mono(NAMED_FUNC),
+                named_func,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(NAMED_FUNC),
+            );
+            self.register_builtin_type(
+                mono(QUANTIFIED),
+                quant,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(QUANTIFIED),
+            );
+            self.register_builtin_type(
+                mono(QUANTIFIED_PROC),
+                qproc,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(QUANTIFIED_PROC),
+            );
+            self.register_builtin_type(
+                mono(QUANTIFIED_FUNC),
+                qfunc,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(QUANTIFIED_FUNC),
+            );
+            self.register_builtin_type(
+                mono(PROC_META_TYPE),
+                proc_meta_type,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(PROC_META_TYPE),
+            );
+            self.register_builtin_type(
+                mono(FUNC_META_TYPE),
+                func_meta_type,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(FUNC_META_TYPE),
+            );
+            self.register_builtin_type(
+                mono(QUANTIFIED_PROC_META_TYPE),
+                qproc_meta_type,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(QUANTIFIED_PROC_META_TYPE),
+            );
+            self.register_builtin_type(
+                mono(QUANTIFIED_FUNC_META_TYPE),
+                qfunc_meta_type,
+                Visibility::BUILTIN_PRIVATE,
+                Const,
+                Some(QUANTIFIED_FUNC_META_TYPE),
+            );
+        } else {
+            self.register_builtin_const(MUT_INT, vis.clone(), None, ValueObj::builtin_class(Int));
+            self.register_builtin_const(MUT_STR, vis, None, ValueObj::builtin_class(Str));
+        }
+    }
+
+    /// Registers the exception classes; see [`Self::register_builtin_classes`].
+    fn register_exception_classes(&mut self, vis: &Visibility, exc: Box<ExceptionClasses>) {
+        let ExceptionClasses {
+            base_exception,
+            traceback,
+            error_frame,
+            error,
+            exception,
+            system_exit,
+            keyboard_interrupt,
+            generator_exit,
+            stop_iteration,
+            stop_async_iteration,
+            arithmetic_error,
+            floating_point_error,
+            overflow_error,
+            zero_division_error,
+            assertion_error,
+            attribute_error,
+            buffer_error,
+            eof_error,
+            import_error,
+            module_not_found_error,
+            lookup_error,
+            index_error,
+            key_error,
+            memory_error,
+            name_error,
+            unbound_local_error,
+            os_error,
+            blocking_io_error,
+            child_process_error,
+            connection_error,
+            broken_pipe_error,
+            connection_aborted_error,
+            connection_refused_error,
+            connection_reset_error,
+            file_exists_error,
+            file_not_found_error,
+            interrupted_error,
+            is_a_directory_error,
+            not_a_directory_error,
+            permission_error,
+            process_lookup_error,
+            timeout_error,
+            reference_error,
+            runtime_error,
+            not_implemented_error,
+            recursion_error,
+            syntax_error,
+            indentation_error,
+            tab_error,
+            system_error,
+            type_error,
+            value_error,
+            unicode_error,
+            unicode_encode_error,
+            unicode_decode_error,
+            unicode_translate_error,
+            warning,
+            deprecation_warning,
+            pending_deprecation_warning,
+            runtime_warning,
+            syntax_warning,
+            user_warning,
+            future_warning,
+            import_warning,
+            unicode_warning,
+            bytes_warning,
+            resource_warning,
+        } = *exc;
         self.register_builtin_type(
             mono(BASE_EXCEPTION),
             base_exception,
@@ -5668,96 +6640,5 @@ impl Context {
             Const,
             Some(RESOURCE_WARNING),
         );
-        self.register_builtin_type(mono(PROC), proc, vis.clone(), Const, Some(PROC));
-        self.register_builtin_type(mono(FUNC), func, vis.clone(), Const, Some(FUNC));
-        self.register_builtin_type(range_t, range, vis.clone(), Const, Some(FUNC_RANGE));
-        if ERG_MODE {
-            self.register_builtin_type(module_t, module, vis.clone(), Const, Some(MODULE_TYPE));
-            self.register_builtin_type(
-                mono(MUTABLE_OBJ),
-                obj_mut,
-                vis.clone(),
-                Const,
-                Some(FUNC_OBJECT),
-            );
-            self.register_builtin_type(mono(MUT_INT), int_mut, vis.clone(), Const, Some(FUNC_INT));
-            self.register_builtin_type(mono(MUT_NAT), nat_mut, vis.clone(), Const, Some(NAT));
-            self.register_builtin_type(
-                mono(MUT_FLOAT),
-                float_mut,
-                vis.clone(),
-                Const,
-                Some(FUNC_FLOAT),
-            );
-            self.register_builtin_type(mono(MUT_RATIO), ratio_mut, vis.clone(), Const, Some(RATIO));
-            self.register_builtin_type(mono(MUT_BOOL), bool_mut, vis.clone(), Const, Some(BOOL));
-            self.register_builtin_type(mono(MUT_STR), str_mut, vis, Const, Some(STR));
-            self.register_builtin_type(
-                mono(NAMED_PROC),
-                named_proc,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(NAMED_PROC),
-            );
-            self.register_builtin_type(
-                mono(NAMED_FUNC),
-                named_func,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(NAMED_FUNC),
-            );
-            self.register_builtin_type(
-                mono(QUANTIFIED),
-                quant,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(QUANTIFIED),
-            );
-            self.register_builtin_type(
-                mono(QUANTIFIED_PROC),
-                qproc,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(QUANTIFIED_PROC),
-            );
-            self.register_builtin_type(
-                mono(QUANTIFIED_FUNC),
-                qfunc,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(QUANTIFIED_FUNC),
-            );
-            self.register_builtin_type(
-                mono(PROC_META_TYPE),
-                proc_meta_type,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(PROC_META_TYPE),
-            );
-            self.register_builtin_type(
-                mono(FUNC_META_TYPE),
-                func_meta_type,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(FUNC_META_TYPE),
-            );
-            self.register_builtin_type(
-                mono(QUANTIFIED_PROC_META_TYPE),
-                qproc_meta_type,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(QUANTIFIED_PROC_META_TYPE),
-            );
-            self.register_builtin_type(
-                mono(QUANTIFIED_FUNC_META_TYPE),
-                qfunc_meta_type,
-                Visibility::BUILTIN_PRIVATE,
-                Const,
-                Some(QUANTIFIED_FUNC_META_TYPE),
-            );
-        } else {
-            self.register_builtin_const(MUT_INT, vis.clone(), None, ValueObj::builtin_class(Int));
-            self.register_builtin_const(MUT_STR, vis, None, ValueObj::builtin_class(Str));
-        }
     }
 }

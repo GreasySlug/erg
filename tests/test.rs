@@ -27,6 +27,11 @@ fn exec_args_expansion() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_lambda_arg() -> Result<(), ()> {
+    expect_success("tests/should_ok/lambda_arg.er", 0)
+}
+
+#[test]
 fn exec_list_test() -> Result<(), ()> {
     expect_success("tests/should_ok/list.er", 0)
 }

@@ -29,9 +29,16 @@ In anonymous functions, there is a difference in parsing due to whitespace.
 
 ```python
 # In this case, interpreted as `T(() -> Int)`
-i: T() -> Int
+i: T () -> Int
 # in this case it is interpreted as (U()) -> Int
 k: U() -> Int
+```
+
+The same rule passes a lambda to a function without extra parentheses: a space before `(` makes the parenthesized part the lambda's parameters, not the call's arguments.
+
+```python
+# `map((x: Int) -> x + 1, [1, 2, 3])`
+xs = map (x: Int) -> x + 1, [1, 2, 3]
 ```
 
 Anonymous functions can be used without arguments.

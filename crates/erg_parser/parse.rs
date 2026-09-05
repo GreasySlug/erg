@@ -1514,6 +1514,33 @@ impl Parser {
         }
     }
 
+    /// Whether the `(` at the cursor opens a lambda, `(x) -> ...` or `(x) => ...`:
+    /// its matching `)` is directly followed by the arrow.
+    ///
+    /// Whitespace tells the two readings of a parenthesis after a name apart
+    /// (doc/EN/syntax/23_lambda.md): `f (x) -> x + 1` applies `f` to the lambda,
+    /// while `f(x) -> x + 1`, with the parenthesis directly against the name, is a
+    /// lambda whose parameter is typed `f(x)`, as in `List(Int) -> ...`. The
+    /// latter is a call by the time an argument list is looked for, so only the
+    /// spaced form gets here.
+    fn paren_group_is_lambda(&self) -> bool {
+        debug_assert!(self.cur_is(LParen));
+        let mut depth = 0usize;
+        for (i, t) in self.tokens.iter().enumerate() {
+            match t.kind {
+                LParen => depth += 1,
+                RParen => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return self.nth(i + 1).is_some_and(|t| t.category_is(TC::LambdaOp));
+                    }
+                }
+                EOF => return false,
+                _ => {}
+            }
+        }
+        false
+    }
     /// Parses the arguments of a call if the cursor is on something that can start
     /// them, else returns `None`.
     ///
@@ -1524,6 +1551,10 @@ impl Parser {
     fn opt_reduce_args(&mut self, in_type_args: bool) -> Option<ParseResult<Args>> {
         trace!(self);
         match self.peek() {
+            // `f (x) -> ...`: `f` applied to the lambda `(x) -> ...`
+            Some(t) if t.is(LParen) && self.paren_group_is_lambda() => {
+                Some(self.try_reduce_args_after(None, in_type_args))
+            }
             Some(t)
                 if t.category_is(TC::Literal)
                     || t.is(StrInterpLeft)
@@ -1572,10 +1603,19 @@ impl Parser {
     /// parenthesized call whose `)` is missing at the end of the line.
     fn try_reduce_args(&mut self, in_type_args: bool) -> ParseResult<Args> {
         trace!(self);
-        let mut lp = None;
-        if self.cur_is(LParen) {
-            lp = Some(self.lpop());
-        }
+        let lp = self.cur_is(LParen).then(|| self.lpop());
+        self.try_reduce_args_after(lp, in_type_args)
+    }
+
+    /// The rest of [`Self::try_reduce_args`], once the arguments' own `(` has been
+    /// taken (`lp`) or found absent. With `lp` `None` and the cursor still on a
+    /// `(`, that parenthesis starts the first argument: `f (x) -> x + 1`, where it
+    /// opens a lambda (see [`Self::paren_group_is_lambda`]).
+    fn try_reduce_args_after(
+        &mut self,
+        lp: Option<Token>,
+        in_type_args: bool,
+    ) -> ParseResult<Args> {
         let mut style = if lp.is_some() {
             ArgsStyle::SingleCommaWithParen
         } else {

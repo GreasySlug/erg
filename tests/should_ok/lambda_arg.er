@@ -1,0 +1,22 @@
+# A space decides what a parenthesis after a name is:
+# `f (x) -> ...` applies `f` to the lambda `(x) -> ...`, while `f(x) -> ...`
+# is a lambda whose parameter is typed `f(x)`, as in `List(Int) -> ...`.
+xs = map (x: Int) -> x + 1, [1, 2, 3]
+assert all map (x) -> x >= 2, xs
+g(f, x) = f x
+assert g((x: Int) -> x * 2, 3) == 6
+y = g (x: Int) -> x * 2, 3
+assert y == 6
+z = g (x) -> x + 1, 3
+assert z == 4
+# the body may span lines (then nothing can follow it on the first line)
+h(f) = f 5
+w = h (x: Int) ->
+    x + 10
+assert w == 15
+# a method too
+ys = [1, 2].map (i) -> i * 3
+assert all map (i) -> i % 3 == 0, ys
+# `=>` as well; the procedure lands in the parameter `p!`
+run!(p!, x) = p! x
+run! (x) => print!(x), 1

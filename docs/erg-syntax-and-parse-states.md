@@ -162,7 +162,7 @@ TypeArgs    ::= "<:" TypeSpec | ArgList[in_type_args]               -- try_reduc
 
 ```ebnf
 Args     ::= "(" ")" | "(" ArgList [ "," ] ")"                       -- try_reduce_args
-           | ArgList                                                -- 括弧なし  f a, b
+           | ArgList                                                -- 括弧なし  f a, b  （`f (x) -> e` の空白付き `(` はラムダの引数: paren_group_is_lambda）
            | Arg ":" Newline Indent Arg { Sep Arg } Dedent          -- コロン形式  if cond:  ⏎ a ⏎ b
 ArgList  ::= Arg { "," Arg }
 Arg      ::= Expr                                                   -- try_reduce_arg

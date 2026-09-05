@@ -325,6 +325,9 @@ Use `#[exec_new_thread]` attribute for tests requiring large stack size.
 
 Experimental LLVM-based native compiler. Crate: `crates/erg_native/`, feature flag: `gal`.
 
+**Not on `experimental`**: the crate lives on `main` and `feat-native`. On this branch the `gal`
+feature exists but only defines the `GAL` constant, so everything below describes those branches.
+
 ```text
 Source → Parser → AST → Lowering → HIR ──┬──→ PyCodeGenerator → .pyc (default)
                                           └──→ LLVMCodeGenerator → LLVM IR → .o → ELF (native)

@@ -32,7 +32,7 @@ Build the Erg compiler with specific feature combinations.
 | `unicode` | Unicode symbol support in output |
 | `pretty` | Pretty-printed output |
 | `large_thread` | Larger stack for tests (not for builds) |
-| `gal` | Native compiler via LLVM (experimental) |
+| `gal` | Native compiler via LLVM (only on `main` / `feat-native`; `experimental` has the flag, not the crate) |
 | `japanese` | Japanese error messages |
 | `simplified_chinese` | Simplified Chinese error messages |
 | `traditional_chinese` | Traditional Chinese error messages |
@@ -43,7 +43,7 @@ Build the Erg compiler with specific feature combinations.
 
 ## If Build Fails
 
-1. Check that Python 3.7-3.11 is available (`python3 --version`)
+1. Check that Python 3.7-3.14 is available (`python3 --version`)
 2. For native compiler: ensure LLVM 14+ is installed (`llvm-config --version`)
 3. Check feature flag compatibility
 4. Show the full error output for diagnosis

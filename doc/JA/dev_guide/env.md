@@ -14,9 +14,10 @@
 pre-commitを使ってclippyのチェックやテストを自動で行わせています。
 バグがなくても最初の実行でチェックが失敗する場合があります。その場合はもう一度コミットを試みてください。
 
-* Python3インタープリタ (3.7~3.11)
+* Python3インタープリタ (3.7~3.14)
 
-様々なバージョンでErgの挙動を検査したい場合は [pyenv](https://github.com/pyenv/pyenv) 等の導入をお勧めします。
+様々なバージョンでErgの挙動を検査したい場合は [pyenv](https://github.com/pyenv/pyenv) や [uv](https://github.com/astral-sh/uv) 等の導入をお勧めします。
+CIが回すのは3.7~3.11で、3.12~3.14は `tests/bytecode312`, `tests/bytecode313`, `tests/bytecode314` のバイトコードテストが受け持っています。
 
 ## 推奨
 

@@ -82,6 +82,58 @@ fn utf16_col(line: &str, char_col: u32) -> u32 {
         .sum()
 }
 
+/// The byte offset of UTF-16 column `col` in `line`, or `None` when the line is
+/// shorter than that.
+///
+/// A column inside a surrogate pair rounds up to the next `char` boundary --
+/// the callers slice `line` with it, and `str` indexing panics on anything else.
+fn utf16_col_to_byte(line: &str, col: u32) -> Option<usize> {
+    let mut seen = 0;
+    for (index, c) in line.char_indices() {
+        if seen >= col {
+            return Some(index);
+        }
+        seen += c.len_utf16() as u32;
+    }
+    (seen >= col).then_some(line.len())
+}
+
+/// The text of `code` between the two LSP positions, or `None` when a line is
+/// shorter than the column the range asks for.
+///
+/// `Range` columns count UTF-16 code units while `str` is indexed in bytes, so
+/// every column has to go through [`utf16_col_to_byte`] first: on a line holding
+/// any non-ASCII character the two disagree, and slicing at a byte offset that
+/// lands inside a character panics. `None` is what tells `code_action` that the
+/// character it asked for past the end of a definition is the newline.
+fn ranged(code: &str, range: Range) -> Option<String> {
+    let mut out = String::new();
+    for (i, line) in code.lines().enumerate() {
+        if i < range.start.line as usize || i > range.end.line as usize {
+            continue;
+        }
+        let starts = i == range.start.line as usize;
+        let ends = i == range.end.line as usize;
+        // A start column past the end of its line contributes nothing, rather
+        // than failing the whole range: only `end` decides `None`, as before.
+        let from = if starts {
+            utf16_col_to_byte(line, range.start.character).unwrap_or(line.len())
+        } else {
+            0
+        };
+        let to = if ends {
+            utf16_col_to_byte(line, range.end.character)?
+        } else {
+            line.len()
+        };
+        out.push_str(line.get(from..to).unwrap_or_default());
+        if !ends {
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
 /// The regions `#` comments, `#[ ... ]#` blocks and `'''` doc comments occupy,
 /// in LSP coordinates.
 fn comment_spans_of(code: &str) -> Vec<Range> {
@@ -370,31 +422,7 @@ impl FileCache {
         self.load_once(uri)?;
         let ent = self.files.borrow_mut();
         let file = ent.get(uri).ok_or("file entry not found")?;
-        let mut code = String::new();
-        for (i, line) in file.code.lines().enumerate() {
-            if i >= range.start.line as usize && i <= range.end.line as usize {
-                if i == range.start.line as usize && i == range.end.line as usize {
-                    if line.len() < range.end.character as usize {
-                        return Ok(None);
-                    }
-                    code.push_str(
-                        &line[range.start.character as usize..range.end.character as usize],
-                    );
-                } else if i == range.start.line as usize {
-                    code.push_str(&line[range.start.character as usize..]);
-                    code.push('\n');
-                } else if i == range.end.line as usize {
-                    if line.len() < range.end.character as usize {
-                        return Ok(None);
-                    }
-                    code.push_str(&line[..range.end.character as usize]);
-                } else {
-                    code.push_str(line);
-                    code.push('\n');
-                }
-            }
-        }
-        Ok(Some(code))
+        Ok(ranged(&file.code, range))
     }
 
     pub(crate) fn update(&self, uri: &NormalizedUrl, code: String, ver: Option<i32>) {
@@ -450,11 +478,20 @@ impl FileCache {
         entry.comment_spans = None;
     }
 
-    pub(crate) fn incremental_update(&self, params: DidChangeTextDocumentParams) {
+    /// Applies a `textDocument/didChange`. Returns `false` when a change could
+    /// not be applied and the cached text is therefore no longer what the client
+    /// has; [`FileCache::resync_from_disk`] is the caller's way out.
+    ///
+    /// Nothing here may panic. This runs on the server's message loop, so a
+    /// panic kills it, and the supervisor's in-process restart keeps the pre-crash
+    /// text -- every later change is then spliced into a buffer the client never
+    /// had, and completions built from it paste that stale text back into the
+    /// document.
+    pub(crate) fn incremental_update(&self, params: DidChangeTextDocumentParams) -> bool {
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut ent = self.files.borrow_mut();
         let Some(entry) = ent.get_mut(&uri) else {
-            return;
+            return true;
         };
         if entry.ver >= params.text_document.version {
             crate::_log!(
@@ -464,15 +501,21 @@ impl FileCache {
                 params.text_document.version,
                 entry.code
             );
-            return;
+            return true;
         }
         let mut code = entry.code.clone();
         for change in params.content_changes {
             let Some(range) = change.range else {
+                // No range: this change is the whole document.
+                code = change.text;
                 continue;
             };
             let start = util::pos_to_byte_index(&code, range.start);
             let end = util::pos_to_byte_index(&code, range.end);
+            if start > end {
+                lsp_log!("inverted change range {range:?} for {uri}; buffer is out of sync");
+                return false;
+            }
             code.replace_range(start..end, &change.text);
         }
         VFS.update(uri.to_file_path().unwrap(), code.clone());
@@ -487,6 +530,24 @@ impl FileCache {
         entry.ver = params.text_document.version;
         entry.token_stream = token_stream;
         entry.comment_spans = None;
+        true
+    }
+
+    /// Re-reads every cached file from disk, dropping the entries whose file is
+    /// gone.
+    ///
+    /// The recovery path after the message loop dies: the process itself stays
+    /// up, so the client never re-sends `didOpen` and the cache would otherwise
+    /// keep whatever text it held when the loop died. Disk content can still be
+    /// behind an editor with unsaved edits, but it is text the user actually
+    /// wrote, and the next `didOpen` or `didSave` makes it exact again.
+    pub fn resync_from_disk(&self) {
+        for uri in self.entries() {
+            if let Err(err) = self.reload_from_disk(&uri) {
+                lsp_log!("failed to resync {uri}: {err}");
+                self.files.borrow_mut().remove(&uri);
+            }
+        }
     }
 
     pub fn remove(&mut self, uri: &NormalizedUrl) {
@@ -590,5 +651,155 @@ mod tests {
     #[test]
     fn a_file_without_comments_has_no_spans() {
         assert!(comment_spans_of("x = 1\ny = 2\n").is_empty());
+    }
+
+    fn at(sl: u32, sc: u32, el: u32, ec: u32) -> Range {
+        Range::new(Position::new(sl, sc), Position::new(el, ec))
+    }
+
+    #[test]
+    fn a_range_is_taken_in_utf16_columns() {
+        let code = "one = 1\ntwo = 2\n";
+        assert_eq!(ranged(code, at(0, 0, 0, 3)).as_deref(), Some("one"));
+        assert_eq!(ranged(code, at(0, 6, 1, 3)).as_deref(), Some("1\ntwo"));
+        // the same, one UTF-16 column per Japanese character
+        let code = "おは = 1\nいろは = 2\n";
+        assert_eq!(ranged(code, at(0, 0, 0, 2)).as_deref(), Some("おは"));
+        assert_eq!(ranged(code, at(1, 0, 1, 3)).as_deref(), Some("いろは"));
+        assert_eq!(ranged(code, at(0, 5, 1, 3)).as_deref(), Some("1\nいろは"));
+    }
+
+    /// A magic completion pastes this text back into the document, so an
+    /// off-by-bytes slice is how the buffer's Japanese ends up auto-inserted.
+    #[test]
+    fn a_receiver_after_a_japanese_line_is_not_shifted() {
+        let code = "お = 1\nお.\n";
+        assert_eq!(ranged(code, at(1, 0, 1, 1)).as_deref(), Some("お"));
+        // `one` sits at columns 4..7 of a line whose bytes start three later
+        let code = "お = one.\n";
+        assert_eq!(ranged(code, at(0, 4, 0, 7)).as_deref(), Some("one"));
+    }
+
+    #[test]
+    fn a_range_past_the_end_of_its_line_is_none() {
+        // `code_action` reads this as "the character after the def is `\n`"
+        let code = "x = 1\ny = 2\n";
+        assert_eq!(ranged(code, at(0, 5, 0, 6)), None);
+        assert_eq!(ranged(code, at(0, 5, 0, 5)).as_deref(), Some(""));
+        // a line of Japanese is 1 column per character, not 3
+        let code = "おは\n";
+        assert_eq!(ranged(code, at(0, 0, 0, 3)), None);
+        assert_eq!(ranged(code, at(0, 0, 0, 2)).as_deref(), Some("おは"));
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+    use lsp_types::{TextDocumentContentChangeEvent, VersionedTextDocumentIdentifier};
+
+    fn cache(name: &str, code: &str) -> (FileCache, NormalizedUrl) {
+        let cache = FileCache::new(None);
+        let uri = NormalizedUrl::from_file_path(format!("/tmp/els_update_{name}.er")).unwrap();
+        cache.update(&uri, code.to_string(), Some(1));
+        (cache, uri)
+    }
+
+    fn edit(
+        uri: &NormalizedUrl,
+        ver: i32,
+        range: Range,
+        text: &str,
+    ) -> DidChangeTextDocumentParams {
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone().raw(),
+                version: ver,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(range),
+                range_length: None,
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    /// Typing on past a multi-byte character at the very end of the buffer.
+    #[test]
+    fn typing_after_a_japanese_character_at_eof() {
+        let (cache, uri) = cache("eof", "one = 1\nお");
+        assert!(cache.incremental_update(edit(
+            &uri,
+            2,
+            Range::new(Position::new(1, 1), Position::new(1, 1)),
+            "あ",
+        )));
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "one = 1\nおあ");
+    }
+
+    #[test]
+    fn an_edit_inside_a_japanese_line_lands_on_the_right_character() {
+        let (cache, uri) = cache("mid", "おはよう = 1\n");
+        // replace `よ` (column 2) with `Y`
+        assert!(cache.incremental_update(edit(
+            &uri,
+            2,
+            Range::new(Position::new(0, 2), Position::new(0, 3)),
+            "Y",
+        )));
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "おはYう = 1\n");
+    }
+
+    #[test]
+    fn a_full_document_change_replaces_the_buffer() {
+        let (cache, uri) = cache("full", "お\n");
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone().raw(),
+                version: 2,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "x = 1\n".to_string(),
+            }],
+        };
+        assert!(cache.incremental_update(params));
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "x = 1\n");
+    }
+
+    /// What the supervisor does after the message loop dies: the entry it left
+    /// behind is not what the client has, and the client will not re-send it.
+    #[test]
+    fn a_resync_replaces_a_stale_buffer_with_what_is_on_disk() {
+        let path = std::env::temp_dir().join("els_resync_test.er");
+        std::fs::write(&path, "x = 1\n").unwrap();
+        let uri = NormalizedUrl::from_file_path(&path).unwrap();
+        let cache = FileCache::new(None);
+        cache.update(&uri, "お = 1\n".to_string(), Some(7));
+
+        cache.resync_from_disk();
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "x = 1\n");
+        // the client keeps counting from where it was, so its next edit applies
+        assert!(cache.incremental_update(edit(
+            &uri,
+            8,
+            Range::new(Position::new(0, 5), Position::new(0, 5)),
+            "0",
+        )));
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "x = 10\n");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_inverted_range_is_refused_rather_than_applied() {
+        let (cache, uri) = cache("inverted", "one = 1\n");
+        assert!(!cache.incremental_update(edit(
+            &uri,
+            2,
+            Range::new(Position::new(0, 5), Position::new(0, 2)),
+            "x",
+        )));
+        assert_eq!(cache.get_entire_code(&uri).unwrap(), "one = 1\n");
     }
 }

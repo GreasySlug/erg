@@ -1049,7 +1049,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         // on recovery so the watchdog does not flag the restarted server as stuck.
         self.in_flight_since.store(0, Ordering::Relaxed);
         self.flags.health_check_gen.fetch_add(1, Ordering::Relaxed);
-        // self.file_cache.clear();
+        // Not `clear()`: the process survives a restart, so the client will not
+        // re-send `didOpen` and cleared entries would never come back. Re-reading
+        // instead drops whatever the dead message loop left half-applied --
+        // keeping it means every later `didChange` splices the client's
+        // coordinates into a buffer the client never had, and completions built
+        // from that text (`magic_completion_items` pastes the receiver's source
+        // verbatim) paste the stale text back into the document.
+        self.file_cache.resync_from_disk();
         self.comp_cache.clear();
         if let Some(chan) = self.channels.as_ref() {
             chan.close();
@@ -1370,15 +1377,22 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let params = DidChangeTextDocumentParams::deserialize(msg["params"].clone())?;
                 // Check before updating, because `x.`/`x::` will result in an error
                 // Checking should only be performed when needed for completion, i.e., when a trigger character is entered or at the beginning of a line
-                if TRIGGER_CHARS.contains(&&params.content_changes[0].text[..])
-                    || params.content_changes[0]
-                        .range
-                        .is_some_and(|r| r.start.character == 0)
-                {
+                // A client may batch edits into one notification, or send none at
+                // all -- indexing `[0]` unconditionally would panic on the latter.
+                if params.content_changes.first().is_some_and(|change| {
+                    TRIGGER_CHARS.contains(&&change.text[..])
+                        || change.range.is_some_and(|r| r.start.character == 0)
+                }) {
                     let uri = NormalizedUrl::new(params.text_document.uri.clone());
                     self.quick_check_file(uri)?;
                 }
-                self.file_cache.incremental_update(params);
+                let uri = NormalizedUrl::new(params.text_document.uri.clone());
+                if !self.file_cache.incremental_update(params) {
+                    // The cached text is no longer what the client has; serving
+                    // completions out of it would splice its contents into the
+                    // document. Disk is the only text the server can still get.
+                    let _ = self.file_cache.reload_from_disk(&uri);
+                }
                 Ok(())
             }
             "textDocument/didClose" => {

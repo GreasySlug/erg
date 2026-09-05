@@ -35,6 +35,7 @@ const FILE_QUANTIFIED: &str = "tests/quantified.er";
 const FILE_INLAY_HINT: &str = "tests/inlay_hint.er";
 const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
 const FILE_SUB_MOD: &str = "tests/sub/mod.er";
+const FILE_IME: &str = "tests/ime.er";
 
 use els::{
     DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, NormalizedUrl, Server,
@@ -98,6 +99,41 @@ fn test_completion() -> Result<(), Box<dyn std::error::Error>> {
         assert!(items.iter().any(|item| item.label == "a"));
     } else {
         return Err(format!("{}: not items: {resp:?}", line!()).into());
+    }
+    Ok(())
+}
+
+/// An IME commits Japanese at the end of a buffer that has no trailing newline,
+/// and the user keeps typing. The columns the client sends are UTF-16 units; the
+/// cache splices by byte, so mixing the two used to leave a byte index inside
+/// `お` and kill the message loop. The loop's supervisor restarts in-process, so
+/// the client never re-sends the document and every later edit landed in a
+/// buffer it never had -- which is how completions started pasting the buffer's
+/// own Japanese into the file.
+#[test]
+fn test_multibyte_edits_keep_the_buffer_in_sync() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_IME).canonicalize()?)?;
+    client.notify_open(FILE_IME)?;
+    client.notify_change(uri.clone().raw(), add_char(2, 0, "お"))?;
+    // the keystroke after a multi-byte character at EOF
+    client.notify_change(uri.clone().raw(), add_char(2, 1, "はよう"))?;
+    client.notify_change(uri.clone().raw(), add_char(2, 4, "\nx"))?;
+    client.notify_change(uri.clone().raw(), add_char(3, 1, "."))?;
+    let resp = client.request_completion(uri.raw(), 3, 2, ".")?;
+    let Some(CompletionResponse::Array(items)) = resp else {
+        return Err(format!("{}: not items: {resp:?}", line!()).into());
+    };
+    // the server is alive and still resolved `x` as the receiver
+    assert!(items.iter().any(|item| item.label == "abs"));
+    for item in &items {
+        let inserted = item.insert_text.as_deref().unwrap_or_default();
+        assert!(
+            !inserted.chars().any(|c| "おはよう".contains(c)),
+            "completion would paste the buffer's Japanese back: {item:?}"
+        );
     }
     Ok(())
 }

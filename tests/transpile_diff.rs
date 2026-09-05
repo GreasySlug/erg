@@ -208,6 +208,16 @@ last = fs.pop!()
 print! last()
 ",
     ),
+    // A parameter named `p!` is registered as `p__erg_proc__`, and a reference
+    // to it was spelled `p!`: not a local, so it became a `LOAD_NAME` of a
+    // global that does not exist.
+    (
+        "bang_parameter",
+        "\
+run!(p!, x) = p! x
+run! (x) => print!(x), 1
+",
+    ),
 ];
 
 /// Programs whose two backends are known *not* to agree.

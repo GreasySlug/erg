@@ -490,7 +490,11 @@ fn escape_ident(ident: Identifier) -> Str {
     } else if let Some(py_name) = ident.vi.py_name {
         py_name
     } else if ident.vi.is_parameter() || ident.inspect() == "self" {
-        ident.inspect().clone()
+        // the name `gen_param_names` registered the parameter under: a `p!` or
+        // `x$` is spelled `p__erg_proc__` / `x__erg_shared__` there, and a
+        // reference spelled `p!` would not be found among the locals and would
+        // become a `LOAD_NAME` of a global that does not exist
+        escape_name(ident.inspect(), &VisibilityModifier::Public, 0, 0, false)
     } else {
         escape_name(
             ident.inspect(),

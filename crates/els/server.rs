@@ -5,8 +5,8 @@ use std::ops::Not;
 use std::panic;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use erg_common::config::{ErgConfig, ErgMode};
@@ -72,8 +72,10 @@ use crate::completion::CompletionCache;
 use crate::file_cache::FileCache;
 use crate::hir_visitor::{ExprKind, HIRVisitor};
 use crate::message::{ErrorMessage, LSPResult};
+use crate::multiplexer::ReceiverMultiplexer;
 use crate::pull_diagnostic::{DocumentDiagnostic, WorkspaceDiagnostic};
-use crate::scheduler::Scheduler;
+use crate::scheduler::{Scheduler, MAX_WORKERS};
+use crate::thread_pool::ThreadPool;
 use crate::type_hierarchy::{TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes};
 use crate::util::{self, loc_to_pos, NormalizedUrl};
 
@@ -221,27 +223,62 @@ fn string_list(obj: &Value, keys: &[&str]) -> Option<Vec<String>> {
     None
 }
 
+/// A flag that is set once and that threads can sleep on until then, instead of
+/// polling it.
+#[derive(Debug, Clone, Default)]
+pub struct WaitableFlag(Arc<(Mutex<bool>, Condvar)>);
+
+impl WaitableFlag {
+    fn lock(&self) -> std::sync::MutexGuard<'_, bool> {
+        self.0 .0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set(&self) {
+        *self.lock() = true;
+        self.0 .1.notify_all();
+    }
+
+    pub fn is_set(&self) -> bool {
+        *self.lock()
+    }
+
+    /// Blocks until the flag is set.
+    pub fn wait(&self) {
+        let mut set = self.lock();
+        while !*set {
+            set = self.0 .1.wait(set).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    /// Blocks until the flag is set or `timeout` passes; whether it is set.
+    pub fn wait_timeout(&self, timeout: Duration) -> bool {
+        let set = self.lock();
+        if *set {
+            return true;
+        }
+        let (set, _) = self
+            .0
+             .1
+            .wait_timeout(set, timeout)
+            .unwrap_or_else(|e| e.into_inner());
+        *set
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Flags {
-    pub(crate) client_initialized: Arc<AtomicBool>,
-    pub(crate) workspace_checked: Arc<AtomicBool>,
-    pub(crate) builtin_modules_loaded: Arc<AtomicBool>,
+    pub(crate) client_initialized: WaitableFlag,
+    pub(crate) workspace_checked: WaitableFlag,
+    pub(crate) builtin_modules_loaded: WaitableFlag,
     /// Bumped on [`Server::restart`] so the health-check sender thread exits.
     pub(crate) health_check_gen: Arc<AtomicU64>,
 }
 
 impl Flags {
-    pub fn client_initialized(&self) -> bool {
-        self.client_initialized.load(Ordering::Relaxed)
-    }
-
-    pub fn workspace_checked(&self) -> bool {
-        self.workspace_checked.load(Ordering::Relaxed)
-    }
-
+    /// Whether the builtin modules are loaded (the completion cache is complete).
     #[allow(unused)]
     pub fn builtin_modules_loaded(&self) -> bool {
-        self.builtin_modules_loaded.load(Ordering::Relaxed)
+        self.builtin_modules_loaded.is_set()
     }
 }
 
@@ -896,127 +933,121 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     fn start_language_services(&mut self) {
         let (senders, receivers) = SendChannels::new();
         self.channels = Some(senders);
-        self.start_service::<Completion>(receivers.completion, Self::handle_completion);
-        self.start_service::<ResolveCompletionItem>(
+        let mut mux = ReceiverMultiplexer::new(receivers.wake);
+        mux.add::<Completion>(receivers.completion, Self::handle_completion);
+        mux.add::<ResolveCompletionItem>(
             receivers.resolve_completion,
             Self::handle_resolve_completion,
         );
-        self.start_service::<GotoDefinition>(
-            receivers.goto_definition,
-            Self::handle_goto_definition,
-        );
-        self.start_service::<GotoDeclaration>(
-            receivers.goto_declaration,
-            Self::handle_goto_declaration,
-        );
-        self.start_service::<GotoTypeDefinition>(
+        mux.add::<GotoDefinition>(receivers.goto_definition, Self::handle_goto_definition);
+        mux.add::<GotoDeclaration>(receivers.goto_declaration, Self::handle_goto_declaration);
+        mux.add::<GotoTypeDefinition>(
             receivers.goto_type_definition,
             Self::handle_goto_type_definition,
         );
-        self.start_service::<GotoImplementation>(
+        mux.add::<GotoImplementation>(
             receivers.goto_implementation,
             Self::handle_goto_implementation,
         );
-        self.start_service::<SemanticTokensFullRequest>(
+        mux.add::<SemanticTokensFullRequest>(
             receivers.semantic_tokens_full,
             Self::handle_semantic_tokens_full,
         );
-        self.start_service::<InlayHintRequest>(receivers.inlay_hint, Self::handle_inlay_hint);
-        self.start_service::<InlayHintResolveRequest>(
+        mux.add::<InlayHintRequest>(receivers.inlay_hint, Self::handle_inlay_hint);
+        mux.add::<InlayHintResolveRequest>(
             receivers.inlay_hint_resolve,
             Self::handle_inlay_hint_resolve,
         );
-        self.start_service::<HoverRequest>(receivers.hover, Self::handle_hover);
-        self.start_service::<References>(receivers.references, Self::handle_references);
-        self.start_service::<CodeLensRequest>(receivers.code_lens, Self::handle_code_lens);
-        self.start_service::<CodeActionRequest>(receivers.code_action, Self::handle_code_action);
-        self.start_service::<CodeActionResolveRequest>(
+        mux.add::<HoverRequest>(receivers.hover, Self::handle_hover);
+        mux.add::<References>(receivers.references, Self::handle_references);
+        mux.add::<CodeLensRequest>(receivers.code_lens, Self::handle_code_lens);
+        mux.add::<CodeActionRequest>(receivers.code_action, Self::handle_code_action);
+        mux.add::<CodeActionResolveRequest>(
             receivers.code_action_resolve,
             Self::handle_code_action_resolve,
         );
-        self.start_service::<SignatureHelpRequest>(
-            receivers.signature_help,
-            Self::handle_signature_help,
-        );
-        self.start_service::<WillRenameFiles>(
-            receivers.will_rename_files,
-            Self::handle_will_rename_files,
-        );
-        self.start_service::<ExecuteCommand>(
-            receivers.execute_command,
-            Self::handle_execute_command,
-        );
-        self.start_service::<WorkspaceSymbol>(
-            receivers.workspace_symbol,
-            Self::handle_workspace_symbol,
-        );
-        self.start_service::<DocumentSymbolRequest>(
-            receivers.document_symbol,
-            Self::handle_document_symbol,
-        );
-        self.start_service::<CallHierarchyPrepare>(
+        mux.add::<SignatureHelpRequest>(receivers.signature_help, Self::handle_signature_help);
+        mux.add::<WillRenameFiles>(receivers.will_rename_files, Self::handle_will_rename_files);
+        mux.add::<ExecuteCommand>(receivers.execute_command, Self::handle_execute_command);
+        mux.add::<WorkspaceSymbol>(receivers.workspace_symbol, Self::handle_workspace_symbol);
+        mux.add::<DocumentSymbolRequest>(receivers.document_symbol, Self::handle_document_symbol);
+        mux.add::<CallHierarchyPrepare>(
             receivers.call_hierarchy_prepare,
             Self::handle_call_hierarchy_prepare,
         );
-        self.start_service::<CallHierarchyIncomingCalls>(
+        mux.add::<CallHierarchyIncomingCalls>(
             receivers.call_hierarchy_incoming,
             Self::handle_call_hierarchy_incoming,
         );
-        self.start_service::<CallHierarchyOutgoingCalls>(
+        mux.add::<CallHierarchyOutgoingCalls>(
             receivers.call_hierarchy_outgoing,
             Self::handle_call_hierarchy_outgoing,
         );
-        self.start_service::<TypeHierarchyPrepare>(
+        mux.add::<TypeHierarchyPrepare>(
             receivers.type_hierarchy_prepare,
             Self::handle_type_hierarchy_prepare,
         );
-        self.start_service::<TypeHierarchySupertypes>(
+        mux.add::<TypeHierarchySupertypes>(
             receivers.type_hierarchy_supertypes,
             Self::handle_type_hierarchy_supertypes,
         );
-        self.start_service::<TypeHierarchySubtypes>(
+        mux.add::<TypeHierarchySubtypes>(
             receivers.type_hierarchy_subtypes,
             Self::handle_type_hierarchy_subtypes,
         );
-        self.start_service::<FoldingRangeRequest>(
-            receivers.folding_range,
-            Self::handle_folding_range,
-        );
-        self.start_service::<SelectionRangeRequest>(
-            receivers.selection_range,
-            Self::handle_selection_range,
-        );
-        self.start_service::<DocumentHighlightRequest>(
+        mux.add::<FoldingRangeRequest>(receivers.folding_range, Self::handle_folding_range);
+        mux.add::<SelectionRangeRequest>(receivers.selection_range, Self::handle_selection_range);
+        mux.add::<DocumentHighlightRequest>(
             receivers.document_highlight,
             Self::handle_document_highlight,
         );
-        self.start_service::<DocumentLinkRequest>(
-            receivers.document_link,
-            Self::handle_document_link,
-        );
-        self.start_service::<Formatting>(receivers.formatting, Self::handle_formatting);
-        self.start_service::<RangeFormatting>(
-            receivers.range_formatting,
-            Self::handle_range_formatting,
-        );
-        self.start_service::<OnTypeFormatting>(
+        mux.add::<DocumentLinkRequest>(receivers.document_link, Self::handle_document_link);
+        mux.add::<Formatting>(receivers.formatting, Self::handle_formatting);
+        mux.add::<RangeFormatting>(receivers.range_formatting, Self::handle_range_formatting);
+        mux.add::<OnTypeFormatting>(
             receivers.on_type_formatting,
             Self::handle_on_type_formatting,
         );
-        self.start_service::<LinkedEditingRange>(
+        mux.add::<LinkedEditingRange>(
             receivers.linked_editing_range,
             Self::handle_linked_editing_range,
         );
-        self.start_service::<MonikerRequest>(receivers.moniker, Self::handle_moniker);
-        self.start_service::<DocumentDiagnostic>(
+        mux.add::<MonikerRequest>(receivers.moniker, Self::handle_moniker);
+        mux.add::<DocumentDiagnostic>(
             receivers.document_diagnostic,
             Self::handle_document_diagnostic,
         );
-        self.start_service::<WorkspaceDiagnostic>(
+        mux.add::<WorkspaceDiagnostic>(
             receivers.workspace_diagnostic,
             Self::handle_workspace_diagnostic,
         );
         self.start_client_health_checker(receivers.health_check);
+        self.start_worker_pool(mux);
+    }
+
+    /// Runs the request handlers on a pool of [`MAX_WORKERS`] threads fed by one
+    /// dispatcher, which owns the request channels' receivers. Closing the
+    /// channels ([`SendChannels::close`], or their being dropped by
+    /// [`Self::restart`]) ends the dispatcher, which lets the pool finish what is
+    /// queued and exit.
+    fn start_worker_pool(&self, mut mux: ReceiverMultiplexer<Checker, Parser>) {
+        let pool = ThreadPool::new(MAX_WORKERS, "els_worker", || self.clone());
+        spawn_new_thread(
+            move || {
+                let mut jobs = Vec::new();
+                loop {
+                    let received = mux.recv_jobs(&mut jobs);
+                    for job in jobs.drain(..) {
+                        let _ = pool.submit(job);
+                    }
+                    if received.is_err() {
+                        pool.close();
+                        break;
+                    }
+                }
+            },
+            "els_dispatcher",
+        );
     }
 
     fn init_services(&mut self) {
@@ -1042,8 +1073,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
 
     /// Restart the server. Clear caches and close & reopen channels.
     /// The server does not erase client-dependent information because it cannot notify the client of the restart and receive resources (such as workspace files) again.
-    #[allow(unused)]
-    pub(crate) fn restart(&mut self) {
+    pub fn restart(&mut self) {
         lsp_log!("restarting ELS");
         // A dispatch that panicked (unwind) leaves `in_flight_since` set; clear it
         // on recovery so the watchdog does not flag the restarted server as stuck.
@@ -1167,68 +1197,53 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(())
     }
 
-    fn start_service<R>(
-        &self,
-        receiver: mpsc::Receiver<WorkerMessage<R::Params>>,
+    /// Executes one request of type `R` on this worker: admits it through the
+    /// scheduler, runs `handler` unless it was cancelled, and answers the client
+    /// with the result, the error, or `-32800` for a cancellation.
+    pub(crate) fn execute_request<R>(
+        &mut self,
+        id: i64,
+        params: R::Params,
         handler: Handler<Server<Checker, Parser>, R::Params, R::Result>,
     ) where
         R: lsp_types::request::Request + 'static,
-        R::Params: Send,
         R::Result: Serialize,
     {
-        let mut _self = self.clone();
-        spawn_new_thread(
-            move || loop {
-                match receiver.recv() {
-                    Ok(WorkerMessage::Request(id, params)) => {
-                        _self.scheduler.register(id, R::METHOD);
-                        if _self.scheduler.acquire(id).is_none() {
-                            _log!(_self, "canceled: {id}");
-                            let _ = _self.send_request_cancelled(id);
-                            // acquire never ran, so FinishGuard was not created.
-                            // Still drop the cancelled mark or a later request
-                            // reusing this id is treated as already cancelled.
-                            let _ = _self.scheduler.finish(id);
-                            continue;
-                        }
-                        // Drops at the end of this arm, removing the task from the
-                        // executing set even if `handler` panics and unwinds.
-                        let _finish = _self.scheduler.finish_on_drop(id);
-                        if _self.scheduler.is_cancelled(id) {
-                            _log!(_self, "canceled (executing): {id}");
-                            let _ = _self.send_request_cancelled(id);
-                            continue;
-                        }
-                        match handler(&mut _self, params) {
-                            Ok(result) => {
-                                if _self.scheduler.is_cancelled(id) {
-                                    _log!(_self, "canceled after handler: {id}");
-                                    let _ = _self.send_request_cancelled(id);
-                                } else {
-                                    let _ = _self.send_stdout(&LSPResult::new(id, result));
-                                }
-                            }
-                            Err(err) => {
-                                lsp_log!("error: {err}");
-                                let _ = _self.send_stdout(&ErrorMessage::new(
-                                    Some(id),
-                                    format!("err from {}: {err}", type_name::<R>()).into(),
-                                ));
-                            }
-                        }
-                    }
-                    Ok(WorkerMessage::Kill) => {
-                        break;
-                    }
-                    Err(err) => {
-                        lsp_log!("error: {err}");
-                        _log!(_self, "error: {err}");
-                        break;
-                    }
+        self.scheduler.register(id, R::METHOD);
+        if self.scheduler.acquire(id).is_none() {
+            _log!(self, "canceled: {id}");
+            let _ = self.send_request_cancelled(id);
+            // acquire never ran, so FinishGuard was not created.
+            // Still drop the cancelled mark or a later request
+            // reusing this id is treated as already cancelled.
+            let _ = self.scheduler.finish(id);
+            return;
+        }
+        // Drops at the end of this function, removing the task from the
+        // executing set even if `handler` panics and unwinds.
+        let _finish = self.scheduler.finish_on_drop(id);
+        if self.scheduler.is_cancelled(id) {
+            _log!(self, "canceled (executing): {id}");
+            let _ = self.send_request_cancelled(id);
+            return;
+        }
+        match handler(self, params) {
+            Ok(result) => {
+                if self.scheduler.is_cancelled(id) {
+                    _log!(self, "canceled after handler: {id}");
+                    let _ = self.send_request_cancelled(id);
+                } else {
+                    let _ = self.send_stdout(&LSPResult::new(id, result));
                 }
-            }, // The receiver channel will be dropped and closed
-            R::METHOD,
-        );
+            }
+            Err(err) => {
+                lsp_log!("error: {err}");
+                let _ = self.send_stdout(&ErrorMessage::new(
+                    Some(id),
+                    format!("err from {}: {err}", type_name::<R>()).into(),
+                ));
+            }
+        }
     }
 
     fn start_work_done_progress(&self, title: &str) -> NumberOrString {
@@ -1334,20 +1349,23 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     fn handle_notification(&mut self, msg: &Value, method: &str) -> ELSResult<()> {
         match method {
             "initialized" => {
-                self.flags.client_initialized.store(true, Ordering::Relaxed);
+                self.flags.client_initialized.set();
                 self.ask_auto_save()?;
                 self.register_watched_files()?;
                 self.send_log("successfully bound")
             }
             "exit" => self.exit(),
             "textDocument/didOpen" => {
-                while !self.flags.workspace_checked() {
-                    // Waiting for the initial workspace check is legitimate progress,
-                    // not a stuck loop: keep the in-flight timestamp fresh so the
-                    // watchdog does not kill the server during a slow first check.
+                // Waiting for the initial workspace check is legitimate progress,
+                // not a stuck loop: keep the in-flight timestamp fresh so the
+                // watchdog does not kill the server during a slow first check.
+                while !self
+                    .flags
+                    .workspace_checked
+                    .wait_timeout(Duration::from_millis(100))
+                {
                     self.in_flight_since
                         .store(Self::now_millis(), Ordering::Relaxed);
-                    safe_yield();
                 }
                 let params = DidOpenTextDocumentParams::deserialize(msg["params"].clone())?;
                 let uri = NormalizedUrl::new(params.text_document.uri);

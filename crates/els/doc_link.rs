@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use erg_common::spawn::safe_yield;
 use erg_common::Str;
 use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::ast::{ClassAttr, Expr, Literal};
@@ -109,9 +108,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         params: DocumentLinkParams,
     ) -> ELSResult<Option<Vec<DocumentLink>>> {
         _log!(self, "document link requested: {params:?}");
-        while !self.flags.builtin_modules_loaded() {
-            safe_yield();
-        }
+        self.flags.builtin_modules_loaded.wait();
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut res = vec![];
         res.extend(self.get_document_link(&uri));

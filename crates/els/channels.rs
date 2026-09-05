@@ -83,10 +83,14 @@ pub struct SendChannels {
     document_diagnostic: mpsc::Sender<WorkerMessage<DocumentDiagnosticParams>>,
     workspace_diagnostic: mpsc::Sender<WorkerMessage<WorkspaceDiagnosticParams>>,
     pub(crate) health_check: mpsc::Sender<WorkerMessage<()>>,
+    /// Rung after every request is sent (and on [`SendChannels::close`]), so the
+    /// dispatcher that reads all the request channels knows to look.
+    pub(crate) wake: mpsc::Sender<()>,
 }
 
 impl SendChannels {
     pub fn new() -> (Self, ReceiveChannels) {
+        let (tx_wake, rx_wake) = mpsc::channel();
         let (tx_completion, rx_completion) = mpsc::channel();
         let (tx_resolve_completion, rx_resolve_completion) = mpsc::channel();
         let (tx_goto_definition, rx_goto_definition) = mpsc::channel();
@@ -163,6 +167,7 @@ impl SendChannels {
                 document_diagnostic: tx_document_diagnostic,
                 workspace_diagnostic: tx_workspace_diagnostic,
                 health_check: tx_health_check,
+                wake: tx_wake,
             },
             ReceiveChannels {
                 completion: rx_completion,
@@ -202,6 +207,7 @@ impl SendChannels {
                 document_diagnostic: rx_document_diagnostic,
                 workspace_diagnostic: rx_workspace_diagnostic,
                 health_check: rx_health_check,
+                wake: rx_wake,
             },
         )
     }
@@ -244,6 +250,7 @@ impl SendChannels {
         let _ = self.document_diagnostic.send(WorkerMessage::Kill);
         let _ = self.workspace_diagnostic.send(WorkerMessage::Kill);
         let _ = self.health_check.send(WorkerMessage::Kill);
+        let _ = self.wake.send(());
     }
 }
 
@@ -289,6 +296,7 @@ pub struct ReceiveChannels {
     pub(crate) document_diagnostic: mpsc::Receiver<WorkerMessage<DocumentDiagnosticParams>>,
     pub(crate) workspace_diagnostic: mpsc::Receiver<WorkerMessage<WorkspaceDiagnosticParams>>,
     pub(crate) health_check: mpsc::Receiver<WorkerMessage<()>>,
+    pub(crate) wake: mpsc::Receiver<()>,
 }
 
 pub trait Sendable<R: lsp_types::request::Request + 'static> {
@@ -309,14 +317,17 @@ macro_rules! impl_sendable {
                 id: i64,
                 params: $Params,
             ) -> Result<(), mpsc::SendError<WorkerMessage<$Params>>> {
-                self.channels
-                    .as_ref()
-                    .ok_or_else(|| {
-                        erg_common::lsp_log!("channels are closed");
-                        mpsc::SendError(WorkerMessage::Kill)
-                    })?
+                let channels = self.channels.as_ref().ok_or_else(|| {
+                    erg_common::lsp_log!("channels are closed");
+                    mpsc::SendError(WorkerMessage::Kill)
+                })?;
+                channels
                     .$receiver
-                    .send($crate::channels::WorkerMessage::Request(id, params))
+                    .send($crate::channels::WorkerMessage::Request(id, params))?;
+                // ring the dispatcher; if it is gone, so is everything that
+                // could have served the request
+                let _ = channels.wake.send(());
+                Ok(())
             }
         }
     };

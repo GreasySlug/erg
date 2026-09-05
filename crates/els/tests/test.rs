@@ -334,6 +334,47 @@ fn test_signature_help() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// After a restart the request channels, the dispatcher and the worker pool are
+/// new ones; requests must keep being answered through them.
+#[test]
+#[exec_new_thread]
+fn test_restart() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    client.notify_open(FILE_A)?;
+    assert!(client.request_hover(uri.clone().raw(), 1, 4)?.is_some());
+    client.server.restart();
+    // the module cache is cleared by the restart; the file is checked again on open
+    client.notify_open(FILE_A)?;
+    assert!(client.request_hover(uri.raw(), 1, 4)?.is_some());
+    Ok(())
+}
+
+#[test]
+#[exec_new_thread]
+fn test_multiple_restarts() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_A).canonicalize()?)?;
+    for i in 0..3 {
+        client.notify_open(FILE_A)?;
+        assert!(
+            client.request_hover(uri.clone().raw(), 1, 4)?.is_some(),
+            "hover should work before restart {i}"
+        );
+        client.server.restart();
+    }
+    client.notify_open(FILE_A)?;
+    assert!(
+        client.request_hover(uri.raw(), 1, 4)?.is_some(),
+        "hover should work after the restarts"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_hover() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Server::bind_fake_client();

@@ -18,7 +18,7 @@ use erg_common::consts::PYTHON_MODE;
 use erg_common::dict::Dict;
 use erg_common::pathutil::{project_entry_dir_of, project_entry_file_of, NormalizedPathBuf};
 use erg_common::set::Set;
-use erg_common::spawn::{safe_yield, spawn_new_thread};
+use erg_common::spawn::spawn_new_thread;
 use erg_common::style::*;
 use erg_common::{fn_name, lsp_log};
 use erg_compiler::artifact::BuildRunnable;
@@ -486,9 +486,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let mut _self = self.clone();
         spawn_new_thread(
             move || {
-                while !_self.flags.client_initialized() {
-                    safe_yield();
-                }
+                _self.flags.client_initialized.wait();
                 let mut file_vers = Dict::<NormalizedUrl, i32>::new();
                 loop {
                     if _self
@@ -569,7 +567,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                                 "params": params,
                             }))
                             .unwrap();
-                        _self.flags.workspace_checked.store(true, Ordering::Relaxed);
+                        _self.flags.workspace_checked.set();
                         return;
                     }};
                     ($token: expr, $uris: expr) => {{
@@ -587,13 +585,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                                 "params": params,
                             }))
                             .unwrap();
-                        _self.flags.workspace_checked.store(true, Ordering::Relaxed);
+                        _self.flags.workspace_checked.set();
                         return;
                     }};
                 }
-                while !_self.flags.client_initialized() {
-                    safe_yield();
-                }
+                _self.flags.client_initialized.wait();
                 let token = NumberOrString::String("els/start_workspace_diagnostics".to_string());
                 let progress_token = WorkDoneProgressCreateParams {
                     token: token.clone(),
@@ -662,9 +658,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let my_gen = health_check_gen.load(Ordering::Relaxed);
         spawn_new_thread(
             move || {
-                while !_self.flags.client_initialized() {
-                    safe_yield();
-                }
+                _self.flags.client_initialized.wait();
                 loop {
                     if health_check_gen.load(Ordering::Relaxed) != my_gen {
                         break;
@@ -732,9 +726,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let flags = self.flags.clone();
         spawn_new_thread(
             move || {
-                while !flags.client_initialized() {
-                    safe_yield();
-                }
+                flags.client_initialized.wait();
                 let timeout_ms = WATCHDOG_TIMEOUT.as_millis() as u64;
                 loop {
                     sleep(WATCHDOG_CHECK_INTERVAL);

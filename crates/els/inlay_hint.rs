@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 
-use erg_common::spawn::safe_yield;
 use erg_compiler::erg_parser::parse::Parsable;
 use erg_compiler::hir::GuardClause;
 use erg_compiler::varinfo::AbsLocation;
@@ -313,9 +312,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         &mut self,
         params: InlayHintParams,
     ) -> ELSResult<Option<Vec<InlayHint>>> {
-        while !self.flags.workspace_checked() {
-            safe_yield();
-        }
+        self.flags.workspace_checked.wait();
         self.send_log(format!("inlay hint request: {params:?}"))?;
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut result = vec![];

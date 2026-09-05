@@ -585,9 +585,7 @@ impl CompletionCache {
                             shared.clone(),
                         );
                     }
-                    flags
-                        .builtin_modules_loaded
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    flags.builtin_modules_loaded.set();
                 },
                 "load_modules",
             );

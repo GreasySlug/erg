@@ -91,10 +91,24 @@ impl Drop for Trace {
     }
 }
 
+/// A parser front end: source text in, a module (with its errors and warnings) out.
+///
+/// Implemented by [`SimpleParser`], which also desugars, and by [`Parser`], which
+/// returns the raw AST.
 pub trait Parsable: 'static {
+    /// Lexes and parses `code` into a module.
+    ///
+    /// # Errors
+    ///
+    /// The lexer's errors, or an [`IncompleteArtifact`] carrying every parse error
+    /// together with the module parsed so far, if one could be built.
     fn parse(code: String) -> Result<CompleteArtifact, IncompleteArtifact<Module, ParseErrors>>;
 }
 
+/// A stateless front end that lexes, parses and desugars in one call.
+///
+/// The REPL's completeness check and most tests use it; the CLI goes through
+/// [`ParserRunner`], which carries a configuration.
 #[cfg_attr(feature = "pylib", pyo3::pyclass)]
 pub struct SimpleParser {}
 
@@ -111,20 +125,23 @@ impl Parsable for SimpleParser {
 }
 
 impl SimpleParser {
+    /// Lexes, parses and desugars `code`; see [`Parsable::parse`].
     pub fn parse(code: String) -> Result<CompleteArtifact, IncompleteArtifact> {
         <Self as Parsable>::parse(code)
     }
 }
 
-/// Check if the given source code is syntactically complete.
-/// Used for REPL to determine whether Enter key should execute or insert newline.
+/// Classifies a REPL input by how complete it is.
 ///
-/// Returns:
-/// - `Complete`: Code is valid and can be executed
-/// - `MayContinue`: Code is valid, but ends with a class/patch definition or a
-///   method block, so more method blocks may belong to the same cell
-/// - `Incomplete`: Code needs more input (unclosed brackets, unfinished blocks, etc.)
-/// - `SyntaxError`: Code has a syntax error (should be executed to show error message)
+/// The REPL uses this to decide whether Enter should run the buffer or add a line:
+///
+/// - `Complete`: valid code, ready to run
+/// - `MayContinue`: valid, but it ends with a class/patch definition or a method
+///   block, so more method blocks may belong to the same cell
+/// - `Unclosed`: a bracket, a string or a multi-line comment is still open
+/// - `ExpectsBlock` / `Continuation`: an indented block, or the definition a
+///   decorator announces, must follow
+/// - `SyntaxError`: broken code; running it shows the error
 pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness {
     use erg_common::error::ErrorKind;
     use erg_common::stdin::CodeCompleteness;
@@ -172,15 +189,15 @@ pub fn check_code_completeness(src: &str) -> erg_common::stdin::CodeCompleteness
     }
 }
 
-/// Whether the module ends with a class or patch definition, or with a method
-/// block (`C.` / `C::`) of one.
+/// Returns whether the module ends with a class or patch definition, or with a
+/// method block (`C.` / `C::`) of one.
 ///
-/// The method blocks of a class are attached to it while the AST is still
-/// whole (the AST linker), so they have to be in the same chunk as the
-/// definition -- in the REPL, the same cell. The REPL therefore keeps such a
-/// cell open for more method blocks (`CodeCompleteness::MayContinue`). A
-/// definition is recognized the way the linker recognizes it: its body is a
-/// call to `Class`, `Inherit`, `Inheritable` or `Patch`.
+/// The method blocks of a class are attached to it while the AST is still whole
+/// (by the AST linker), so they have to be in the same chunk as the definition;
+/// in the REPL, the same cell. The REPL therefore keeps such a cell open for more
+/// method blocks (`CodeCompleteness::MayContinue`). A definition is recognized
+/// the way the linker recognizes it: its body is a call to `Class`, `Inherit`,
+/// `Inheritable` or `Patch`.
 fn ends_with_class_def(module: &Module) -> bool {
     match module.last() {
         Some(Expr::Def(def)) => matches!(
@@ -196,9 +213,12 @@ fn ends_with_class_def(module: &Module) -> bool {
     }
 }
 
-/// Check if the source ends inside an open delimiter: an unclosed bracket,
-/// string, or multi-line comment. This is a quick structural scan that runs
-/// before full parsing.
+/// Returns whether `src` ends inside an unclosed bracket, string or multi-line
+/// comment.
+///
+/// A quick character scan that runs before the full parse; it knows just enough
+/// about strings, escapes and `#[ ]#` comments not to count the brackets inside
+/// them.
 fn has_open_delimiters(src: &str) -> bool {
     let mut paren_count = 0i32; // ()
     let mut bracket_count = 0i32; // []
@@ -295,19 +315,21 @@ fn has_open_delimiters(src: &str) -> bool {
 /// `ExprCtx { winding: true, ..ExprCtx::EXPR }`.
 #[derive(Debug, Clone, Copy)]
 struct ExprCtx {
-    /// statement level: definitions, method blocks and `expr args` calls are allowed
+    /// Statement level: definitions, method blocks and `expr args` calls are allowed.
     chunk: bool,
-    /// parse paren-less tuples (`1, 2, 3`)
+    /// Paren-less tuples (`1, 2, 3`) are read.
     winding: bool,
+    /// Inside a type application `T|...|`: a `|` closes it rather than opening a
+    /// refinement guard.
     in_type_args: bool,
-    /// `:` is a key-value separator, not a type ascription
+    /// Inside `{ }`: `:` is a key-value separator, not a type ascription.
     in_brace: bool,
-    /// the expression can span multiple lines (inside parentheses)
+    /// The expression may span lines (inside parentheses).
     line_break: bool,
 }
 
 impl ExprCtx {
-    /// A plain expression: an operand, an argument, an element
+    /// A plain expression: an operand, an argument, an element.
     const EXPR: Self = Self {
         chunk: false,
         winding: false,
@@ -315,22 +337,27 @@ impl ExprCtx {
         in_brace: false,
         line_break: false,
     };
-    /// A statement-level expression (a "chunk"), which may also be a definition
+    /// A statement-level expression (a "chunk"), which may also be a definition.
     const CHUNK: Self = Self {
         chunk: true,
         ..Self::EXPR
     };
 }
 
+/// One parsed argument, by the slot of [`Args`] it goes into.
 enum ArgKind {
+    /// `x`
     Pos(PosArg),
+    /// `*xs`
     Var(PosArg),
+    /// `k := v`, also `k: T := v`
     Kw(KwArg),
+    /// `**kw`
     KwVar(PosArg),
 }
 
 impl ArgKind {
-    /// Adds the argument to `args`, in the slot its kind selects
+    /// Adds the argument to `args`, in the slot its kind selects.
     fn push_to(self, args: &mut Args) {
         match self {
             Self::Pos(arg) => args.push_pos(arg),
@@ -349,12 +376,16 @@ impl From<ArgKind> for Args {
     }
 }
 
-/// The generators of a comprehension, `x <- xs; y <- ys`, and its optional guard
+/// The generators of a comprehension, `x <- xs; y <- ys`, and its optional guard.
 type Generators = (Vec<(Identifier, Expr)>, Option<Expr>);
 
+/// What was found between the `[` and `]` of a list literal.
 pub enum ListInner {
+    /// `[a, b, *rest]`
     Normal(Args),
+    /// `[x; n]`: the element and the length
     WithLength(PosArg, Expr),
+    /// `[layout | x <- xs; y <- ys | guard]`, or `[x <- xs | guard]` without a layout
     Comprehension {
         layout: Option<Expr>,
         generators: Vec<(Identifier, Expr)>,
@@ -376,6 +407,10 @@ impl ListInner {
     }
 }
 
+/// What a `{ ... }` literal turned out to be.
+///
+/// Which one is only known after the first element: `{x = 1}` is a record,
+/// `{1: 2}` a dict, `{1, 2}` a set.
 pub enum BraceContainer {
     Set(Set),
     Dict(Dict),
@@ -386,6 +421,7 @@ impl_locational_for_enum!(BraceContainer; Set, Dict, Record);
 impl_display_for_enum!(BraceContainer; Set, Dict, Record);
 
 impl BraceContainer {
+    /// The name of the container kind, for error messages.
     pub const fn kind(&self) -> &str {
         match self {
             BraceContainer::Set(_) => "Set",
@@ -405,14 +441,33 @@ impl From<BraceContainer> for Expr {
     }
 }
 
+/// How the arguments of a call are laid out; `try_reduce_args` switches between
+/// these as it reads.
+///
+/// ```text
+/// f(a, b)      SingleCommaWithParen
+/// f a, b       SingleCommaNoParen
+/// f(           MultiComma: parenthesized, one argument per line
+///     a,
+///     b,
+/// )
+/// f:           Colon: an indented block, one argument per line
+///     a
+///     b
+/// ```
 pub enum ArgsStyle {
+    /// `f(a, b)`: parenthesized, comma-separated.
     SingleCommaWithParen,
+    /// `f a, b`: comma-separated, without parentheses.
     SingleCommaNoParen,
-    MultiComma, // with parentheses
-    Colon,      // with no parentheses
+    /// Parenthesized, one argument per line.
+    MultiComma,
+    /// An indented block, without parentheses.
+    Colon,
 }
 
 impl ArgsStyle {
+    /// Whether a closing `)` ends the arguments.
     pub const fn needs_parens(&self) -> bool {
         match self {
             Self::SingleCommaWithParen | Self::MultiComma => true,
@@ -429,22 +484,30 @@ impl ArgsStyle {
     }
 }
 
-/// Perform recursive descent parsing.
+/// A recursive-descent parser over a token stream, producing the AST.
 ///
 /// Every parse method starts with `trace!(self)`, reports errors through `fail`
 /// (directly or via the `expect*` / `skip_and_throw_*` helpers) and gives up on
-/// the construct with `Err(())`; the caller decides how much to skip.
+/// its construct with `Err(())`; the caller decides how much input to skip, so a
+/// broken statement costs one error and parsing goes on with the next line.
 ///
-/// To enhance error descriptions, the parsing process will continue as long as it's not fatal.
+/// Expressions are parsed by precedence climbing in `try_reduce_expr_prec`.
+/// Definitions and parameter lists are read as ordinary expressions first and
+/// converted afterwards (`convert.rs`), since only the `=` or `->` that follows
+/// tells them apart from a call or a tuple.
 #[derive(Debug)]
 pub struct Parser {
+    /// Numbers definitions and lambdas in the order they are parsed.
     counter: DefId,
+    /// The input; its front is the cursor.
     tokens: TokenStream,
-    /// spans that were written inside their own parentheses. The AST keeps no
-    /// trace of grouping parens, and `chain_comparison` must not re-group
-    /// `(a < b) == c` -- the writer already grouped it.
+    /// Spans that were written inside their own parentheses. The AST keeps no trace
+    /// of grouping parens, and `chain_comparison` must not re-group `(a < b) == c`:
+    /// the writer already grouped it.
     parenthesized: HashSet<Location>,
+    /// Warnings recorded so far.
     warns: ParseErrors,
+    /// Errors recorded so far; see `fail`.
     pub(crate) errs: ParseErrors,
 }
 
@@ -456,6 +519,7 @@ impl Parsable for Parser {
 }
 
 impl Parser {
+    /// Creates a parser over `ts`; [`Parser::parse`] then consumes it.
     pub fn new(ts: TokenStream) -> Self {
         Self {
             counter: DefId(0),
@@ -466,18 +530,19 @@ impl Parser {
         }
     }
 
+    /// The current token, without consuming it; `None` once the stream is exhausted.
     #[inline]
     pub fn peek(&self) -> Option<&Token> {
         self.tokens.first()
     }
 
-    /// Whether the source ends here, with only the indentation the lexer has to
-    /// close left in between.
+    /// Returns whether the source ends here, with only the indentation the lexer has
+    /// to close left in between.
     ///
     /// `cur_is(EOF)` is not enough after an operator that introduces a block:
-    /// `f x =` at the top level is followed by `EOF` directly, but the same
-    /// thing one block in is followed by `Dedent, EOF`, and the REPL needs both
-    /// to say "waiting for the block" rather than "syntax error".
+    /// `f x =` at the top level is followed by `EOF` directly, but the same thing one
+    /// block in is followed by `Dedent, EOF`, and the REPL needs both to say
+    /// "waiting for the block" rather than "syntax error".
     fn at_eof(&self) -> bool {
         self.tokens
             .iter()
@@ -485,47 +550,63 @@ impl Parser {
             .is_none_or(|tk| tk.is(EOF))
     }
 
+    /// The kind of the current token, without consuming it.
     pub fn peek_kind(&self) -> Option<TokenKind> {
         self.peek().map(|tok| tok.kind)
     }
 
+    /// The token `idx` positions ahead of the cursor; `nth(0)` is the current one.
     #[inline]
     fn nth(&self, idx: usize) -> Option<&Token> {
         self.tokens.get(idx)
     }
 
+    /// Consumes the current token, if there is one.
     #[inline]
     fn skip(&mut self) {
         self.tokens.pop_front();
     }
 
+    /// Consumes every `Newline` at the cursor.
     fn skip_newlines(&mut self) {
         while self.cur_is(Newline) {
             self.skip();
         }
     }
 
+    /// Consumes and returns the current token.
+    ///
+    /// # Panics
+    ///
+    /// If the stream is exhausted. Parse methods only call this after `peek` has
+    /// shown a token.
     #[inline]
     fn lpop(&mut self) -> Token {
         self.tokens.pop_front().unwrap()
     }
 
+    /// Returns whether the current token belongs to `category`.
     fn cur_category_is(&self, category: TokenCategory) -> bool {
         self.peek()
             .map(|t| t.category_is(category))
             .unwrap_or(false)
     }
 
+    /// Returns whether the current token is of `kind`; `false` once the stream is
+    /// exhausted.
     fn cur_is(&self, kind: TokenKind) -> bool {
         self.peek().map(|t| t.is(kind)).unwrap_or(false)
     }
 
+    /// Returns whether the token `idx` positions ahead is of `kind`.
     fn nth_is(&self, idx: usize, kind: TokenKind) -> bool {
         self.nth(idx).map(|t| t.is(kind)).unwrap_or(false)
     }
 
-    /// 解析を諦めて次の解析できる要素に移行する
-    /// give up parsing and move to the next element that can be parsed
+    /// Skips to the next expression, to recover from an error.
+    ///
+    /// Consumes tokens up to and including the next separator (`Newline` or `;`);
+    /// stops in front of `EOF`.
     fn next_expr(&mut self) {
         while let Some(t) = self.peek() {
             match t.category() {
@@ -543,6 +624,10 @@ impl Parser {
         }
     }
 
+    /// Skips the rest of the line, to recover from an error.
+    ///
+    /// Consumes tokens up to and including the next `Newline`; stops in front of
+    /// `EOF`.
     fn next_line(&mut self) {
         while let Some(t) = self.peek() {
             match t.kind {
@@ -558,6 +643,11 @@ impl Parser {
         }
     }
 
+    /// Skips the rest of the indented block the cursor is in, to recover from an
+    /// error.
+    ///
+    /// Nested `Indent`/`Dedent` pairs are tracked; the `Dedent` that closes the block
+    /// is consumed. Stops in front of `EOF`.
     fn until_dedent(&mut self) {
         let mut nest_cnt = 1;
         while let Some(t) = self.peek() {
@@ -581,14 +671,18 @@ impl Parser {
         }
     }
 
-    /// The `trace!` guard. The name is a closure so that outside the `debug`
-    /// feature it is never computed.
+    /// Creates the guard `trace!` binds.
+    ///
+    /// The name is passed as a closure so that outside the `debug` feature it is
+    /// never computed.
     pub(crate) fn trace(&self, name: fn() -> &'static str) -> Trace {
         Trace::enter(name, self.peek())
     }
 
-    /// Records `err` and gives up on the construct being parsed. Every error a parse
-    /// method reports goes through here, so the `debug` log names the line that raised it.
+    /// Records `err` and gives up on the construct being parsed.
+    ///
+    /// Every error a parse method reports goes through here, so the `debug` log
+    /// names the line that raised it.
     #[track_caller]
     pub(crate) fn fail<T>(&mut self, err: ParseError) -> ParseResult<T> {
         log!(err "error caused by: {}", std::panic::Location::caller());
@@ -596,21 +690,22 @@ impl Parser {
         Err(())
     }
 
-    /// Attaches `hint` to the error the sub-parse that has just failed recorded
+    /// Attaches `hint` to the last error recorded, the one the sub-parse that has
+    /// just failed reported.
     pub(crate) fn hint(&mut self, hint: &str) {
         if let Some(err) = self.errs.last_mut() {
             err.set_hint(hint);
         }
     }
 
-    /// The line of the caller, the error number (`errno`) the parser reports: the
-    /// same as writing `line!()` at the call site
+    /// The line of the caller, used as the error number (`errno`) the parser reports;
+    /// the same as writing `line!()` at the call site.
     #[track_caller]
     fn errno() -> usize {
         std::panic::Location::caller().line() as usize
     }
 
-    /// The current token is not the `expected` one
+    /// Builds the error for a current token that is not the `expected` one.
     #[track_caller]
     fn unexpected_token_err(&self, expected: impl std::fmt::Display) -> ParseError {
         let loc = self.peek().map(|t| t.loc()).unwrap_or(Location::Unknown);
@@ -618,7 +713,11 @@ impl Parser {
         ParseError::unexpected_token(Self::errno(), loc, expected, got)
     }
 
-    /// Pops the current token if it is `kind`, otherwise fails
+    /// Consumes and returns the current token if it is of `kind`.
+    ///
+    /// # Errors
+    ///
+    /// If it is not; nothing is consumed.
     #[track_caller]
     fn expect(&mut self, kind: TokenKind) -> ParseResult<Token> {
         if self.cur_is(kind) {
@@ -628,7 +727,11 @@ impl Parser {
         }
     }
 
-    /// `expect`, skipping the rest of the line when it fails
+    /// Consumes and returns the current token if it is of `kind`.
+    ///
+    /// # Errors
+    ///
+    /// If it is not; the rest of the line is skipped.
     #[track_caller]
     fn expect_or_skip_line(&mut self, kind: TokenKind) -> ParseResult<Token> {
         if self.cur_is(kind) {
@@ -640,7 +743,11 @@ impl Parser {
         }
     }
 
-    /// Pops the current token if it is of `category`, otherwise fails
+    /// Consumes and returns the current token if it belongs to `category`.
+    ///
+    /// # Errors
+    ///
+    /// If it does not; nothing is consumed.
     #[track_caller]
     fn expect_category(&mut self, category: TokenCategory) -> ParseResult<Token> {
         if self.cur_category_is(category) {
@@ -650,8 +757,9 @@ impl Parser {
         }
     }
 
-    /// `peek` gave `None`: the token stream ran out, which its trailing `EOF` token
-    /// should make impossible, so this is reported as a parser bug
+    /// Fails because `peek` gave `None`: the token stream ran out, which its
+    /// trailing `EOF` token should make impossible, so this is reported as a parser
+    /// bug.
     #[track_caller]
     fn unexpected_none<T>(&mut self) -> ParseResult<T> {
         let caller = std::panic::Location::caller();
@@ -660,7 +768,8 @@ impl Parser {
         self.fail(err)
     }
 
-    /// A plain syntax error at the current token; the rest of the expression is skipped
+    /// Fails with a plain syntax error at the current token; the rest of the
+    /// expression is skipped.
     #[track_caller]
     fn skip_and_throw_syntax_err<T>(&mut self) -> ParseResult<T> {
         let loc = self.peek().map(|t| t.loc()).unwrap_or_default();
@@ -668,6 +777,8 @@ impl Parser {
         self.fail(ParseError::simple_syntax_error(Self::errno(), loc))
     }
 
+    /// Fails because the construct `ty` ("tuple", "dict", ...) is not closed by
+    /// `closer` where the cursor is; the rest of the expression is skipped.
     #[track_caller]
     fn skip_and_throw_invalid_unclosed_err<T>(&mut self, closer: &str, ty: &str) -> ParseResult<T> {
         let loc = self.peek().map(|t| t.loc()).unwrap_or_default();
@@ -675,6 +786,8 @@ impl Parser {
         self.fail(ParseError::unclosed_error(Self::errno(), loc, closer, ty))
     }
 
+    /// Fails because a sequence continues with `found` where one of `expected` (an
+    /// element, a closing bracket) should be; the rest of the expression is skipped.
     #[track_caller]
     fn skip_and_throw_invalid_seq_err<T>(
         &mut self,
@@ -691,8 +804,11 @@ impl Parser {
         ))
     }
 
-    /// Unlike its siblings this only builds the error: a chunk that does not end where
-    /// it should is reported, and parsing goes on with the next line
+    /// Builds the error for a statement at `loc` that does not end where it should,
+    /// skipping the rest of the line.
+    ///
+    /// Unlike its siblings this does not fail: the statement is kept, the caller
+    /// records the error, and parsing goes on with the next line.
     #[track_caller]
     fn skip_and_throw_invalid_chunk_err(&mut self, loc: Location) -> ParseError {
         log!(err "error caused by: {}", std::panic::Location::caller());
@@ -700,6 +816,8 @@ impl Parser {
         ParseError::invalid_chunk_error(Self::errno(), loc)
     }
 
+    /// Fails because something other than a call follows the `|>` of the expression
+    /// at `loc`; the rest of the expression is skipped.
     #[track_caller]
     fn skip_and_throw_stream_op_err<T>(&mut self, loc: Location) -> ParseResult<T> {
         self.next_expr();
@@ -716,8 +834,8 @@ impl Parser {
         ))
     }
 
-    /// An operator or expression that would be silently discarded, like the `1 +`
-    /// in `1 + x = 2`
+    /// Fails because the operator or expression at `loc` would be silently
+    /// discarded, like the `1 +` in `1 + x = 2`.
     #[track_caller]
     fn extra_operator_err<T>(&mut self, loc: Location) -> ParseResult<T> {
         self.fail(ParseError::syntax_error(
@@ -733,9 +851,10 @@ impl Parser {
         ))
     }
 
-    /// The comparisons Python chains: `a < b < c` means `a < b and b < c`, not
-    /// `(a < b) < c`. `contains` is left out -- it is Erg's own, and the
-    /// desugarer generates it.
+    /// Returns whether `kind` is a comparison that chains as in Python: `a < b < c`
+    /// means `a < b and b < c`, not `(a < b) < c`.
+    ///
+    /// `contains` is left out; it is Erg's own, and the desugarer generates it.
     const fn is_chainable_comparison(kind: TokenKind) -> bool {
         matches!(
             kind,
@@ -743,10 +862,12 @@ impl Parser {
         )
     }
 
-    /// The operand a chain would compare next: the right-hand side of the
-    /// rightmost comparison. The `and` case is one this function built -- `and`
-    /// binds looser than a comparison, so a user's own cannot be the left-hand
-    /// side here.
+    /// The operand a chain would compare next: the right operand of the rightmost
+    /// comparison in `expr`, or `None` when `expr` does not end in a comparison.
+    ///
+    /// An `and` at the top is one `chain_comparison` built (`and` binds looser than
+    /// a comparison, so a user's own cannot be the left operand here), and the
+    /// search continues into its right operand.
     fn chain_tail(expr: &Expr) -> Option<&Expr> {
         match expr {
             Expr::BinOp(bin) if Self::is_chainable_comparison(bin.op.kind) => {
@@ -757,8 +878,10 @@ impl Parser {
         }
     }
 
-    /// Whether `expr` can be written twice without changing what the program
-    /// does. The middle operand of a chain is compared against both of its
+    /// Returns whether `expr` can be evaluated twice without changing what the
+    /// program does.
+    ///
+    /// The middle operand of a chained comparison is compared against both of its
     /// neighbours, and an expression here has nowhere to bind a temporary.
     fn is_duplicable(expr: &Expr) -> bool {
         match expr {
@@ -770,9 +893,18 @@ impl Parser {
         }
     }
 
-    /// `a < b` then `< c` becomes `a < b and b < c`, as it reads and as Python
-    /// evaluates it. Without this the comparison is left-associative and
-    /// `1 < 3 < 2` quietly compares `True < 2`, which is true.
+    /// Combines `lhs op rhs`, chaining the comparison if `lhs` already ends in one.
+    ///
+    /// `a < b` followed by `< c` becomes `a < b and b < c`, as it reads and as Python
+    /// evaluates it. Left-associative parsing would give `(a < b) < c`, so that
+    /// `1 < 3 < 2` quietly compared `True < 2`. A parenthesized `lhs` is left alone:
+    /// `(a < b) == c` is the writer grouping on purpose, and Python, too, only chains
+    /// comparisons written bare.
+    ///
+    /// # Errors
+    ///
+    /// If the middle operand is neither a literal nor a variable, since the chain
+    /// evaluates it twice.
     fn chain_comparison(&mut self, op: Token, lhs: Expr, rhs: Expr) -> ParseResult<Expr> {
         // `(a < b) == c` is the writer grouping on purpose. Python, too, only
         // chains comparisons that are written bare.
@@ -809,12 +941,15 @@ impl Parser {
         Ok(Expr::BinOp(BinOp::new(and, lhs, right)))
     }
 
+    /// Pushes `token` back in front of the cursor, undoing one `lpop`.
     #[inline]
     fn restore(&mut self, token: Token) {
         self.tokens.push_front(token);
     }
 }
 
+/// The `Runnable` front end behind `erg --mode parse`: parses the configured
+/// input and prints the AST.
 #[derive(Debug, Default)]
 pub struct ParserRunner {
     cfg: ErgConfig,
@@ -873,6 +1008,7 @@ impl ParserRunner {
         New::new(cfg)
     }
 
+    /// Parses an already lexed `ts`, attributing the errors to the configured input.
     pub fn parse_token_stream(
         &mut self,
         ts: TokenStream,
@@ -882,6 +1018,7 @@ impl ParserRunner {
             .map_err(|iart| iart.map_errs(|errs| ParserRunnerErrors::convert(self.input(), errs)))
     }
 
+    /// Lexes and parses `src` as the configured input.
     pub fn parse(
         &mut self,
         src: String,
@@ -896,6 +1033,13 @@ impl ParserRunner {
 }
 
 impl Parser {
+    /// Parses the whole token stream into a module.
+    ///
+    /// # Errors
+    ///
+    /// Errors are recorded rather than stopping the parse, so the result carries all
+    /// of them at once. The [`IncompleteArtifact`] still holds the module when one
+    /// could be built, for tools that work on broken code.
     pub fn parse(&mut self) -> Result<CompleteArtifact, IncompleteArtifact> {
         if self.tokens.is_empty() {
             return Ok(CompleteArtifact::new(Module::empty(), ParseErrors::empty()));
@@ -925,7 +1069,11 @@ impl Parser {
         }
     }
 
-    /// Reduce to the largest unit of syntax, the module (this is called only once)
+    /// Parses the sequence of statements that makes up the module; called once.
+    ///
+    /// A statement that fails is dropped and parsing resumes with the next line (the
+    /// method that failed has already skipped to it), so one error does not hide the
+    /// ones after it.
     #[inline]
     fn try_reduce_module(&mut self) -> ParseResult<Module> {
         trace!(self);
@@ -966,7 +1114,16 @@ impl Parser {
         Ok(chunks)
     }
 
-    // expect the block`= ; . -> =>`
+    /// Parses the body that follows `=`, `->`, `=>`, `:` or `do`.
+    ///
+    /// Either a single expression on the same line, or `Newline`, `Indent`, the
+    /// statements, `Dedent`. The `Dedent` is consumed; a `Newline` right before it
+    /// is left in place, since the caller ends its own statement on it.
+    ///
+    /// # Errors
+    ///
+    /// If the block is empty, or if its last statement is a definition, which would
+    /// leave the block without a value.
     fn try_reduce_block(&mut self) -> ParseResult<Block> {
         trace!(self);
         let mut block = Block::with_capacity(2);
@@ -1052,6 +1209,7 @@ impl Parser {
         }
     }
 
+    /// Parses one `@decorator` if the cursor is on `@`, else returns `Ok(None)`.
     #[inline]
     fn opt_reduce_decorator(&mut self) -> ParseResult<Option<Decorator>> {
         trace!(self);
@@ -1071,6 +1229,13 @@ impl Parser {
         }
     }
 
+    /// Parses the `@decorator` lines in front of a definition, each ending in a
+    /// `Newline`.
+    ///
+    /// # Errors
+    ///
+    /// `ExpectNextLine` if the input ends after a decorator, so that the REPL waits
+    /// for the definition instead of reporting a syntax error.
     #[inline]
     fn opt_reduce_decorators(&mut self) -> ParseResult<HashSet<Decorator>> {
         trace!(self);
@@ -1089,6 +1254,11 @@ impl Parser {
         Ok(decs)
     }
 
+    /// Parses the type arguments of `T|...|`, cursor on the opening `|`.
+    ///
+    /// Either `|<: Bound|`, a single subtype bound, or `|A, B := C|`, ordinary
+    /// arguments read with `in_type_args` set so that the closing `|` is not taken
+    /// for another application.
     fn try_reduce_type_app_args(&mut self) -> ParseResult<TypeAppArgs> {
         trace!(self);
         let l_vbar = self.expect(VBar)?;
@@ -1127,10 +1297,11 @@ impl Parser {
         Ok(TypeAppArgs::new(l_vbar.loc(), args, r_vbar.loc()))
     }
 
-    /// Parses the guard part of a refinement pattern and desugars the whole
-    /// pattern into a set comprehension (i.e. a refinement type).
-    /// `X: T | Pred` == `X: {X: T | Pred}`, `X | Pred` == `{X: _ | Pred}`
-    /// The caller must ensure that the current token is `|`.
+    /// Parses the `| pred` guard of a refinement pattern and desugars the whole
+    /// pattern into a set comprehension, that is, a refinement type.
+    ///
+    /// `X: T | Pred` becomes `X: {X: T | Pred}`, and `X | Pred`, with the type
+    /// omitted, becomes `{X: _ | Pred}`. The cursor must be on the `|`.
     fn try_reduce_refinement_guard(&mut self, var: Identifier, typ: Expr) -> ParseResult<Expr> {
         trace!(self);
         debug_power_assert!(self.cur_is(VBar));
@@ -1149,6 +1320,11 @@ impl Parser {
         Ok(Expr::Set(Set::Comprehension(comp)))
     }
 
+    /// Parses the visibility restriction `[...]` of `::[...]name`, cursor on the
+    /// `[`.
+    ///
+    /// Either `[<: T]`, visible to the subtypes of `T`, or `[ns]`, visible inside
+    /// the namespace `ns`.
     fn try_reduce_restriction(&mut self) -> ParseResult<VisRestriction> {
         trace!(self);
         self.expect(LSqBr)?;
@@ -1176,6 +1352,7 @@ impl Parser {
         Ok(rest)
     }
 
+    /// Parses an identifier: a bare name (private) or `.name` (public).
     fn try_reduce_ident(&mut self) -> ParseResult<Identifier> {
         trace!(self);
         let ident = match self.peek_kind() {
@@ -1195,6 +1372,8 @@ impl Parser {
         Ok(ident)
     }
 
+    /// Parses the head of an accessor chain: `name`, `_`, `.name`, `::name` or
+    /// `::[restriction]name`.
     fn try_reduce_acc_lhs(&mut self) -> ParseResult<Accessor> {
         trace!(self);
         let acc = match self.peek_kind() {
@@ -1226,6 +1405,15 @@ impl Parser {
         Ok(acc)
     }
 
+    /// Parses what stands between `[` and `]`, cursor just past the `[`.
+    ///
+    /// ```text
+    /// []                     empty
+    /// [a, b, *rest]          elements, optionally a trailing spread and a trailing comma
+    /// [x; n]                 the element x repeated n times
+    /// [x <- xs | guard]      a comprehension without a layout
+    /// [f x | x <- xs; ...]   a comprehension, optionally guarded
+    /// ```
     fn try_reduce_list_elems(&mut self) -> ParseResult<ListInner> {
         trace!(self);
         if self.cur_is(EOF) {
@@ -1317,6 +1505,7 @@ impl Parser {
         Ok(ListInner::Normal(elems))
     }
 
+    /// Parses one list element, a plain expression.
     fn try_reduce_elem(&mut self) -> ParseResult<PosArg> {
         trace!(self);
         match self.peek() {
@@ -1325,6 +1514,13 @@ impl Parser {
         }
     }
 
+    /// Parses the arguments of a call if the cursor is on something that can start
+    /// them, else returns `None`.
+    ///
+    /// Arguments can start with a literal, a name, `_`, a prefix operator, an
+    /// interpolated string or an opening `(`, `[` or `{`; also with `.` or `::`,
+    /// unless a newline, `{` or `[` follows those, which makes them a method block or
+    /// a data pack instead.
     fn opt_reduce_args(&mut self, in_type_args: bool) -> Option<ParseResult<Args>> {
         trace!(self);
         match self.peek() {
@@ -1352,7 +1548,10 @@ impl Parser {
         }
     }
 
-    /// 引数はインデントで区切ることができる(ただしコンマに戻すことはできない)
+    /// Parses the arguments of a call, in any of the layouts of [`ArgsStyle`].
+    ///
+    /// Arguments may be separated by indentation instead of commas, though a call
+    /// cannot go back from one to the other:
     ///
     /// ```erg
     /// x = if True, 1, 2
@@ -1361,6 +1560,16 @@ impl Parser {
     ///     1
     ///     2
     /// ```
+    ///
+    /// Once a keyword argument (`k := v`) has appeared, every later argument must be
+    /// one too. After an opening `(` the matching `)` is consumed and recorded in the
+    /// result; without one, the arguments end at the first token that cannot
+    /// continue them, a `)` of an enclosing expression included.
+    ///
+    /// # Errors
+    ///
+    /// Mixing the layouts: a `:` after `(`, or a comma inside the colon layout. A
+    /// parenthesized call whose `)` is missing at the end of the line.
     fn try_reduce_args(&mut self, in_type_args: bool) -> ParseResult<Args> {
         trace!(self);
         let mut lp = None;
@@ -1475,9 +1684,11 @@ impl Parser {
         Ok(args)
     }
 
-    /// Parse the next argument and append it to `args`, routing to keyword-argument
-    /// parsing once any keyword argument has appeared. Shared by the `Comma` and
-    /// colon-style arms of `try_reduce_args`.
+    /// Parses the next argument and adds it to `args`.
+    ///
+    /// Once a keyword argument has appeared, the rest are read as keyword arguments
+    /// (a `**kw` spread excepted). Shared by the comma and colon layouts of
+    /// `try_reduce_args`.
     fn push_next_arg(&mut self, args: &mut Args, in_type_args: bool) -> ParseResult<()> {
         trace!(self);
         if !args.kw_is_empty() && !self.cur_is(PreDblStar) {
@@ -1489,6 +1700,15 @@ impl Parser {
         Ok(())
     }
 
+    /// Parses one argument of a call.
+    ///
+    /// ```text
+    /// x              positional
+    /// k := v         keyword
+    /// k: T := v      keyword with a type ascription
+    /// *xs, **kw      spreads
+    /// N | N >= 1     a refinement pattern with its type omitted (outside `|...|`)
+    /// ```
     fn try_reduce_arg(&mut self, in_type_args: bool) -> ParseResult<ArgKind> {
         trace!(self);
         match self.peek_kind() {
@@ -1594,7 +1814,12 @@ impl Parser {
         }
     }
 
-    /// The keyword of a keyword argument, the `k` of `k := v`: a plain identifier
+    /// The keyword of a keyword argument, the `k` of `k := v`, which must be a plain
+    /// identifier.
+    ///
+    /// # Errors
+    ///
+    /// For any other accessor; the rest of the expression is skipped.
     fn keyword_of(&mut self, acc: Accessor) -> ParseResult<Token> {
         match acc {
             Accessor::Ident(ident) => Ok(ident.name.into_token()),
@@ -1606,6 +1831,12 @@ impl Parser {
         }
     }
 
+    /// Parses a keyword argument, `k := v` or `k: T := v`.
+    ///
+    /// # Errors
+    ///
+    /// A positional argument here: once one keyword argument has been given, the
+    /// rest must be keyword arguments too. The rest of the expression is skipped.
     fn try_reduce_kw_arg(&mut self, in_type_args: bool) -> ParseResult<KwArg> {
         trace!(self);
         match self.peek() {
@@ -1679,6 +1910,16 @@ impl Parser {
         }
     }
 
+    /// Parses the indented body of a method block, `C.`, `C::` or `C::[T]` followed
+    /// by a newline; `class` is the `C` and `vis` the visibility its accessor gave.
+    ///
+    /// Every line must be a definition, a declaration `x: T` or a doc comment. The
+    /// `Dedent` is consumed; a `Newline` right before it is left in place.
+    ///
+    /// # Errors
+    ///
+    /// Any other kind of statement. On the first line the whole block is skipped, on
+    /// later lines the rest of the expression.
     fn try_reduce_class_attr_defs(
         &mut self,
         class: Expr,
@@ -1793,6 +2034,13 @@ impl Parser {
         Ok(Methods::new(self.counter, t_spec, class, vis, attrs))
     }
 
+    /// Parses a `do` / `do!` lambda, cursor on the keyword.
+    ///
+    /// `do expr`, `do: expr`, or `do:` followed by an indented block. A `do` lambda
+    /// takes no parameters; `do!` makes it a procedure.
+    ///
+    /// On one line `do:` binds tighter than `,`, so `if c, do: a, do: b` gives the
+    /// call two branches rather than one holding `a, do: b`.
     fn try_reduce_do_block(&mut self) -> ParseResult<Lambda> {
         trace!(self);
         let do_symbol = self.lpop();
@@ -1837,22 +2085,25 @@ impl Parser {
         }
     }
 
-    /// Detect and parse the `import` / `pyimport` syntactic sugar at statement level.
+    /// Parses the `import` / `pyimport` sugar if the statement at the cursor is one,
+    /// else returns `None`.
     ///
-    /// Returns `None` when the current chunk is not an import statement, so the
-    /// caller falls through to ordinary expression parsing. This keeps the
-    /// historical call form (`foo = import "foo"`) working unchanged, since there
-    /// the leading token is the bound name rather than `import`.
+    /// `None` sends the caller on to ordinary expression parsing, which keeps the
+    /// call form `foo = import "foo"` working unchanged: there the leading token is
+    /// the bound name, not `import`.
     ///
-    /// Sugar forms (all desugar to the existing call form):
-    /// - `import foo`                => `foo = import "foo"`
-    /// - `import foo as f`           => `f = import "foo"`
-    /// - `import foo/bar`            => `bar = import "foo/bar"`
-    /// - `pyimport numpy`            => `numpy = pyimport "numpy"`
-    /// - `pyimport numpy as np`      => `np = pyimport "numpy"`
-    /// - `from foo import a, b`      => `{a; b} = import "foo"`
-    /// - `from foo import a as x, b` => `{a as x; b} = import "foo"`
-    /// - `pyfrom typing import T, U` => `{T; U} = pyimport "typing"`
+    /// Every form desugars to that call form:
+    ///
+    /// ```text
+    /// import foo                =>  foo = import "foo"
+    /// import foo as f           =>  f = import "foo"
+    /// import foo/bar            =>  bar = import "foo/bar"
+    /// pyimport numpy            =>  numpy = pyimport "numpy"
+    /// pyimport numpy as np      =>  np = pyimport "numpy"
+    /// from foo import a, b      =>  {a; b} = import "foo"
+    /// from foo import a as x, b =>  {a as x; b} = import "foo"
+    /// pyfrom typing import T, U =>  {T; U} = pyimport "typing"
+    /// ```
     fn opt_reduce_import_sugar(&mut self) -> Option<ParseResult<Expr>> {
         let head = self.peek()?;
         if !head.is(Symbol) {
@@ -1875,6 +2126,11 @@ impl Parser {
         Some(self.reduce_import_sugar(func, selective))
     }
 
+    /// Parses the import statement `opt_reduce_import_sugar` recognized and builds
+    /// the definition it stands for.
+    ///
+    /// `func` is the function it calls, `import` or `pyimport`; `selective` marks the
+    /// `from ... import` forms, which bind the names through a record pattern.
     fn reduce_import_sugar(&mut self, func: &'static str, selective: bool) -> ParseResult<Expr> {
         trace!(self);
         let kw = self.lpop(); // `import` / `pyimport` / `from` / `pyfrom`
@@ -1932,9 +2188,11 @@ impl Parser {
         Ok(Expr::Def(Def::new(sig, body)))
     }
 
-    /// Parse a module path: either a string literal (`"foo/bar"`) or a slash-separated
-    /// chain of identifiers (`foo/bar`). Returns the joined path (without quotes), the
-    /// last path component (used as the default bound name), and the covered location.
+    /// Parses a module path: a string literal (`"foo/bar"`) or a slash-separated
+    /// chain of names (`foo/bar`).
+    ///
+    /// Returns the joined path without quotes, its last component (the default bound
+    /// name) and the span it covers.
     fn reduce_module_path(&mut self) -> (Str, Str, Location) {
         if self.cur_is(StrLit) {
             let tok = self.lpop();
@@ -1963,8 +2221,8 @@ impl Parser {
         }
     }
 
-    /// Parse the comma-separated name list of a `from ... import a, b as c` statement
-    /// into record-destructuring attributes (`a` => `a = a`, `b as c` => `b = c`).
+    /// Parses the name list of `from ... import a, b as c` into record-pattern
+    /// attributes: `a` binds `a`, `b as c` binds `c`. A trailing comma is allowed.
     fn reduce_import_names(&mut self) -> ParseResult<Vec<VarRecordAttr>> {
         trace!(self);
         let mut attrs = vec![];
@@ -2020,6 +2278,9 @@ impl Parser {
     /// Parses one expression in the context `ctx`: an operand or an argument
     /// (`ExprCtx::EXPR`), or a statement, which may also be a definition
     /// (`ExprCtx::CHUNK`).
+    ///
+    /// The `import` sugar is only recognized at statement level, that is, with
+    /// `chunk` and `winding` both set.
     fn try_reduce_expr(&mut self, ctx: ExprCtx) -> ParseResult<Expr> {
         // `import` / `pyimport` syntactic sugar is only recognized at statement level
         // (top-level chunks and block bodies, which are parsed with `winding == true`).
@@ -2031,13 +2292,21 @@ impl Parser {
         self.try_reduce_expr_prec(0, ctx)
     }
 
-    /// The core expression parser (precedence climbing).
+    /// The expression engine: precedence climbing over the operand `try_reduce_bin_lhs`
+    /// read.
     ///
-    /// A binary operator with precedence lower than `min_prec` terminates this level
-    /// and is handled by an outer call, which makes all binary operators
-    /// left-associative without an explicit operator stack.
-    /// Postfix-like constructs (accessors, lambdas, type ascriptions, paren-less tuples)
-    /// always bind to the nearest operand, so they are handled at any level.
+    /// A binary operator whose precedence is below `min_prec` ends this level and is
+    /// left to the caller, which makes every binary operator left-associative without
+    /// an operator stack. Postfix-like constructs (`.attr`, `[i]`, `?`, lambdas, type
+    /// ascriptions, paren-less tuples) bind to the nearest operand and are handled at
+    /// any level. Definitions, method blocks and `|>` are only accepted at the
+    /// outermost level, `min_prec == 0`.
+    ///
+    /// # Errors
+    ///
+    /// An operator left with nothing to apply to, like the `1 +` in `1 + x = 2`; a
+    /// block operator (`=`, `->`, `:`) at the end of the input, reported as
+    /// `ExpectNextLine` so that the REPL waits for the block.
     fn try_reduce_expr_prec(&mut self, min_prec: usize, ctx: ExprCtx) -> ParseResult<Expr> {
         trace!(self);
         let mut lhs = self.try_reduce_bin_lhs(ctx.in_type_args, ctx.in_brace)?;
@@ -2309,6 +2578,17 @@ impl Parser {
         Ok(lhs)
     }
 
+    /// Parses the default parameters that follow `first_elem :=` in a paren-less
+    /// parameter list, cursor on the `:=`; the result is the tuple that
+    /// `convert_tuple_to_params` later turns into `Params`.
+    ///
+    /// `first_elem` is the parameter being given the default: a name, `name: T`, or a
+    /// paren-less tuple whose last element is (`x, y := 1` arrives here as the tuple
+    /// `x, y` followed by `:=`).
+    ///
+    /// # Errors
+    ///
+    /// If that parameter is not a name; the rest of the expression is skipped.
     #[inline]
     fn try_reduce_default_parameters(
         &mut self,
@@ -2360,7 +2640,7 @@ impl Parser {
         self.try_reduce_nonempty_tuple(first_elem, self.nth_is(1, Newline))
     }
 
-    /// The `:= value` of a default parameter; the cursor is at the `:=`
+    /// Parses the `:= value` of a default parameter, cursor on the `:=`.
     fn try_reduce_default_value(&mut self, in_brace: bool) -> ParseResult<Expr> {
         self.skip(); // :=
         self.try_reduce_expr(ExprCtx {
@@ -2377,17 +2657,31 @@ impl Parser {
         })
     }
 
-    /// Build the `Float(<expr>)` conversion that the `f64` / `f32` literal suffix
-    /// desugars to. Decimal literals (`2.5`) are `Ratio`, so the suffix is the
-    /// canonical way to construct an actual `Float` value in source.
+    /// Builds the `Float(expr)` conversion that the `f64` / `f32` literal suffix
+    /// desugars to.
+    ///
+    /// Decimal literals (`2.5`) are `Ratio`, so the suffix is the canonical way to
+    /// write a `Float` value in source.
     fn float_suffix(expr: Expr) -> Expr {
         let loc = expr.loc();
         let float_tok = Token::new_with_loc(Symbol, Str::ever("Float"), loc);
         Expr::Accessor(Accessor::local(float_tok)).call1(expr)
     }
 
-    /// "LHS" is the smallest unit that can be the left-hand side of a BinOp,
-    /// e.g. Call, Name, UnaryOp, Lambda
+    /// Parses an operand: the smallest unit that can stand on either side of a
+    /// binary operator.
+    ///
+    /// Literals (with the `f64` / `f32` suffix and the `3x` implicit multiplication),
+    /// interpolated strings, accessor chains and calls, prefix operators,
+    /// parenthesized expressions and tuples, lists, brace containers, `do` and
+    /// `|T|(x) -> ...` lambdas, decorated definitions, and the `*xs` / `**kw` spreads
+    /// that start a paren-less tuple.
+    ///
+    /// # Errors
+    ///
+    /// A postfix `!` on a literal (the mutation operator is a prefix), a bare `_`
+    /// (the discard pattern is not supported here), or anything else that cannot
+    /// start an expression; the rest of the expression is skipped.
     fn try_reduce_bin_lhs(&mut self, in_type_args: bool, in_brace: bool) -> ParseResult<Expr> {
         trace!(self);
         match self.peek() {
@@ -2598,6 +2892,8 @@ impl Parser {
         }
     }
 
+    /// Parses an accessor chain followed by any number of argument lists, as in
+    /// `f x` or `obj.method(x)(y)`.
     #[inline]
     fn try_reduce_call_or_acc(&mut self, in_type_args: bool) -> ParseResult<Expr> {
         trace!(self);
@@ -2611,7 +2907,13 @@ impl Parser {
         Ok(call_or_acc)
     }
 
-    /// [y], .0, .attr, .method(...), (...)
+    /// Extends `acc` with the postfix accessors written directly against it, with no
+    /// space in between: `[i]`, `.attr`, `.0`, `::attr`, a `(...)` call, a data pack
+    /// `::{...}` and a type application `T|...|`.
+    ///
+    /// The adjacency rule tells `xs[i]` from `f [i]`, a call with a list argument,
+    /// and `T|N|` from the refinement guard in `N: Nat | N >= 1`. A `.` or `::`
+    /// followed by a newline is left in place for the method block that starts there.
     #[inline]
     fn try_reduce_acc_chain(&mut self, acc: Accessor, in_type_args: bool) -> ParseResult<Expr> {
         trace!(self);
@@ -2759,6 +3061,7 @@ impl Parser {
         Ok(obj)
     }
 
+    /// Parses a prefix operator and its operand, cursor on the operator.
     #[inline]
     fn try_reduce_unary(&mut self) -> ParseResult<UnaryOp> {
         trace!(self);
@@ -2774,6 +3077,10 @@ impl Parser {
         Ok(UnaryOp::new(op, expr))
     }
 
+    /// Parses a list literal, cursor on the `[`; see [`ListInner`] for its forms.
+    ///
+    /// If the elements come back as a single paren-less tuple, they are unpacked into
+    /// the list.
     #[inline]
     fn try_reduce_list(&mut self) -> ParseResult<List> {
         trace!(self);
@@ -2811,8 +3118,9 @@ impl Parser {
         Ok(lis)
     }
 
-    /// tuple comprehension: `(expr | x <- xs)`, `(x <- xs | guard)`
-    /// the l_paren has already been popped, and the cursor is at `|` or `<-`
+    /// Parses the rest of a tuple comprehension, `(first | x <- xs)` or
+    /// `(first <- xs | guard)`, after `first` has been read: the cursor is on the `|`
+    /// or the `<-`, and `l_paren` is the `(`. Consumes the `)`.
     fn try_reduce_tuple_comprehension(
         &mut self,
         l_paren: Token,
@@ -2856,8 +3164,8 @@ impl Parser {
         ))
     }
 
-    /// The generators of a comprehension, `x <- xs; y <- ys`, and its optional
-    /// `| guard`; the cursor is just past the `|` that opens them
+    /// Parses the generators of a comprehension, `x <- xs; y <- ys`, and its optional
+    /// `| guard`; the cursor is just past the `|` that opens them.
     fn try_reduce_generators(&mut self) -> ParseResult<Generators> {
         trace!(self);
         let mut generators = vec![];
@@ -2880,8 +3188,8 @@ impl Parser {
         Ok((generators, guard))
     }
 
-    /// The rest of a comprehension without a layout, `[x <- xs | guard]`: `var` is
-    /// its `x`, and the cursor is just past the `<-`
+    /// Parses the rest of a comprehension without a layout, `[x <- xs | guard]`:
+    /// `var` is its `x`, and the cursor is just past the `<-`.
     fn try_reduce_guarded_generator(&mut self, var: Identifier) -> ParseResult<Generators> {
         trace!(self);
         let iter = self.try_reduce_expr(ExprCtx::EXPR)?;
@@ -2890,7 +3198,18 @@ impl Parser {
         Ok((vec![(var, iter)], Some(guard)))
     }
 
-    /// Set, Dict, Record
+    /// Parses a `{...}` literal, cursor on the `{`: a set, a dict or a record, told
+    /// apart by what follows the first element.
+    ///
+    /// ```text
+    /// {}  {=}  {:}        the empty set, record and dict
+    /// {x = 1; y}          record: a definition, or a name followed by `;`
+    /// {k: v, ...}         dict
+    /// {k: v | x <- xs}    dict comprehension
+    /// {x: T | pred}       refinement type, a set comprehension over x
+    /// {a, b}              set
+    /// {f x | x <- xs}     set comprehension
+    /// ```
     fn try_reduce_brace_container(&mut self) -> ParseResult<BraceContainer> {
         trace!(self);
         let l_brace = self.expect_or_skip_line(LBrace)?;
@@ -3055,10 +3374,11 @@ impl Parser {
         }
     }
 
-    // Note that this accepts:
-    //  - {x=expr;y=expr;...}
-    //  - {x;y}
-    //  - {x;y=expr} (shorthand/normal mixed)
+    /// Parses the rest of a record after its first attribute, up to and including
+    /// the `}`.
+    ///
+    /// Attributes are `x = expr` or the shorthand `x`, for `x = x`, separated by `;`
+    /// or newlines and freely mixed. A duplicate attribute is a warning.
     fn try_reduce_record(
         &mut self,
         l_brace: Token,
@@ -3141,6 +3461,11 @@ impl Parser {
         }
     }
 
+    /// Parses the rest of a `{...}` whose first element `lhs` is followed by `:`,
+    /// cursor on the `:`.
+    ///
+    /// `{k: v, ...}` is a dict, `{k: v | x <- xs}` a dict comprehension, and
+    /// `{x: T | pred}` a refinement type, read as a set comprehension over `x`.
     fn try_reduce_normal_dict_or_refine_type(
         &mut self,
         l_brace: Token,
@@ -3182,6 +3507,8 @@ impl Parser {
         }
     }
 
+    /// Parses the remaining `key: value` pairs of a dict after the first one, up to
+    /// and including the `}`. A trailing comma is allowed.
     fn try_reduce_normal_dict(
         &mut self,
         l_brace: Token,
@@ -3241,6 +3568,14 @@ impl Parser {
         }
     }
 
+    /// Parses the rest of a set after its first element: `{a, b}`, or `{T; n}`, the
+    /// type of the sets of `n` elements of `T`. Consumes the `}`.
+    ///
+    /// Duplicate elements are dropped.
+    ///
+    /// # Errors
+    ///
+    /// A spread or a keyword argument as an element.
     fn try_reduce_set(&mut self, l_brace: Token, first_elem: Expr) -> ParseResult<Set> {
         trace!(self);
         if self.cur_is(Semi) {
@@ -3332,6 +3667,18 @@ impl Parser {
         }
     }
 
+    /// Parses the remaining elements of a paren-less tuple after `first_elem`,
+    /// cursor on the `,` that follows it.
+    ///
+    /// Stops in front of the first token that is not a `,`; a trailing comma is
+    /// allowed. With `line_break` the elements may be spread over lines (inside
+    /// parentheses). Keyword and spread elements are accepted because parameter lists
+    /// are read as tuples first, as in `(x, y := 1) -> ...`.
+    ///
+    /// # Errors
+    ///
+    /// A positional element after a keyword one; the rest of the expression is
+    /// skipped.
     fn try_reduce_nonempty_tuple(
         &mut self,
         first_elem: ArgKind,
@@ -3401,6 +3748,7 @@ impl Parser {
         Ok(Tuple::Normal(NormalTuple::new(args)))
     }
 
+    /// Parses a literal, cursor on it.
     #[inline]
     fn try_reduce_lit(&mut self) -> ParseResult<Literal> {
         trace!(self);
@@ -3415,8 +3763,15 @@ impl Parser {
         }
     }
 
-    /// "...\{, expr, }..." ==> "..." + str(expr) + "..."
-    /// "...\{, expr, }..." ==> "..." + str(expr) + "..."
+    /// Parses an interpolated string, cursor on its opening piece.
+    ///
+    /// `"a\{x}b\{y}c"` becomes `"a" + str(x) + "b" + str(y) + "c"`. The lexer
+    /// has already cut the string into `StrInterpLeft`, `StrInterpMid` and
+    /// `StrInterpRight` pieces around the expressions.
+    ///
+    /// # Errors
+    ///
+    /// If the input ends before the closing piece.
     fn try_reduce_string_interpolation(&mut self) -> ParseResult<Expr> {
         trace!(self);
         let mut expr = Self::str_piece(self.lpop());
@@ -3464,9 +3819,10 @@ impl Parser {
         }
     }
 
-    /// A literal piece of an interpolated string. Exactly one `\{` / `}` marker is
-    /// stripped at each end -- a literal brace may sit next to it, as in `"\{x}}"` --
-    /// and the quotes it stood in for are put back.
+    /// Turns a piece of an interpolated string into a plain string literal.
+    ///
+    /// Exactly one `\{` / `}` marker is stripped at each end (a literal brace may sit
+    /// next to it, as in `"\{x}}"`) and the quotes it stood in for are put back.
     fn str_piece(mut tok: Token) -> Expr {
         let content = &tok.content[..];
         let quoted = match tok.kind {
@@ -3485,7 +3841,7 @@ impl Parser {
         Expr::Literal(Literal::from(tok))
     }
 
-    /// `lhs + rhs`, the `+` placed at `rhs`
+    /// Builds `lhs + rhs`, placing the `+` at `rhs`.
     fn concat(lhs: Expr, rhs: Expr) -> Expr {
         let op = Token::new_fake(
             Plus,
@@ -3497,7 +3853,14 @@ impl Parser {
         Expr::BinOp(BinOp::new(op, lhs, rhs))
     }
 
-    /// x |> f() => f(x)
+    /// Parses the pipeline that follows `first_arg`, cursor on the `|>`.
+    ///
+    /// `x |> f(a)` becomes `f(x, a)` and `x |> .m(a)` becomes `x.m(a)`; further
+    /// argument lists apply to the result.
+    ///
+    /// # Errors
+    ///
+    /// If what follows is not a call; the rest of the expression is skipped.
     fn try_reduce_stream_operator(&mut self, first_arg: Expr) -> ParseResult<Expr> {
         trace!(self);
         let _op = self.lpop();

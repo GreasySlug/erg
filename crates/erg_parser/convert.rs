@@ -1,3 +1,11 @@
+//! Re-reads expressions as the left-hand sides they turn out to be.
+//!
+//! The parser reads `f(x, y := 1) = ...` and `(x, y) -> ...` as an ordinary call
+//! and tuple first, since only the `=` or `->` that follows tells it they were a
+//! signature and a parameter list. The methods here convert the resulting `Expr`
+//! into `Signature`, `Params` and the pattern types, and fail with a syntax error
+//! on a shape that cannot be a left-hand side.
+
 use erg_common::error::Location;
 use erg_common::set;
 use erg_common::traits::{Locational, Stream};
@@ -9,7 +17,11 @@ use crate::token::{Token, TokenKind};
 use crate::Parser;
 
 impl Parser {
-    /// Call: F(x) -> SubrSignature: F(x)
+    /// Converts the left-hand side of a definition into its signature.
+    ///
+    /// A name or a type application gives a variable signature, a call `f(x)` a
+    /// subroutine signature, and a list, tuple, record or data pack a destructuring
+    /// pattern; a type ascription adds its type to any of these.
     pub(crate) fn convert_rhs_to_sig(&mut self, rhs: Expr) -> ParseResult<Signature> {
         trace!(self);
         match rhs {
@@ -57,6 +69,8 @@ impl Parser {
         }
     }
 
+    /// Converts a name (`_` becomes the discard pattern) or a type application
+    /// `T|...|` into a variable signature.
     fn convert_accessor_to_var_sig(&mut self, accessor: Accessor) -> ParseResult<VarSignature> {
         trace!(self);
         match accessor {
@@ -80,6 +94,13 @@ impl Parser {
         }
     }
 
+    /// Converts `[a, b, *rest]` into a list pattern; every element must itself be a
+    /// variable pattern.
+    ///
+    /// # Errors
+    ///
+    /// A subroutine signature as an element, a comprehension, or `[x; n]`, which is
+    /// not supported as a pattern.
     fn convert_list_to_list_pat(&mut self, list: List) -> ParseResult<VarListPattern> {
         trace!(self);
         match list {
@@ -127,6 +148,13 @@ impl Parser {
         }
     }
 
+    /// Converts one `x = y` attribute of a record pattern; `y` must be a variable
+    /// pattern.
+    ///
+    /// # Panics
+    ///
+    /// If the attribute's body is not a single expression, which the parser
+    /// guarantees for record attributes.
     fn convert_def_to_var_record_attr(&mut self, mut attr: Def) -> ParseResult<VarRecordAttr> {
         trace!(self);
         let Signature::Var(VarSignature {
@@ -151,6 +179,7 @@ impl Parser {
         Ok(VarRecordAttr::new(lhs, rhs))
     }
 
+    /// Converts `{x = a; y}` into a record pattern; the shorthand `y` binds `y`.
     fn convert_record_to_record_pat(&mut self, record: Record) -> ParseResult<VarRecordPattern> {
         trace!(self);
         match record {
@@ -184,6 +213,8 @@ impl Parser {
         }
     }
 
+    /// Converts `C::{x = a}` into a data pack pattern: the class as a type and the
+    /// record as a pattern.
     fn convert_data_pack_to_data_pack_pat(
         &mut self,
         pack: DataPack,
@@ -194,6 +225,12 @@ impl Parser {
         Ok(VarDataPackPattern::new(class, pack.class, args))
     }
 
+    /// Converts `(a, b, *rest)` into a tuple pattern; every element must itself be a
+    /// variable pattern.
+    ///
+    /// # Errors
+    ///
+    /// A subroutine signature as an element, or a tuple comprehension.
     fn convert_tuple_to_tuple_pat(&mut self, tuple: Tuple) -> ParseResult<VarTuplePattern> {
         trace!(self);
         let mut vars = Vars::empty();
@@ -235,6 +272,7 @@ impl Parser {
         }
     }
 
+    /// Converts `lhs: T` into the signature of `lhs` with `T` as its type.
     fn convert_type_asc_to_sig(&mut self, tasc: TypeAscription) -> ParseResult<Signature> {
         trace!(self);
         let sig = self.convert_rhs_to_sig(*tasc.expr)?;
@@ -257,6 +295,11 @@ impl Parser {
         Ok(sig)
     }
 
+    /// Converts `f(params)` or `f|T|(params)` into a subroutine signature.
+    ///
+    /// # Errors
+    ///
+    /// If the callee is not a plain name, a method call for instance.
     fn convert_call_to_subr_sig(&mut self, call: Call) -> ParseResult<SubrSignature> {
         trace!(self);
         let (ident, bounds) = match *call.obj {
@@ -272,6 +315,11 @@ impl Parser {
         Ok(SubrSignature::new(set! {}, ident, bounds, params, None))
     }
 
+    /// Splits `name` or `name|T <: U|` into the identifier and its type bounds.
+    ///
+    /// # Errors
+    ///
+    /// For an attribute or subscript accessor.
     fn convert_accessor_to_ident(
         &mut self,
         accessor: Accessor,
@@ -301,6 +349,8 @@ impl Parser {
         Ok((ident, bounds))
     }
 
+    /// Converts the arguments of a type application into type bounds, `T` or
+    /// `T: Bound`; a `|<: T|` subtype bound gives no type bounds.
     pub(crate) fn convert_type_args_to_bounds(
         &mut self,
         type_args: TypeAppArgs,
@@ -318,6 +368,8 @@ impl Parser {
         Ok(TypeBoundSpecs::new(bounds))
     }
 
+    /// Converts one type argument: `T` is a type parameter without a bound, `T: Bound`
+    /// one with a bound.
     fn convert_type_arg_to_bound(&mut self, arg: PosArg) -> ParseResult<TypeBoundSpec> {
         match arg.expr {
             Expr::TypeAscription(tasc) => {
@@ -339,6 +391,11 @@ impl Parser {
         }
     }
 
+    /// Converts the arguments of a call into the parameters of a definition.
+    ///
+    /// Positional arguments become non-default parameters, `*xs` and `**kw` the
+    /// variadic ones, and `k := v` the default parameters. The first positional
+    /// parameter may be `self`.
     pub(crate) fn convert_args_to_params(&mut self, args: Args) -> ParseResult<Params> {
         trace!(self);
         let (pos_args, var_args, kw_args, kw_var, parens) = args.deconstruct();
@@ -363,6 +420,8 @@ impl Parser {
         Ok(params)
     }
 
+    /// Converts a positional argument into a non-default parameter; see
+    /// [`Parser::convert_rhs_to_param`].
     fn convert_pos_arg_to_non_default_param(
         &mut self,
         arg: PosArg,
@@ -372,6 +431,12 @@ impl Parser {
         self.convert_rhs_to_param(arg.expr, allow_self)
     }
 
+    /// Converts an expression into a non-default parameter.
+    ///
+    /// A name binds a variable, a literal matches itself, and a list, tuple or record
+    /// destructures; `ref x` and `ref! x` take the argument by reference; `x: T` adds
+    /// a type. `self` is only allowed where `allow_self` says so, as the first
+    /// parameter of a method.
     fn convert_rhs_to_param(
         &mut self,
         expr: Expr,
@@ -478,6 +543,7 @@ impl Parser {
         }
     }
 
+    /// Converts `k := v`, or `k: T := v`, into a parameter with the default `v`.
     fn convert_kw_arg_to_default_param(
         &mut self,
         arg: KwArg,
@@ -488,6 +554,11 @@ impl Parser {
         Ok(DefaultParamSignature::new(sig, arg.expr))
     }
 
+    /// Converts `[a, b]` into a list parameter pattern.
+    ///
+    /// # Errors
+    ///
+    /// A comprehension or `[x; n]`, which are not supported as patterns.
     fn convert_list_to_param_list_pat(&mut self, list: List) -> ParseResult<ParamListPattern> {
         trace!(self);
         match list {
@@ -507,6 +578,12 @@ impl Parser {
         }
     }
 
+    /// Converts one `x = pat` attribute of a record parameter pattern.
+    ///
+    /// # Panics
+    ///
+    /// If the attribute's body is not a single expression, which the parser
+    /// guarantees for record attributes.
     fn convert_def_to_param_record_attr(&mut self, mut attr: Def) -> ParseResult<ParamRecordAttr> {
         let Signature::Var(VarSignature {
             pat: VarPattern::Ident(lhs),
@@ -524,6 +601,8 @@ impl Parser {
         Ok(ParamRecordAttr::new(lhs, rhs))
     }
 
+    /// Converts `{x = a; y}` into a record parameter pattern; the shorthand `y`
+    /// binds `y`.
     fn convert_record_to_param_record_pat(
         &mut self,
         record: Record,
@@ -562,6 +641,11 @@ impl Parser {
         }
     }
 
+    /// Converts `(a, b, *rest)` into a tuple parameter pattern.
+    ///
+    /// # Errors
+    ///
+    /// A tuple comprehension.
     fn convert_tuple_to_param_tuple_pat(&mut self, tuple: Tuple) -> ParseResult<ParamTuplePattern> {
         trace!(self);
         match tuple {
@@ -592,6 +676,7 @@ impl Parser {
         }
     }
 
+    /// Converts `pat: T` into the parameter `pat` with the type `T`.
     fn convert_type_asc_to_param_pattern(
         &mut self,
         tasc: TypeAscription,
@@ -602,6 +687,12 @@ impl Parser {
         Ok(NonDefaultParamSignature::new(param.pat, Some(tasc.t_spec)))
     }
 
+    /// Converts the left-hand side of `->` or `=>` into a lambda signature.
+    ///
+    /// A single name, literal, list or record is a one-parameter lambda, a tuple a
+    /// full parameter list, and `x: T` a typed parameter. Two shapes stand for a type
+    /// pattern rather than a binding: a call `C(x)` and a type expression `T or U` /
+    /// `T and U`, which match the argument against the type without naming it.
     pub(crate) fn convert_rhs_to_lambda_sig(&mut self, rhs: Expr) -> ParseResult<LambdaSignature> {
         trace!(self);
         match rhs {
@@ -657,6 +748,11 @@ impl Parser {
         }
     }
 
+    /// Converts a name into a parameter; `_` is the discard pattern.
+    ///
+    /// # Errors
+    ///
+    /// For any other accessor.
     fn convert_accessor_to_param_sig(
         &mut self,
         accessor: Accessor,
@@ -678,6 +774,8 @@ impl Parser {
         }
     }
 
+    /// Converts a call written as a lambda parameter, like `List(Int)` in
+    /// `List(Int) -> ...`, into a discard pattern typed with the type the call names.
     fn convert_call_to_param_sig(&mut self, call: Call) -> ParseResult<NonDefaultParamSignature> {
         let predecl = Self::call_to_predecl_type_spec(call.clone()).map_err(|_| ())?;
         let t_spec =
@@ -688,6 +786,12 @@ impl Parser {
         ))
     }
 
+    /// Converts a tuple written as a lambda's parameters, `(x, *xs, k := v, **kw)`,
+    /// into a parameter list; the first parameter may be `self`.
+    ///
+    /// # Errors
+    ///
+    /// A tuple comprehension.
     fn convert_tuple_to_params(&mut self, tuple: Tuple) -> ParseResult<Params> {
         trace!(self);
         match tuple {
@@ -719,6 +823,7 @@ impl Parser {
         }
     }
 
+    /// Converts `x: T` written as a lambda's sole parameter into its signature.
     fn convert_type_asc_to_lambda_sig(
         &mut self,
         tasc: TypeAscription,

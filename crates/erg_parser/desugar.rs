@@ -1773,7 +1773,7 @@ impl Desugarer {
         todo!()
     }
 
-    /// x[y] => x.__getitem__(y)
+    /// x\[y\] => x.__getitem__(y)
     /// x.0 => x.__Tuple_getitem__(0)
     /// `==`(x, y) => __eq__(x, y)
     /// x.`==` y => x.__eq__ y

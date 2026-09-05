@@ -30,6 +30,26 @@ fn exec_repl_def_func() -> Result<(), ()> {
 
 #[test]
 #[ignore]
+fn exec_repl_rebind() -> Result<(), ()> {
+    expect_repl_success(
+        "repl_rebind",
+        [
+            "x = 1",
+            "x = 2",
+            "assert x == 2",
+            "f i = i + 1",
+            "f i = i * 2",
+            "assert f(3) == 6",
+            "exit()",
+        ]
+        .into_iter()
+        .map(|x| x.to_string())
+        .collect(),
+    )
+}
+
+#[test]
+#[ignore]
 fn exec_repl_for_loop() -> Result<(), ()> {
     expect_repl_success(
         "repl_for",

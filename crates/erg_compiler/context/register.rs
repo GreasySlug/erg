@@ -109,6 +109,14 @@ impl Context {
             .is_some_and(Self::has_const_param)
     }
 
+    /// Whether a name bound in this scope may be bound again by a later
+    /// definition. The REPL's top level is one scope for the whole session, so
+    /// there a later input may redefine what an earlier one bound, as in GHCi or
+    /// the Scala REPL; a file, and any scope inside a REPL input, may not
+    /// (doc/EN/syntax/02_name.md).
+    pub(crate) fn allows_rebinding(&self) -> bool {
+        self.cfg.input.is_repl() && self.kind == ContextKind::Module
+    }
     fn declare_var(&mut self, ident: &Identifier, t_spec: &TypeSpecWithOp) -> Failable<()> {
         if self.decls.get(&ident.name).is_some()
             || self
@@ -205,9 +213,10 @@ impl Context {
             return Ok(());
         }
         // don't remove at this point
-        if self
-            .get_class_attr(ident.name.inspect())
-            .is_some_and(|(_, decl)| !decl.kind.is_auto())
+        if !self.allows_rebinding()
+            && self
+                .get_class_attr(ident.name.inspect())
+                .is_some_and(|(_, decl)| !decl.kind.is_auto())
         {
             errs.push(TyCheckError::duplicate_decl_error(
                 self.cfg.input.clone(),
@@ -281,6 +290,7 @@ impl Context {
         if self
             .remove_class_attr(name)
             .is_some_and(|(_, decl)| !decl.kind.is_auto())
+            && !self.allows_rebinding()
         {
             Err(TyCheckErrors::from(TyCheckError::duplicate_decl_error(
                 self.cfg.input.clone(),

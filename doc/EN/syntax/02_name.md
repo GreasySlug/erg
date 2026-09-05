@@ -39,6 +39,8 @@ i = 1
 i = i + 1 # AssignError: cannot assign twice
 ```
 
+The REPL is the one exception: its top level is a single scope for the whole session, so a later input may bind a name again, as in `x = 1` followed by `x = 2`.
+
 You can define a variable with the same name in the inner scope, but you are only covering it over, not destructively rewriting its value. If you go back to the outer scope, the value will return as well.
 Note that this is a different behavior than the Python "statement" scope.
 This kind of functionality is generally referred to as shadowing. However, unlike shadowing in other languages, you cannot shadow in the same scope.

@@ -2733,6 +2733,8 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             // `_` discards what is assigned to it and binds nothing, so it
             // may be written as many times as one likes
             && &name[..] != "_"
+            // the REPL's top level may bind a name again (see `allows_rebinding`)
+            && !self.module.context.allows_rebinding()
             && self
                 .module
                 .context

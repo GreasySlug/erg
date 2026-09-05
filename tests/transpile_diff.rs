@@ -218,6 +218,102 @@ run!(p!, x) = p! x
 run! (x) => print!(x), 1
 ",
     ),
+    // Classes are written as the bytecode backend builds them: `__init__` from
+    // the constructor's shape, `new` with as many parameters as it takes.
+    (
+        "class_record",
+        "\
+C = Class {.x = Int}
+C.
+    get self = self.x
+c = C.new {.x = 1}
+print! c.get()
+",
+    ),
+    (
+        "class_empty",
+        "\
+E = Class()
+E.
+    hello self = \"hi\"
+print! E.new().hello()
+",
+    ),
+    (
+        "class_newtype",
+        "\
+V = Class [Int; _]
+V.
+    total self = sum(self::base)
+print! V.new([1, 2, 3]).total()
+",
+    ),
+    // A private field is one attribute for the whole class (`value__`), as
+    // the record literal, the generated `__init__` and `self::value` must
+    // agree on its name.
+    (
+        "class_private_field",
+        "\
+M = Class {value = Int}
+M.
+    get self = self::value
+print! M.new({value = 2}).get()
+",
+    ),
+    (
+        "class_inherit",
+        "\
+@Inheritable
+P = Class {::[<: Self]x = Int}
+P.
+    norm self = self::x ** 2
+Q = Inherit P
+Q.
+    @Override
+    norm self = self::x ** 3
+print! P.new({x = 2}).norm()
+print! Q.new({x = 2}).norm()
+",
+    ),
+    (
+        "class_staticmethod",
+        "\
+D = Class()
+D.
+    @staticmethod
+    foo x = x + 1
+print! D.new().foo(1)
+",
+    ),
+    (
+        "class_self",
+        "\
+D = Class {.y = Int}
+D.
+    new y = Self {.y;}
+    one = Self.new 1
+print! D.one.y
+print! D.new(2).y
+",
+    ),
+    // A parameter is named as the keyword arguments that pass it are.
+    (
+        "keyword_args",
+        "\
+f(a: Int, b := 1) = a + b
+print! f(1)
+print! f(1, b := 2)
+",
+    ),
+    (
+        "var_args",
+        "\
+first *x = x[0]
+print! first(1, 2, 3)
+kw_var(**x: Int) = x[\"a\"] + x[\"b\"]
+print! kw_var(a := 1, b := 2)
+",
+    ),
 ];
 
 /// Programs whose two backends are known *not* to agree.

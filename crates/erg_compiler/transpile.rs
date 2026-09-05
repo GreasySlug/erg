@@ -24,12 +24,13 @@ use crate::desugar_hir::HIRDesugarer;
 use crate::error::{CompileError, CompileErrors, CompileResult};
 use crate::hir::{
     Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, Identifier, Lambda, List,
-    Literal, Params, PatchDef, ReDef, Record, Set, Signature, Tuple, UnaryOp, HIR,
+    Literal, NonDefaultParamSignature, Params, PatchDef, ReDef, Record, Set, Signature, Tuple,
+    UnaryOp, HIR,
 };
 use crate::link_hir::HIRLinker;
 use crate::module::SharedCompilerResource;
 use crate::ty::typaram::OpKind;
-use crate::ty::value::ValueObj;
+use crate::ty::value::{GenTypeObj, ValueObj};
 use crate::ty::{Field, HasType, Type, VisibilityModifier};
 use crate::varinfo::{AbsLocation, VarInfo};
 
@@ -75,6 +76,15 @@ fn replace_non_symbolic(name: &str) -> String {
         }
     }
     replaced
+}
+
+/// The Python name of a private attribute or method: one name for the whole
+/// class (`x__`), where a private variable gets a name per definition
+/// (`x_L3_C4`). An attribute is reached through its object, so there is no
+/// shadowing to keep apart, and the field assignments of the generated
+/// `__init__` know nothing but the field's name.
+fn private_attr_name(name: &str) -> String {
+    format!("{}__", replace_non_symbolic(name))
 }
 
 fn push_indent(code: &mut String, level: usize) {
@@ -535,6 +545,7 @@ pub struct PyScriptGenerator {
     fresh_var_n: usize,
     namedtuple_loaded: bool,
     ratio_loaded: bool,
+    generic_alias_loaded: bool,
     /// Module-level text that goes above the program: the runtime modules and
     /// the imports it makes.
     prelude: String,
@@ -574,6 +585,13 @@ impl PyScriptGenerator {
         PyScript {
             filename: hir.name,
             code,
+        }
+    }
+
+    fn load_generic_alias_if_not(&mut self) {
+        if !self.generic_alias_loaded {
+            self.prelude += "from types import GenericAlias as GenericAlias__\n";
+            self.generic_alias_loaded = true;
         }
     }
 
@@ -786,7 +804,7 @@ impl PyScriptGenerator {
         let mut values = "(".to_string();
         for mut attr in rec.attrs.into_iter() {
             attrs.push('\'');
-            attrs += &Self::transpile_ident(attr.sig.into_ident());
+            attrs += &Self::transpile_attr_ident(attr.sig.into_ident());
             attrs += "',";
             if attr.body.block.len() > 1 {
                 let name = format!("instant_block_{}__", self.fresh_var_n);
@@ -938,7 +956,7 @@ impl PyScriptGenerator {
                     out.push('(');
                     self.write_expr(*attr.obj, out);
                     out.push_str(").");
-                    out.push_str(&Self::transpile_ident(attr.ident));
+                    out.push_str(&Self::transpile_attr_ident(attr.ident));
                     if class.is_some() {
                         out.push(')');
                     }
@@ -1207,7 +1225,7 @@ impl PyScriptGenerator {
         out.push(')');
         if let Some(attr) = call.attr_name {
             out.push('.');
-            out.push_str(&Self::transpile_ident(attr));
+            out.push_str(&Self::transpile_attr_ident(attr));
         }
         self.write_args(call.args, is_py_api, enc, out);
     }
@@ -1219,9 +1237,13 @@ impl PyScriptGenerator {
             out.push(',');
         }
         while let Some(arg) = args.try_remove_kw(0) {
-            let escape = if is_py_api { "" } else { "__" };
-            out.push_str(&arg.keyword.content);
-            out.push_str(escape);
+            // the parameter is named after the source (`transpile_name`), so
+            // the keyword is too; a Python API's keywords are its own
+            if is_py_api {
+                out.push_str(&arg.keyword.content);
+            } else {
+                out.push_str(&replace_non_symbolic(&arg.keyword.content));
+            }
             out.push('=');
             self.write_expr(arg.expr, out);
             out.push(',');
@@ -1230,7 +1252,32 @@ impl PyScriptGenerator {
     }
 
     fn transpile_ident(ident: Identifier) -> String {
+        if &ident.inspect()[..] == "Self" {
+            // the class being defined (or its constructor), by the class's name
+            let ty = ident
+                .vi
+                .t
+                .singleton_value()
+                .and_then(|tp| <&Type>::try_from(tp).ok())
+                .or_else(|| ident.vi.t.return_t());
+            if let Some(ty) = ty {
+                let name = ty.local_name();
+                return Self::transpile_name(&ident.vi.vis.modifier, &name, &ident.vi);
+            }
+        }
         Self::transpile_name(ident.vis(), ident.inspect(), &ident.vi)
+    }
+
+    /// An attribute (a record field, a class member): a private one is named
+    /// by [`private_attr_name`], not per definition.
+    fn transpile_attr_ident(ident: Identifier) -> String {
+        // restricted (`::[<: Self]x`) counts as private here: the record
+        // literal that fills it is written with private attributes
+        if !ident.vis().is_public() && ident.vi.py_name.is_none() && &ident.inspect()[..] != "_" {
+            private_attr_name(ident.inspect())
+        } else {
+            Self::transpile_ident(ident)
+        }
     }
 
     fn transpile_name(vis: &VisibilityModifier, name: &Str, vi: &VarInfo) -> String {
@@ -1240,6 +1287,10 @@ impl PyScriptGenerator {
         let name = replace_non_symbolic(name);
         if vis.is_public() || &name == "_" {
             name.to_string()
+        } else if vi.is_parameter() {
+            // a parameter keeps its name, as in the bytecode backend: a keyword
+            // argument (`write_args`) and a `**kwargs` key have to match it
+            name
         } else {
             let def_line = vi.def_loc.loc.ln_begin().unwrap_or(0);
             let def_col = vi.def_loc.loc.col_begin().unwrap_or(0);
@@ -1255,28 +1306,8 @@ impl PyScriptGenerator {
 
     fn write_params(&mut self, params: Params, out: &mut String) {
         for non_default in params.non_defaults {
-            match non_default.raw.pat {
-                // `_` names a parameter whose value is discarded, and stays `_`
-                // everywhere else; Python has no such spelling and rejects the
-                // name twice in one signature (`__exit__ self, _, _, _`)
-                ParamPattern::VarName(param) if &param.inspect()[..] == "_" => {
-                    write!(out, "_{},", self.fresh_var_n).unwrap();
-                    self.fresh_var_n += 1;
-                }
-                ParamPattern::VarName(param) => {
-                    out.push_str(&Self::transpile_name(
-                        &VisibilityModifier::Private,
-                        param.inspect(),
-                        &non_default.vi,
-                    ));
-                    out.push(',');
-                }
-                ParamPattern::Discard(_) => {
-                    write!(out, "_{},", self.fresh_var_n).unwrap();
-                    self.fresh_var_n += 1;
-                }
-                _ => unreachable!(),
-            }
+            self.write_param_name(non_default, out);
+            out.push(',');
         }
         for default in params.defaults {
             match default.sig.raw.pat {
@@ -1298,6 +1329,41 @@ impl PyScriptGenerator {
                 }
                 _ => unreachable!(),
             }
+        }
+        if let Some(var_params) = params.var_params {
+            out.push('*');
+            self.write_param_name(*var_params, out);
+            out.push(',');
+        }
+        if let Some(kw_var_params) = params.kw_var_params {
+            out.push_str("**");
+            self.write_param_name(*kw_var_params, out);
+            out.push(',');
+        }
+    }
+
+    fn write_param_name(&mut self, param: NonDefaultParamSignature, out: &mut String) {
+        match param.raw.pat {
+            // `_` names a parameter whose value is discarded, and stays `_`
+            // everywhere else; Python has no such spelling and rejects the
+            // name twice in one signature (`__exit__ self, _, _, _`)
+            ParamPattern::VarName(name) if &name.inspect()[..] == "_" => {
+                write!(out, "_{}", self.fresh_var_n).unwrap();
+                self.fresh_var_n += 1;
+            }
+            // `ref self` / `ref! self` name the parameter like a plain one
+            ParamPattern::VarName(name) | ParamPattern::Ref(name) | ParamPattern::RefMut(name) => {
+                out.push_str(&Self::transpile_name(
+                    &VisibilityModifier::Private,
+                    name.inspect(),
+                    &param.vi,
+                ));
+            }
+            ParamPattern::Discard(_) => {
+                write!(out, "_{}", self.fresh_var_n).unwrap();
+                self.fresh_var_n += 1;
+            }
+            other => todo!("transpiling the parameter pattern {other}"),
         }
     }
 
@@ -1408,6 +1474,17 @@ impl PyScriptGenerator {
                 }
             }
             Signature::Subr(subr) => {
+                for deco in subr.decorators.into_iter() {
+                    // `Override` and `Inheritable` are checked at compile time
+                    // and mean nothing at run time
+                    if matches!(deco.show_acc().as_deref(), Some("Override" | "Inheritable")) {
+                        continue;
+                    }
+                    out.push('@');
+                    self.write_expr(deco, out);
+                    out.push('\n');
+                    push_indent(out, self.level);
+                }
                 out.push_str("def ");
                 out.push_str(&Self::transpile_ident(subr.ident));
                 out.push('(');
@@ -1419,32 +1496,151 @@ impl PyScriptGenerator {
         }
     }
 
+    /// `class C(Base):` with the `__init__` and `new` the bytecode backend
+    /// generates (`PyCodeGenerator::emit_class_block`).
     fn write_classdef(&mut self, classdef: ClassDef, out: &mut String) {
-        let class_name = Self::transpile_ident(classdef.sig.into_ident());
-        writeln!(out, "class {class_name}():").unwrap();
-        push_indent(out, self.level + 1);
-        out.push_str("def __init__(self, param__):\n");
-        match classdef.constructor.non_default_params().unwrap()[0].typ() {
-            Type::Record(rec) => {
-                for field in rec.keys() {
-                    let vis = if field.vis.is_private() { "__" } else { "" };
-                    push_indent(out, self.level + 2);
-                    writeln!(
-                        out,
-                        "self.{}{vis} = param__.{}{vis}",
-                        field.symbol, field.symbol
-                    )
-                    .unwrap();
+        let class_name = Self::transpile_ident(classdef.sig.ident().clone());
+        let is_subclass = matches!(classdef.obj.as_ref(), GenTypeObj::Subclass(_));
+        // `Y = Inherit X` => `class Y(X)`; `N = Inherit 1..10` => `class N(Nat)`
+        let base = match (classdef.obj.as_ref(), classdef.require_or_sup.clone()) {
+            (GenTypeObj::Subclass(sub), Some(sup)) => {
+                let sup = *sup;
+                let expr = if sup.is_acc() {
+                    sup
+                } else {
+                    Expr::try_from_type(sub.sup.typ().derefine()).unwrap_or(sup)
+                };
+                self.expr_to_string(expr)
+            }
+            _ => String::new(),
+        };
+        writeln!(out, "class {class_name}({base}):").unwrap();
+        if !classdef.obj.typ().is_monomorphic() {
+            // `Box[Int]` at run time forwards to `Box`
+            self.load_generic_alias_if_not();
+            push_indent(out, self.level + 1);
+            out.push_str("__class_getitem__ = classmethod(GenericAlias__)\n");
+        }
+        let mut methods = ClassDef::take_all_methods(classdef.methods_list);
+        let user_init = methods
+            .get_def("__init__")
+            .or_else(|| methods.get_def("__init__!"))
+            .cloned();
+        self.write_init_method(&classdef.constructor, user_init, is_subclass, out);
+        if classdef.need_to_gen_new {
+            self.write_new_func(&class_name, &classdef.constructor, out);
+        }
+        // `__del__!` runs as Python's `__del__`
+        if let Some(mut del) = methods
+            .remove_def("__del__")
+            .or_else(|| methods.remove_def("__del__!"))
+        {
+            del.sig.ident_mut().vi.py_name = Some(Str::ever("__del__"));
+            methods.insert(0, Expr::Def(del));
+        }
+        // a private method is reached as an attribute, under the attribute's name
+        for chunk in methods.iter_mut() {
+            if let Expr::Def(def) = chunk {
+                let ident = def.sig.ident_mut();
+                if !ident.vis().is_public() && ident.vi.py_name.is_none() {
+                    let name = private_attr_name(ident.inspect());
+                    ident.vi.py_name = Some(Str::from(name));
                 }
             }
-            other => todo!("{other}"),
         }
-        if classdef.need_to_gen_new {
-            push_indent(out, self.level + 1);
-            writeln!(out, "def new(x): return {class_name}.__call__(x)").unwrap();
-        }
-        let methods = ClassDef::take_all_methods(classdef.methods_list);
         self.write_block(methods, Discard, out);
+    }
+
+    /// `__init__` as the bytecode backend generates it: the constructor's one
+    /// parameter is spread over the fields (`Class {rec}`), kept as `base__`
+    /// (`Class Int`) or absent (`Class()`); a subclass without one forwards
+    /// `*args, **kwargs` to the superclass. The user's `__init__!` body runs
+    /// after that.
+    fn write_init_method(
+        &mut self,
+        constructor: &Type,
+        user_init: Option<Def>,
+        is_subclass: bool,
+        out: &mut String,
+    ) {
+        let first = constructor
+            .non_default_params()
+            .and_then(|params| params.first())
+            .cloned();
+        // the user's body refers to `self` by the name its parameter got
+        let self_name = user_init
+            .as_ref()
+            .and_then(|def| def.sig.params())
+            .and_then(|params| params.non_defaults.first())
+            .and_then(|param| match &param.raw.pat {
+                ParamPattern::VarName(name) => Some(Self::transpile_name(
+                    &VisibilityModifier::Private,
+                    name.inspect(),
+                    &param.vi,
+                )),
+                _ => None,
+            })
+            .unwrap_or_else(|| "self".to_string());
+        let body_level = self.level + 2;
+        let mut body = String::new();
+        push_indent(out, self.level + 1);
+        if is_subclass && first.is_none() {
+            writeln!(out, "def __init__({self_name}, *args, **kwargs):").unwrap();
+            push_indent(&mut body, body_level);
+            writeln!(
+                body,
+                "super(type({self_name}), {self_name}).__init__(*args, **kwargs)"
+            )
+            .unwrap();
+        } else if let Some(param) = first {
+            writeln!(out, "def __init__({self_name}, param__):").unwrap();
+            match param.typ() {
+                Type::Record(rec) => {
+                    for field in rec.keys() {
+                        let name = if !field.vis.is_public() {
+                            private_attr_name(&field.symbol)
+                        } else {
+                            replace_non_symbolic(&field.symbol)
+                        };
+                        push_indent(&mut body, body_level);
+                        writeln!(body, "{self_name}.{name} = param__.{name}").unwrap();
+                    }
+                }
+                _ => {
+                    push_indent(&mut body, body_level);
+                    writeln!(body, "{self_name}.base__ = param__").unwrap();
+                }
+            }
+        } else {
+            writeln!(out, "def __init__({self_name}):").unwrap();
+        }
+        if let Some(init) = user_init {
+            self.level += 1;
+            self.write_block(init.body.block, Discard, &mut body);
+            self.level -= 1;
+        }
+        if body.is_empty() {
+            push_indent(&mut body, body_level);
+            body.push_str("pass\n");
+        }
+        out.push_str(&body);
+    }
+
+    /// `new`, when the class does not define one: the constructor's
+    /// parameters, passed on to the class.
+    fn write_new_func(&mut self, class_name: &str, constructor: &Type, out: &mut String) {
+        // FIXME: var params, default params, kw var params (as the bytecode backend)
+        let params = constructor
+            .non_default_params()
+            .map(|params| {
+                (0..params.len())
+                    .map(|i| format!("param{i}__"))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .join(", ");
+        push_indent(out, self.level + 1);
+        writeln!(out, "def new({params}): return {class_name}({params})").unwrap();
     }
 
     fn write_patchdef(&mut self, patch_def: PatchDef, out: &mut String) {
@@ -1463,7 +1659,16 @@ impl PyScriptGenerator {
     }
 
     fn write_attrdef(&mut self, mut redef: ReDef, out: &mut String) {
-        self.write_expr(Expr::Accessor(redef.attr), out);
+        // an assignment target: no class wrapper (`Nat(x) = ...` is not Python)
+        match redef.attr {
+            Accessor::Ident(ident) => out.push_str(&Self::transpile_ident(ident)),
+            Accessor::Attr(attr) => {
+                out.push('(');
+                self.write_expr(*attr.obj, out);
+                out.push_str(").");
+                out.push_str(&Self::transpile_attr_ident(attr.ident));
+            }
+        }
         out.push_str(" = ");
         if redef.block.len() > 1 {
             let name = format!("instant_block_{}__", self.fresh_var_n);

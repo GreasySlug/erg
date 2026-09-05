@@ -1,0 +1,20 @@
+# A name may be defined once in a scope. The check existed but its errors were
+# thrown away whenever the body of the definition lowered cleanly, so a whole
+# file of redefinitions passed silently.
+
+x = 1
+x = 2 # ERR
+
+f(y: Int): Int = y
+f = 3 # ERR
+
+g = 4
+g(y: Int): Int = y # ERR
+
+# the same, one scope in: a body is a scope like any other
+body() =
+    a = 1
+    a = 2 # ERR
+    a
+
+print! x, f, g, body()

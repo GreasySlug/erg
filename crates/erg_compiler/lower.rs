@@ -2713,6 +2713,9 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             );
             errors.push(err);
         } else if def.sig.vis().is_private()
+            // `_` discards what is assigned to it and binds nothing, so it
+            // may be written as many times as one likes
+            && &name[..] != "_"
             && self
                 .module
                 .context
@@ -2770,7 +2773,7 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 };
                 self.module.context.grow(&name, kind, vis, Some(tv_cache));
                 self.lower_subr_def(sig, def.body)
-                    .map_err(|(def, es)| (Some(def), errors.concat(es)))
+                    .map_err(|(def, es)| (Some(def), es))
             }
             ast::Signature::Var(sig) => {
                 // e.g. `Wrapper|T| = Class {value = T}`: the bounds must be
@@ -2815,7 +2818,17 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 }
             }
         }
-        res
+        // What was found before the body was lowered -- the name is already
+        // taken, a type is defined where none may be, the visibility modifier
+        // does not parse -- is wrong about the definition itself. A body that
+        // lowers cleanly does not excuse it, so it is reported with whatever
+        // the body produced. (These errors used to be dropped in that case,
+        // and `x = 1; x = 2` passed silently.)
+        match res {
+            Ok(def) if errors.is_empty() => Ok(def),
+            Ok(def) => Err((Some(def), errors)),
+            Err((def, es)) => Err((def, errors.concat(es))),
+        }
     }
 
     fn lower_var_def(

@@ -61,4 +61,16 @@ assert outer(1) == 2
 assert caller(1) == 1010
 assert inner(1) == 101
 
+# A name defined in a *different* scope is a different variable, so none of
+# the above is a reassignment. Neither is `_`, which binds nothing.
+_ = 1
+_ = 2
+each!(xs: [Int; _]): Int =
+    total = !0
+    for! xs, i =>
+        double = i * 2
+        total.inc! double
+    total
+assert each!([1, 2]) == 6
+
 print! "OK"

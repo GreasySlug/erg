@@ -1128,6 +1128,11 @@ fn exec_type_app_err() -> Result<(), ()> {
 }
 
 #[test]
+fn exec_reassign_err() -> Result<(), ()> {
+    expect_compile_failure("tests/should_err/reassign.er", 0, 4)
+}
+
+#[test]
 fn exec_recursive_fn_err() -> Result<(), ()> {
     expect_compile_failure("tests/should_err/recursive_fn.er", 0, 2)
 }

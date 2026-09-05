@@ -1288,7 +1288,7 @@ impl PyCodeGenerator {
             "if__" | "for__" | "while__" | "with__" | "discard__" | "assert__" => {
                 self.load_control();
             }
-            "int__" | "nat__" | "str__" | "float__" => {
+            "int__" | "nat__" | "str__" | "float__" | "bool__" => {
                 self.load_convertors();
             }
             "add" | "sub" | "mul" | "truediv" | "floordiv" | "mod" | "pow" | "eq" | "ne" | "lt"

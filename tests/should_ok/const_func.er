@@ -104,6 +104,20 @@ StrBool = str True
 assert StrBool == "True"
 StrStr = str "ab"
 assert StrStr == "ab"
+# `bool` gives what CPython gives: what is empty or zero is false
+BoolInt = bool 1
+assert BoolInt
+BoolZero = bool 0
+assert not BoolZero
+BoolStr = bool ""
+assert not BoolStr
+BoolList = bool [0]
+assert BoolList
+BoolNone = bool None
+assert not BoolNone
+# `obj` is a default parameter of `bool`, too
+BoolDefault = bool()
+assert not BoolDefault
 
 # NOTE: keyword arguments to builtin compile-time functions are covered by
 # tests/should_ok/const_kw_args.er (they cannot be executed: CPython's `abs`,

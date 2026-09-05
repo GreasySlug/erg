@@ -292,7 +292,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         range.start.character = params.range.start.character;
         let code = self.file_cache.get_ranged(&uri, range)?.unwrap_or_default();
         // `    |foo|` (|...| is the selected range) -> `|    foo|`
-        let diff = indented_code.trim_end_matches(&code);
+        // `strip_suffix`, not `trim_end_matches`: the latter takes *every*
+        // trailing repetition, so selecting `ab` out of `    abab` would leave
+        // the indent alone with both copies gone.
+        let diff = indented_code.strip_suffix(&code).unwrap_or(&indented_code);
         let diff_indent_len = diff.chars().take_while(|c| *c == ' ').count();
         let diff_is_indent = diff.trim().is_empty();
         let code = if diff_is_indent {

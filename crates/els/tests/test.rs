@@ -39,6 +39,7 @@ const FILE_MULTI_IMPORT: &str = "tests/multi_import.er";
 const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 const FILE_IME: &str = "tests/ime.er";
 const FILE_INLINE_VAR: &str = "tests/inline_var.er";
+const FILE_EXTRACT: &str = "tests/extract.er";
 
 use els::{
     DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, NormalizedUrl, Server,
@@ -1146,6 +1147,40 @@ fn test_code_action_extract_into_function() -> Result<(), Box<dyn std::error::Er
     assert!(
         edits.iter().any(|e| e.range == selected),
         "the selection itself should be replaced: {edits:?}"
+    );
+    Ok(())
+}
+
+/// Only the selection is extracted, even when it repeats earlier on the line.
+///
+/// The indent was found by stripping the selection off the line's start, with
+/// `trim_end_matches` -- which strips *every* trailing repetition. Selecting the
+/// second `x` of `    xx` left `    `, which reads as "the selection is the
+/// whole indented line", so the extract swallowed `xx` and the indent with it.
+#[test]
+#[exec_new_thread]
+fn test_code_action_extract_takes_only_the_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_EXTRACT).canonicalize()?)?;
+    client.notify_open(FILE_EXTRACT)?;
+    // the second `x` of `    xx`
+    let selected = Range::new(Position::new(2, 5), Position::new(2, 6));
+    let action = code_action_over(&mut client, &uri, selected, "Extract into function")?;
+    let edits = resolved_edits(&mut client, &uri, action)?;
+    assert!(
+        edits.iter().any(|e| e.range == selected),
+        "the replacement must cover the selection, not the whole line: {edits:?}"
+    );
+    let extracted = edits
+        .iter()
+        .find(|e| e.new_text.contains("new_func() ="))
+        .ok_or("no extracted function")?;
+    assert!(
+        !extracted.new_text.contains("xx"),
+        "only the selected `x` belongs in the function: {:?}",
+        extracted.new_text
     );
     Ok(())
 }

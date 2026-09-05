@@ -105,12 +105,12 @@
   - [x] Implement a cycle-reference detector
 - [ ] Implement a compile-time evaluator
   - [x] Builtin (Compile-time) operators
-  - [ ] Compile-time operator
-  - [ ] Compile-time function
+  - [ ] Compile-time operator (a user-defined operator is not folded: a class instance cannot be built at compile time)
+  - [x] Compile-time function (user-defined const functions: default/variadic parameters, recursion, `match`, nested definitions)
 - [x] Maintain unit tests
 - [ ] Make code readable
   - [ ] Add docs comments to every functions/methods
-  - [ ] Replace `Parser` (to more elegant & efficient one)
+  - [x] Replace `Parser` (one precedence-climbing `try_reduce_expr_prec`, in place of the two shift-reduce loops)
 - [ ] Make error messages more readable
   - [ ] Add hints (include a URL with detailed information)
   - [x] Multiple error points indication
@@ -122,7 +122,7 @@
 - [ ] Develop the development environment
   - [x] Implement LSP (Language Server Protocol)
   - [x] Implement a syntax highlighter (REPL/debugger built-in)
-  - [ ] Implement a package manager (`pack` subcommand)
+  - [ ] Implement a package manager (the `pack` subcommand delegates to the external [poise](https://github.com/erg-lang/poise))
   - [ ] Implement a virtual environment manager (`env` subcommand)
   - [x] Prepare an installer for each platform
   - [ ] Implement a compiling server

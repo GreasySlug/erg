@@ -24,19 +24,20 @@ This is possible because for every left-hand value, there exists a syntactically
 Expressions are parsed by a single engine, `try_reduce_expr_prec(min_prec, ctx)`.
 It implements precedence climbing, combining binary operators according to the precedence table returned by `TokenKind::precedence()` in `token.rs`.
 
-> Historical note: `try_reduce_chunk` and `try_reduce_expr` used to be implemented as two shift-reduce stack machines over `Vec<ExprOrOp>`, with nearly identical logic duplicated in both. They are now thin wrappers around `try_reduce_expr_prec` (this addressed the "Replace `Parser`" TODO item).
+> Historical note: statement-level and expression-level parsing used to be two shift-reduce stack machines over `Vec<ExprOrOp>`, with nearly identical logic duplicated in both. Both are now the single entry point `try_reduce_expr(ctx)` over `try_reduce_expr_prec` (this addressed the "Replace `Parser`" TODO item).
 
 ### Structure
 
 ```text
-try_reduce_chunk(winding, in_brace)        # statement-level entry point (definitions allowed)
-try_reduce_expr(winding, in_type_args, ..) # expression-level entry point
+try_reduce_expr(ctx)                       # the entry point; ExprCtx::CHUNK allows definitions
         └──→ try_reduce_expr_prec(0, ctx)  # the shared engine
                 ├── try_reduce_bin_lhs()   # operands (literals, accessors, containers, lambdas, ...)
                 └── loop {  dispatch on the following token  }
 ```
 
-The parsing context is carried around in the `ExprCtx` struct (Copy).
+The parsing context is carried around in the `ExprCtx` struct (Copy). Callers start
+from one of its constants and override only what differs, e.g.
+`self.try_reduce_expr(ExprCtx { winding: true, ..ExprCtx::EXPR })`.
 
 | flag | meaning |
 | ---- | ------- |

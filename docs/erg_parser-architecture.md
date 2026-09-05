@@ -188,14 +188,44 @@ let joined = ts.iter()
 
 ### 主要型
 
-- **`Parser`**（parse.rs:360）: `counter: DefId`（定義ID採番）/ `level`（デバッグ用再帰深度）/ `tokens: TokenStream` / `warns` / `errs` を保持する再帰下降パーサー。
+- **`Parser`**: `counter: DefId`（定義ID採番）/ `tokens: TokenStream` / `parenthesized` / `warns` / `errs` を保持する再帰下降パーサー。
 - **`ParserRunner`**: `ErgConfig` を持ち `Runnable` を実装する高レベルドライバ。`parse(src)` がエントリ。
 - **`SimpleParser`**: 字句解析〜パースを一括で行うステートレスな便宜ラッパ（`Parsable` 実装）。
-- **`ExprCtx`**（parse.rs:268）: 式パースの文脈フラグ。`chunk`（文レベル＝定義/`expr args` 呼び出しを許可）/ `winding`（括弧なしタプル）/ `in_type_args`（`|...|` 内）/ `in_brace`（`{}` 内で `:` を key-value 区切り扱い）/ `line_break`（括弧内で複数行可）。
+- **`ExprCtx`**: 式パースの文脈フラグ。`chunk`（文レベル＝定義/`expr args` 呼び出しを許可）/ `winding`（括弧なしタプル）/ `in_type_args`（`|...|` 内）/ `in_brace`（`{}` 内で `:` を key-value 区切り扱い）/ `line_break`（括弧内で複数行可）。
+  呼び出し側は定数 `ExprCtx::EXPR`（通常の式）/ `ExprCtx::CHUNK`（文＝定義を許可）を起点に struct update 構文で差分だけ指定する:
+  `self.try_reduce_expr(ExprCtx { winding: true, ..ExprCtx::EXPR })`。
+
+### 解析メソッドの書き方（規約）
+
+各 `try_reduce_*` / `convert_*` メソッドは次の形に統一されている（`parse.rs` 冒頭の `trace!` と `Parser` の `fail` 周辺を参照）:
+
+```rust
+fn try_reduce_ident(&mut self) -> ParseResult<Identifier> {
+    trace!(self);                              // 入口ログ + RAII ガード（debug feature のみ有効）
+    match self.peek_kind() {
+        Some(Symbol) => Ok(Identifier::private_from_token(self.lpop())),
+        Some(Dot) => {
+            let dot = self.lpop();
+            let symbol = self.expect(Symbol)?;  // 期待トークンでなければ記録して Err
+            Ok(Identifier::public_from_token(dot, symbol))
+        }
+        _ => self.skip_and_throw_syntax_err(),  // 記録 + 式末尾までスキップ + Err
+    }
+}
+```
+
+- **`trace!(self)`**: 再帰深度を thread-local で数え、入口と（ガードの `Drop` で）出口をログする。以前は `debug_call_info!` / `debug_exit_info!` / `stack_dec` を全 return 経路と全 `?` の `map_err` に手で書いていた（約 400 箇所）。ガード方式なので早期 `return` も `?` も追加コードなしで正しく脱出が記録される。名前はクロージャで渡すため、debug feature 無しでは計算されない。
+- **`fail(err)`**: エラーを `errs` に積んで `Err(())` を返す唯一の窓口。`#[track_caller]` で呼び出し元の行を debug ログに出すので、旧 `caused_by!()` 引き回しは不要。
+- **`hint(msg)`**: 直前に失敗したサブ解析のエラーへヒントを付ける。`self.try_reduce_expr(ctx).map_err(|_| self.hint(switch_lang!(..)))?` の形で使う。
+- **`expect(kind)` / `expect_or_skip_line(kind)` / `expect_category(cate)`**: 旧 `expect_pop!` マクロの3形。`#[track_caller]` によりエラー番号（`Error[#NNNN]` の NNNN = Rust ソース行）は呼び出し元の行になり、マクロ時代と同じ粒度を保つ。
+- **`skip_and_throw_*`**: 記録・スキップ・`Err` をまとめた回復付きエラー。`skip_and_throw_invalid_chunk_err` だけは非致命（モジュール/ブロックが次の行から解析を続ける）ため `ParseError` を返し、呼び出し側が積む。
+- **`unexpected_none()`**: `peek()` が `None`（トークン列が EOF を越えて尽きた）を返した時のパーサーバグ報告。
+
+`ParseError` の errno は Rust の `line!()` 由来なので、`parse.rs` を編集すると番号が変わる。テストは件数のみを見ており、出力比較の際は `[#NNNN]` を除外して比べること。
 
 ### precedence-climbing エンジン
 
-式解析は **`try_reduce_expr_prec(min_prec, ctx)`**（parse.rs:2168）に集約された左結合 precedence climbing。
+式解析は **`try_reduce_expr_prec(min_prec, ctx)`** に集約された左結合 precedence climbing。
 （旧 `ExprOrOp` shift-reduce 2本立てを置換したもの。[parser-engine] 参照）
 
 1. `try_reduce_bin_lhs()` で最小単位の LHS（リテラル/呼び出し/単項/ラムダ/括弧）を読む。
@@ -205,7 +235,7 @@ let joined = ts.iter()
    - **`min_prec == 0` 限定の特殊演算子**: `=`（定義）、`->`/`=>`（ラムダ）、`:`/`<:`/`:>`/`as`（型注釈）、`|>`（パイプ）、`expr args`（文レベル呼び出し）。
 3. 予約トークン・EOF・文脈不一致で停止。
 
-`try_reduce_chunk`（parse.rs:1936）/ `try_reduce_expr`（parse.rs:2144）は `ExprCtx` を組み立てる薄いラッパ。
+エントリは **`try_reduce_expr(ctx)`** の1本（旧 `try_reduce_chunk(winding, in_brace)` / `try_reduce_expr(4つの bool)` を統合）。`ctx.chunk && ctx.winding`（文レベル）のときだけ `import` 糖衣構文を先に試し、あとは `try_reduce_expr_prec(0, ctx)` に委ねる。
 
 ### 「後から再解釈」する設計（convert.rs / typespec.rs）
 
@@ -227,7 +257,7 @@ let joined = ts.iter()
 
 - エラーは致命的でなく `errs` に蓄積して継続（最大限のエラー報告）。`next_expr()` / `next_line()` / `until_dedent()` でスキップ。
 - バックトラックは持たず、消費済みトークンは戻さない（誤りは `restore(token)` で1個押し戻す程度）。`counter`(DefId) は採番のみでロールバック不要。
-- **REPL 補完**: `check_code_completeness(src)`（parse.rs:133）。まず `has_open_delimiters` で括弧/文字列/コメントの開きを軽量走査し、必要なら `SimpleParser::parse` を試して `ExpectNextLine` を継続入力と判定。
+- **REPL 補完**: `check_code_completeness(src)`。まず `has_open_delimiters` で括弧/文字列/コメントの開きを軽量走査し、必要なら `SimpleParser::parse` を試して `ExpectNextLine` を継続入力と判定。
 
 ---
 

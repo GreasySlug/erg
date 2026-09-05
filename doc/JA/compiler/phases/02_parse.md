@@ -26,19 +26,19 @@ a, b, c, d, e, (...)
 式の解析は単一のエンジン`try_reduce_expr_prec(min_prec, ctx)`が行う。
 これは演算子優先順位法(precedence climbing)による実装で、`token.rs`の`TokenKind::precedence()`が返す優先順位表に基づいて二項演算子を結合する。
 
-> 歴史的経緯: かつては`try_reduce_chunk`と`try_reduce_expr`がそれぞれ`Vec<ExprOrOp>`を用いたshift-reduce方式のスタックマシンとして実装されており、ほぼ同一のロジックが2箇所に重複していた。現在は両者とも`try_reduce_expr_prec`の薄いラッパーである(TODO「Replace `Parser`」対応)。
+> 歴史的経緯: かつては文レベルと式レベルの解析がそれぞれ`Vec<ExprOrOp>`を用いたshift-reduce方式のスタックマシンとして実装されており、ほぼ同一のロジックが2箇所に重複していた。現在は`try_reduce_expr_prec`の上に単一のエントリポイント`try_reduce_expr(ctx)`があるだけである(TODO「Replace `Parser`」対応)。
 
 ### 構造
 
 ```text
-try_reduce_chunk(winding, in_brace)        # 文レベル(定義を許可)のエントリポイント
-try_reduce_expr(winding, in_type_args, ..) # 式レベルのエントリポイント
+try_reduce_expr(ctx)                       # エントリポイント。ExprCtx::CHUNK なら定義を許可
         └──→ try_reduce_expr_prec(0, ctx)  # 共通エンジン
                 ├── try_reduce_bin_lhs()   # オペランド(リテラル、アクセサ、コンテナ、lambda等)
                 └── loop {  後続トークンで分岐  }
 ```
 
-解析コンテキストは`ExprCtx`構造体(Copy)で持ち回る。
+解析コンテキストは`ExprCtx`構造体(Copy)で持ち回る。呼び出し側は定数から始めて差分だけ上書きする:
+`self.try_reduce_expr(ExprCtx { winding: true, ..ExprCtx::EXPR })`。
 
 | フラグ | 意味 |
 | ------ | ---- |

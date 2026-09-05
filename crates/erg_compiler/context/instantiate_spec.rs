@@ -63,6 +63,32 @@ pub fn token_kind_to_op_kind(kind: TokenKind) -> Option<OpKind> {
     }
 }
 
+/// Is this part of a refinement's predicate a term rather than a proposition?
+/// The operators that make a proposition are the comparisons, `and`/`or` and
+/// `not`; `N % 2` in `N % 2 == 1` is a term, which the evaluator computes once
+/// the refinement variable is bound to a value.
+fn is_pred_term(expr: &ast::ConstExpr) -> bool {
+    let makes_proposition = |kind| {
+        matches!(
+            kind,
+            TokenKind::DblEq
+                | TokenKind::NotEq
+                | TokenKind::Less
+                | TokenKind::LessEq
+                | TokenKind::Gre
+                | TokenKind::GreEq
+                | TokenKind::AndOp
+                | TokenKind::OrOp
+                | TokenKind::PreBitNot
+        )
+    };
+    match expr {
+        ast::ConstExpr::BinOp(bin) => !makes_proposition(bin.op.kind),
+        ast::ConstExpr::UnaryOp(unary) => !makes_proposition(unary.op.kind),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamKind {
     NonDefault,
@@ -2295,6 +2321,17 @@ impl Context {
                     args,
                 }
             }
+            // a term keeps its symbolic form until the refinement variable is
+            // bound to a value, when `eval_pred` computes it
+            term if is_pred_term(term) => {
+                match self.instantiate_const_expr(term, None, tmp_tv_cache, false) {
+                    Ok(tp) => Predicate::Tp(tp),
+                    Err((tp, es)) => {
+                        errs.extend(es);
+                        Predicate::Tp(tp)
+                    }
+                }
+            }
             ast::ConstExpr::BinOp(bin) => {
                 let lhs = match self.instantiate_pred_from_expr(&bin.lhs, tmp_tv_cache) {
                     Ok(lhs) => lhs,
@@ -2319,6 +2356,15 @@ impl Context {
                     | TokenKind::GreEq => {
                         let var = match lhs {
                             Predicate::Const(var) => var,
+                            // `N % 2 > 1` == `N % 2 >= 1 and N % 2 != 1`
+                            Predicate::Tp(_) if bin.op.kind == TokenKind::Gre => {
+                                return Ok(Predicate::general_ge(lhs.clone(), rhs.clone())
+                                    & Predicate::general_ne(lhs, rhs));
+                            }
+                            Predicate::Tp(_) if bin.op.kind == TokenKind::Less => {
+                                return Ok(Predicate::general_le(lhs.clone(), rhs.clone())
+                                    & Predicate::general_ne(lhs, rhs));
+                            }
                             other if bin.op.kind == TokenKind::DblEq => {
                                 return Ok(Predicate::general_eq(other, rhs));
                             }
@@ -2346,6 +2392,7 @@ impl Context {
                         let rhs = match rhs {
                             Predicate::Value(value) => TyParam::Value(value),
                             Predicate::Const(var) => TyParam::Mono(var),
+                            Predicate::Tp(tp) => tp,
                             other if bin.op.kind == TokenKind::DblEq => {
                                 return Ok(Predicate::general_eq(Predicate::Const(var), other));
                             }

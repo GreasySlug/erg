@@ -19,15 +19,19 @@ When there are multiple preds, they can be separated by `;` or `and` or `or`. `;
 The elements of `Odd` are `1, 3, 5, 7, 9, ...`.
 It is called a refinement type because it is a type whose elements are part of an existing type as if it were a refinement.
 
-The `Pred` is called a (left-hand side) predicate expression. Like assignment expressions, it does not return a meaningful value, and only a pattern can be placed on the left-hand side.
-That is, expressions such as `X**2 - 5X + 6 == 0` cannot be used as refinement-type predicate expressions. In this respect, it differs from a right-hand-side predicate expression.
+The `Pred` is called a predicate expression. It is checked by running it: whenever a value
+is checked against the type, the refinement variable is bound to that value and the predicate
+is evaluated at compile time. Arithmetic and calls of compile-time functions may therefore
+appear in it.
 
 ```python
-{X: Int | X**2 - 5X + 6 == 0} # SyntaxError: the predicate form is invalid. Only names can be on the left-hand side
+{X: Int | X**2 - 5 * X + 6 == 0} # 2 and 3 are of this type, 5 is not
+IsOdd(N: Int): Bool = N % 2 == 1
+_: {N: Int | IsOdd(N)} = 7
 ```
 
-If you know how to solve quadratic equations, you would expect the above refinement form to be equivalent to `{2, 3}`.
-However, the Erg compiler has very little knowledge of algebra, so it cannot solve the predicate on the right.
+What the compiler does not do is *solve* the predicate: it cannot tell you that the type
+above is `{2, 3}`, only whether a value you hand it belongs.
 
 ## Subtyping rules for refinement types
 

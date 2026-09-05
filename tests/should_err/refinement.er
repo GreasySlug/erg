@@ -29,3 +29,13 @@ Positive = {I: Int | I >= 1}
 _: Positive = 0 # ERR
 h(x: Positive): Int = x
 _ = h 0 # ERR
+
+# the predicate is run, so what it rejects is an error
+Odd = {N: Int | N % 2 == 1}
+_: Odd = 4 # ERR
+o(x: Odd): Int = x
+_ = o 6 # ERR
+_: {X: Int | X ** 2 - 5 * X + 6 == 0} = 5 # ERR
+IsOdd(N: Int): Bool = N % 2 == 1
+_ = IsOdd 3
+_: {N: Int | IsOdd(N)} = 8 # ERR

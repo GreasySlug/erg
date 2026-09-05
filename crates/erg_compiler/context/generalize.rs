@@ -397,6 +397,7 @@ impl<'c> Generalizer<'c> {
                 let receiver = self.generalize_tp(receiver, uninit);
                 Predicate::attr(receiver, name)
             }
+            Predicate::Tp(tp) => Predicate::Tp(self.generalize_tp(tp, uninit)),
             Predicate::GeneralEqual { lhs, rhs } => {
                 let lhs = self.generalize_pred(*lhs, uninit);
                 let rhs = self.generalize_pred(*rhs, uninit);
@@ -836,6 +837,7 @@ impl<'c, 'q, 'l, L: Locational> Dereferencer<'c, 'q, 'l, L> {
                 let receiver = self.deref_tp(receiver)?;
                 Ok(Predicate::attr(receiver, name))
             }
+            Predicate::Tp(tp) => self.deref_tp(tp).map(Predicate::Tp),
             Predicate::Value(v) => self.deref_value(v).map(Predicate::Value),
             Predicate::Const(_) | Predicate::Failure => Ok(pred),
         }

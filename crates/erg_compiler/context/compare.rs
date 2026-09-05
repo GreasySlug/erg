@@ -2311,6 +2311,7 @@ impl Context {
                     receiver_t.return_t().cloned().unwrap_or(Obj)
                 }
             }
+            Predicate::Tp(tp) => self.get_tp_t(tp).unwrap_or(Obj),
             Predicate::Attr { receiver, name } => {
                 let receiver_t = self.get_tp_t(receiver).unwrap_or(Obj);
                 let Some(ctx) = self.get_nominal_type_ctx(&receiver_t) else {

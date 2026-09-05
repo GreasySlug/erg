@@ -743,6 +743,9 @@ impl Context {
                 let receiver = self.instantiate_tp(receiver, tmp_tv_cache, loc)?;
                 Ok(Predicate::attr(receiver, name))
             }
+            Predicate::Tp(tp) => self
+                .instantiate_tp(tp, tmp_tv_cache, loc)
+                .map(Predicate::Tp),
             Predicate::Const(_) | Predicate::Failure => Ok(pred),
         }
     }

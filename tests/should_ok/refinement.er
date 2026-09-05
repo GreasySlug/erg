@@ -31,3 +31,14 @@ h(x: Positive): Int = x
 _ = h 2
 Small = {I: Int | I < 5 and I != 3}
 _: Small = 4
+
+# the predicate is run: a term over the refinement variable, and a call of a
+# compile-time function, are computed once the variable is bound to a value
+Odd = {N: Int | N % 2 == 1}
+_: Odd = 3
+o(x: Odd): Int = x
+_ = o 5
+_: {X: Int | X ** 2 - 5 * X + 6 == 0} = 2
+IsOdd(N: Int): Bool = N % 2 == 1
+_ = IsOdd 3
+_: {N: Int | IsOdd(N)} = 7

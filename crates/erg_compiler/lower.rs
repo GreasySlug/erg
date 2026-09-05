@@ -3510,15 +3510,13 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
                 ctx.get_class_member(&VarName::from_static("__call__"), &self.module.context)
             })
             .map_or(Type::FAILURE, |vi| &vi.t);
-        let need_to_gen_new = class_ctx
-            .and_then(|ctx| ctx.get_current_scope_var(&VarName::from_static("new")))
-            .is_some_and(|vi| vi.kind == VarKind::Auto);
+        let gen_new = class_ctx.map_or(hir::GenNew::Defined, Self::gen_new_of);
         let require_or_sup = Self::get_require_or_sup_or_base(block.remove(0));
         let class_def = hir::ClassDef::new(
             type_obj,
             sig,
             require_or_sup,
-            need_to_gen_new,
+            gen_new,
             constructor.clone(),
             hir_methods_list,
         );
@@ -4134,6 +4132,36 @@ impl<A: ASTBuildable> GenericASTLowerer<A> {
             }
         }
         self.errs.extend(errors);
+    }
+
+    /// How `new` is generated for the class of `class_ctx`, if it does not define one.
+    ///
+    /// An `Inherit`ed class without `Additional` is given the `new` signature of its
+    /// superclass (`Context::register_gen_mono_type`). When that is the record constructor
+    /// `__call__` takes, `new` can take the record. When it is not (the superclass defines
+    /// `new`, or inherited one this way), the arguments are the superclass's `new`'s, and
+    /// the subclass has to be made from what it builds. Codegen used to emit the record
+    /// form regardless, so `D.new 1, 2` type-checked and failed at run time.
+    fn gen_new_of(class_ctx: &TypeContext) -> hir::GenNew {
+        let Some(new) = class_ctx.get_current_scope_var(&VarName::from_static("new")) else {
+            return hir::GenNew::Defined;
+        };
+        if new.kind != VarKind::Auto {
+            return hir::GenNew::Defined;
+        }
+        let same_params_as_call = class_ctx
+            .get_current_scope_var(&VarName::from_static("__call__"))
+            .is_some_and(|call| {
+                new.t.non_default_params() == call.t.non_default_params()
+                    && new.t.default_params() == call.t.default_params()
+                    && new.t.var_params() == call.t.var_params()
+                    && new.t.kw_var_params() == call.t.kw_var_params()
+            });
+        if same_params_as_call {
+            hir::GenNew::FromCall
+        } else {
+            hir::GenNew::FromSuper
+        }
     }
 
     fn check_collision_and_push(&mut self, id: DefId, class: Type, impl_trait: Option<Type>) {

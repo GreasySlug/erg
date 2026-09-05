@@ -23,3 +23,27 @@ E = Inherit Base, Additional := {
 }
 e = E.new { .value = 10 }
 discard e.value.times!
+
+# a subclass that does not define `new` takes the parameters of the superclass's
+# `new` (the type checker gives it that signature) and makes a subclass instance
+@Inheritable
+P = Class { .x = Int; .y = Int }
+P.
+    new x, y := 0 = P { .x; .y }
+    sum self = self.x + self.y
+@Inheritable
+Q = Inherit P
+q = Q.new 1
+assert q.x == 1 and q.y == 0
+assert q.sum() == 1
+q2 = Q.new 1, 2
+assert q2.y == 2
+assert isinstance(q2, Q) and isinstance(q2, P)
+# through two levels
+R = Inherit Q
+r = R.new 3, 4
+assert r.sum() == 7
+# with `Additional`, `new` takes the record again
+S = Inherit P, Additional := { .z = Int }
+s = S.new { .x = 1; .y = 2; .z = 3 }
+assert s.sum() + s.z == 6

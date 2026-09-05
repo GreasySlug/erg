@@ -302,8 +302,10 @@ only: `Server::loc_to_range` / `loc_to_pos` / `abs_loc_to_range` /
 lookups) take an LSP position and convert it once (`FileCache::to_erg_pos`).
 `util::char_range_of` and friends keep char columns and are only for those
 lookups. Never build a `Position` from `col_begin()` in a handler; never index
-`code` by a `character`. Regression tests: `test_astral_char_*` in
-`crates/els/tests/test.rs`.
+`code` by a `character`. Only `.er` sources are converted: the declarations
+of a `.py`/`.pyi` module carry the columns of the declaration text generated
+from it, so their positions are passed through as they are. Regression tests:
+`test_astral_char_*` in `crates/els/tests/test.rs`.
 
 ### Thread Termination
 

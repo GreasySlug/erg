@@ -386,10 +386,20 @@ impl FileCache {
     /// response has to pass through here (or [`Server::loc_to_range`]). When
     /// the line cannot be read the column is returned as it is.
     pub(crate) fn to_lsp_pos(&self, uri: &NormalizedUrl, pos: Position) -> Position {
-        match self.get_line(uri, pos.line) {
+        match self.line_for_conversion(uri, pos.line) {
             Some(line) => Position::new(pos.line, utf16_col(&line, pos.character)),
             None => pos,
         }
+    }
+
+    /// The line a column conversion looks at: only in an Erg source. A `.py` or
+    /// `.pyi` module's declarations carry the columns of the declaration text
+    /// generated from it, not of the file, and running the lexer over a Python
+    /// file just to count a line's characters is not worth it either.
+    fn line_for_conversion(&self, uri: &NormalizedUrl, line: u32) -> Option<String> {
+        let path = uri.to_file_path().ok()?;
+        let is_erg = path.extension().is_some_and(|ext| ext == "er");
+        is_erg.then(|| self.get_line(uri, line)).flatten()
     }
 
     pub(crate) fn to_lsp_range(&self, uri: &NormalizedUrl, range: Range) -> Range {
@@ -403,7 +413,7 @@ impl FileCache {
     /// column) in `uri`: the inverse of [`Self::to_lsp_pos`]. Compare the result
     /// with token and HIR locations, never the LSP position itself.
     pub(crate) fn to_erg_pos(&self, uri: &NormalizedUrl, pos: Position) -> Position {
-        match self.get_line(uri, pos.line) {
+        match self.line_for_conversion(uri, pos.line) {
             Some(line) => Position::new(pos.line, char_col(&line, pos.character)),
             None => pos,
         }
@@ -842,6 +852,13 @@ mod update_tests {
         assert_eq!(
             cache.to_lsp_pos(&uri, Position::new(9, 3)),
             Position::new(9, 3)
+        );
+        // a Python file's columns are not the lexer's: nothing to convert
+        let py = NormalizedUrl::from_file_path("/tmp/els_update_astral.py").unwrap();
+        cache.update(&py, "pair = (\"𝒳\", y)\n".to_string(), Some(1));
+        assert_eq!(
+            cache.to_lsp_pos(&py, Position::new(0, 13)),
+            Position::new(0, 13)
         );
     }
 

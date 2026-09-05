@@ -70,6 +70,8 @@ impl Context {
         let t_ascii = nd_func(vec![kw(KW_OBJECT, Obj)], None, Str);
         let t_assert = no_var_func(vec![kw(KW_TEST, Bool)], vec![kw(KW_MSG, Str)], NoneType);
         let t_bin = nd_func(vec![kw(KW_N, Int)], None, Str);
+        // `bool() == False`, so the parameter has a default, as in Python
+        let t_bool = default_func(vec![kw(KW_OBJ, Obj)], Bool);
         let t_bytes = func0(mono(BYTES))
             & no_var_func(
                 vec![kw(KW_STR, Str), kw(KW_ENCODING, Str)],
@@ -485,6 +487,12 @@ impl Context {
             FUNC_BIN,
             bin_func,
             t_bin.clone(),
+            None,
+        )));
+        let bool_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
+            FUNC_BOOL,
+            bool_func,
+            t_bool.clone(),
             None,
         )));
         let chr_ = ValueObj::Subr(ConstSubr::Builtin(BuiltinConstSubr::new(
@@ -910,6 +918,15 @@ impl Context {
         );
         let name = if PYTHON_MODE { FUNC_INT } else { FUNC_INT__ };
         self.register_py_builtin_const(FUNC_INT, vis.clone(), Some(t_int), int_, Some(name), None);
+        let name = if PYTHON_MODE { FUNC_BOOL } else { FUNC_BOOL__ };
+        self.register_py_builtin_const(
+            FUNC_BOOL,
+            vis.clone(),
+            Some(t_bool),
+            bool_,
+            Some(name),
+            None,
+        );
         if DEBUG_MODE {
             self.register_builtin_py_impl(
                 PY,

@@ -1977,6 +1977,38 @@ pub(crate) fn float_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult
     }
 }
 
+/// `bool obj`. The truth value CPython gives the object the program will
+/// actually hold: what is empty or zero is false, and what cannot be decided
+/// here (a type, a subroutine, a record) is left to run time.
+pub(crate) fn bool_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
+    // `obj` is a default parameter: `bool() == False`
+    let Some(obj) = args.remove_left_or_key("obj") else {
+        return Ok(ValueObj::Bool(false).into());
+    };
+    let b = match &obj {
+        ValueObj::Bool(b) => Some(*b),
+        ValueObj::Int(i) => Some(*i != 0),
+        ValueObj::Nat(n) => Some(*n != 0),
+        // kept in lowest terms with a positive denominator, so the numerator decides
+        ValueObj::Ratio(n, _) => Some(*n != 0),
+        ValueObj::Float(f) => Some(**f != 0.0),
+        ValueObj::Str(s) => Some(!s.is_empty()),
+        ValueObj::List(l) | ValueObj::Tuple(l) => Some(!l.is_empty()),
+        ValueObj::Set(s) => Some(!s.is_empty()),
+        ValueObj::Dict(d) => Some(!d.is_empty()),
+        ValueObj::None => Some(false),
+        ValueObj::Ellipsis => Some(true),
+        _ => None,
+    };
+    match b {
+        Some(b) => Ok(ValueObj::Bool(b).into()),
+        None => Err(not_foldable(
+            format!("bool({obj})"),
+            "what the object is at run time decides this",
+        )),
+    }
+}
+
 /// `round number`. Ties round to even, as in Python (`round 2.5 == 2`).
 pub(crate) fn round_func(mut args: ValueArgs, _ctx: &Context) -> EvalValueResult<TyParam> {
     let number = args

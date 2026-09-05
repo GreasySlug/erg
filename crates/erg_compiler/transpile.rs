@@ -912,7 +912,7 @@ impl PyScriptGenerator {
                     "if" | "if!" | "for!" | "while" | "discard" => {
                         self.load_builtin_controls_if_not();
                     }
-                    "int" | "nat" | "float" | "str" => {
+                    "int" | "nat" | "float" | "str" | "bool" => {
                         self.load_convertors_if_not();
                     }
                     _ => {}

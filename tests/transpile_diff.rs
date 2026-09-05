@@ -172,6 +172,16 @@ print! mk!(1)()
 print! mk!(2)()
 ",
     ),
+    // the transpiler has to import the convertors module for these
+    (
+        "convertors",
+        "\
+print! bool 1
+print! bool 0
+print! int \"10\"
+print! str 1
+",
+    ),
     (
         "loop_sum",
         "\

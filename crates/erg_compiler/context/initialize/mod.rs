@@ -383,6 +383,7 @@ const QUANTIFIED_PROC_META_TYPE: &str = "QuantifiedProcMetaType";
 const SLICE: &str = "Slice";
 const FUNC_OBJECT: &str = "object";
 const FUNC_INT: &str = "int";
+const FUNC_BOOL__: &str = "bool__";
 const FUNC_INT__: &str = "int__";
 const FUNC_FLOAT: &str = "float";
 const FUNC_BOOL: &str = "bool";

@@ -271,28 +271,18 @@ ELS spawns up to 30 threads at startup:
 - **`Server<Checker, Parser>`**: Main LSP server struct, cloned for each worker thread
 - **`SendChannels` / `ReceiveChannels`**: MPSC channels for worker communication
 - **`WorkerMessage<P>`**: Either `Request(id, params)` or `Kill` for graceful shutdown
-- **`BackgroundThreads`**: Manages kill channels for threads that need explicit termination
 - **`Scheduler`**: Prioritizes LSP requests, limits concurrent workers to `MAX_WORKERS` (10)
 - **`Shared<T>`**: Thread-safe wrapper using `Arc<RwLock<T>>`
 
 ### Thread Termination
 
-Background threads use kill channels for graceful shutdown:
-
-```rust
-// Setting up a killable thread
-let (kill_tx, kill_rx) = mpsc::channel::<()>();
-self.background_threads.set_auto_diagnostics_killer(kill_tx);
-spawn_new_thread(move || {
-    loop {
-        if kill_rx.try_recv().is_ok() { break; }  // Non-blocking check
-        // ... work ...
-    }
-}, "thread_name");
-
-// On restart, kill all background threads
-self.background_threads.kill_all();
-```
+There are no kill channels or join handles. `Server::restart` closes the request
+channels (`self.channels.close()`), and each LSP worker's `recv()` then errors and the
+worker breaks out of its loop. The two client-health-checker threads watch a generation
+counter (`flags.health_check_gen`, bumped by `restart`) and stop when it moves. The
+auto-diagnostics thread is started once and is not restarted; it keeps running on the
+shared file cache. (A `BackgroundThreads` type with kill channels exists only on the
+unmerged `fix-els-threads` branch.)
 
 ### Testing ELS
 

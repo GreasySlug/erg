@@ -23,13 +23,13 @@ use crate::context::{Context, ContextProvider, ModuleContext};
 use crate::desugar_hir::HIRDesugarer;
 use crate::error::{CompileError, CompileErrors, CompileResult};
 use crate::hir::{
-    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, Identifier, Lambda, List,
-    Literal, Params, PatchDef, ReDef, Record, Set, Signature, Tuple, UnaryOp, HIR,
+    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, GenNew, Identifier, Lambda,
+    List, Literal, Params, PatchDef, ReDef, Record, Set, Signature, Tuple, UnaryOp, HIR,
 };
 use crate::link_hir::HIRLinker;
 use crate::module::SharedCompilerResource;
 use crate::ty::typaram::OpKind;
-use crate::ty::value::ValueObj;
+use crate::ty::value::{GenTypeObj, ValueObj};
 use crate::ty::{Field, HasType, Type, VisibilityModifier};
 use crate::varinfo::{AbsLocation, VarInfo};
 
@@ -1419,9 +1419,28 @@ impl PyScriptGenerator {
         }
     }
 
-    fn write_classdef(&mut self, classdef: ClassDef, out: &mut String) {
+    /// The expression the superclass of a `Subclass` is referred to by: the `Super`
+    /// argument of `Inherit` when it is a name, else the class's own name.
+    fn sup_class_expr(obj: &GenTypeObj, require_or_sup: Option<Box<Expr>>) -> Option<Expr> {
+        let GenTypeObj::Subclass(sub) = obj else {
+            return None;
+        };
+        require_or_sup
+            .map(|expr| *expr)
+            .filter(|expr| expr.is_acc())
+            .or_else(|| Expr::try_from_type(sub.sup.typ().derefine()).ok())
+    }
+
+    fn write_classdef(&mut self, mut classdef: ClassDef, out: &mut String) {
         let class_name = Self::transpile_ident(classdef.sig.into_ident());
-        writeln!(out, "class {class_name}():").unwrap();
+        // a subclass is one at run time too: it has the superclass's methods, and
+        // `isinstance` agrees with the type checker
+        let sup = Self::sup_class_expr(classdef.obj.as_ref(), classdef.require_or_sup.take());
+        let mut sup_name = String::new();
+        if let Some(sup) = sup.clone() {
+            self.write_expr(sup, &mut sup_name);
+        }
+        writeln!(out, "class {class_name}({sup_name}):").unwrap();
         push_indent(out, self.level + 1);
         out.push_str("def __init__(self, param__):\n");
         match classdef.constructor.non_default_params().unwrap()[0].typ() {
@@ -1439,9 +1458,25 @@ impl PyScriptGenerator {
             }
             other => todo!("{other}"),
         }
-        if classdef.need_to_gen_new {
-            push_indent(out, self.level + 1);
-            writeln!(out, "def new(x): return {class_name}.__call__(x)").unwrap();
+        match classdef.gen_new {
+            GenNew::Defined => {}
+            GenNew::FromCall => {
+                push_indent(out, self.level + 1);
+                writeln!(out, "def new(x): return {class_name}.__call__(x)").unwrap();
+            }
+            GenNew::FromSuper => {
+                let sup = if sup.is_some() {
+                    &sup_name
+                } else {
+                    &class_name
+                };
+                push_indent(out, self.level + 1);
+                writeln!(
+                    out,
+                    "def new(*args, **kwargs): return {class_name}.__call__({sup}.new(*args, **kwargs))"
+                )
+                .unwrap();
+            }
         }
         let methods = ClassDef::take_all_methods(classdef.methods_list);
         self.write_block(methods, Discard, out);

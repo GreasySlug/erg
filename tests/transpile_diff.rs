@@ -33,6 +33,25 @@ f(x: Int): Int = x * 2
 print! f(3)
 ",
     ),
+    // A subclass without `new` of its own gets the superclass's `new` signature; the
+    // generated `new` has to forward to it. The transpiled class is a Python subclass,
+    // so it has the superclass's methods.
+    (
+        "inherit_new",
+        "\
+@Inheritable
+P = Class {.x = Int; .y = Int}
+P.
+    new x, y := 0 = P {.x; .y}
+    sum self = self.x + self.y
+@Inheritable
+Q = Inherit P
+R = Inherit Q
+q = Q.new 1
+r = R.new 3, 4
+print! q.x, q.y, q.sum(), r.sum(), isinstance(r, P)
+",
+    ),
     // A block local is a local of the call, not of the module. Every
     // definition inside a block used to be written as a module global, so a
     // recursive call overwrote its caller's copy.

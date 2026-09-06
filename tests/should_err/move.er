@@ -2,11 +2,22 @@ a = ![]
 
 a.sort! # WARN
 
-# NOTE: For safety reasons this is assumed to be an error, but maybe this restriction can be relaxed
-print! a # ERR
+# reading an attribute of `a` does not take `a`, so this is not an error
+print! a
 
 v1 = ![]
 v2 = v1 as List!(Int or Str, _)
 v2.push! "a"
 
 print! v1 # ERR
+
+# the receiver of a method call has to be alive, too
+w1 = ![]
+_ = w1
+w1.push! 1 # ERR
+
+# a closure reads what it captured when it is called
+x = ![]
+add_one!() = x.push! 1
+_ = x
+add_one!() # ERR

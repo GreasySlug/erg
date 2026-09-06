@@ -6,4 +6,5 @@ a.push! a
 b as List!(Obj, _) = ![]
 c as List!(Obj, _) = ![]
 b.push! c
+# ERR: pushing `c` into `b` moved it, so this is also a use of a moved variable
 c.push! b

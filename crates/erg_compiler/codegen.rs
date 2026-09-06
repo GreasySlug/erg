@@ -43,9 +43,9 @@ use crate::hir::GlobSignature;
 use crate::hir::ListWithLength;
 use crate::hir::Module;
 use crate::hir::{
-    Accessor, Args, BinOp, Block, Call, ClassDef, Def, DefBody, Dict, Expr, GuardClause,
-    Identifier, Lambda, List, Literal, NonDefaultParamSignature, Params, PatchDef, PosArg, ReDef,
-    Record, Set, Signature, SubrSignature, Tuple, UnaryOp, VarSignature, HIR,
+    Accessor, Args, Attribute, BinOp, Block, Call, ClassDef, Def, DefBody, Dict, Expr, GenNew,
+    GuardClause, Identifier, Lambda, List, Literal, NonDefaultParamSignature, Params, PatchDef,
+    PosArg, ReDef, Record, Set, Signature, SubrSignature, Tuple, UnaryOp, VarSignature, HIR,
 };
 use crate::ty::codeobj::{CodeObj, CodeObjFlags, MakeFunctionFlags};
 use crate::ty::value::{GenTypeObj, ValueObj};
@@ -4229,7 +4229,7 @@ impl PyCodeGenerator {
         self.cancel_if_pop_top();
     }
 
-    fn emit_class_block(&mut self, class: ClassDef) -> CodeObj {
+    fn emit_class_block(&mut self, mut class: ClassDef) -> CodeObj {
         log!(info "entered {}", fn_name!());
         let name = class.sig.ident().inspect().clone();
         self.unit_size += 1;
@@ -4271,8 +4271,16 @@ impl PyCodeGenerator {
             .cloned();
         let is_subclass = matches!(class.obj.as_ref(), GenTypeObj::Subclass(_));
         self.emit_init_method(&class.sig, __init__, class.constructor.clone(), is_subclass);
-        if class.need_to_gen_new {
-            self.emit_new_func(&class.sig, class.constructor);
+        match class.gen_new {
+            GenNew::Defined => {}
+            GenNew::FromCall => self.emit_new_func(&class.sig, class.constructor),
+            GenNew::FromSuper => {
+                let sup = Self::sup_class_expr(class.obj.as_ref(), class.require_or_sup.take());
+                match sup {
+                    Some(sup) => self.emit_inherited_new_func(&class.sig, sup),
+                    None => self.emit_new_func(&class.sig, class.constructor),
+                }
+            }
         }
         let __del__ = methods
             .remove_def("__del__")
@@ -4702,6 +4710,82 @@ impl PyCodeGenerator {
         // Step 5: Discard the return value
         self.emit_pop_top();
         // Stack: []
+    }
+
+    /// The expression the superclass of a `Subclass` is referred to by: the `Super`
+    /// argument of `Inherit` when it is a name, else the class's own name.
+    fn sup_class_expr(obj: &GenTypeObj, require_or_sup: Option<Box<Expr>>) -> Option<Expr> {
+        let GenTypeObj::Subclass(sub) = obj else {
+            return None;
+        };
+        require_or_sup
+            .map(|expr| *expr)
+            .filter(|expr| expr.is_acc())
+            .or_else(|| Expr::try_from_type(sub.sup.typ().derefine()).ok())
+    }
+
+    /// The `new` of a subclass whose superclass has a `new` of its own (`GenNew::FromSuper`).
+    /// The type checker gave it the superclass's signature, so the arguments are forwarded
+    /// as they are, and the subclass is made from the object the superclass's `new` built
+    /// (the fields `__init__` copies are the same):
+    ///
+    /// ```python
+    /// class D(C):
+    ///     def new(*args, **kwargs): return D(C.new(*args, **kwargs))
+    /// ```
+    fn emit_inherited_new_func(&mut self, sig: &Signature, sup: Expr) {
+        log!(info "entered {} ({sup})", fn_name!());
+        let class_ident = sig.ident();
+        let line = sig.ln_begin().unwrap_or(0);
+        let mut ident = Identifier::public_with_line(DOT, Str::ever("new"), line);
+        ident.vi.t = Type::ClassType;
+        let mut callee_ident = class_ident.clone();
+        callee_ident.vi.t = Type::ClassType;
+        let class = Expr::Accessor(Accessor::Ident(callee_ident));
+        let param = |name: &'static str| {
+            let var = VarName::from_str_and_line(Str::ever(name), line);
+            let vi = VarInfo::nd_parameter(Type::Obj, ident.vi.def_loc.clone(), "?".into());
+            let raw =
+                erg_parser::ast::NonDefaultParamSignature::new(ParamPattern::VarName(var), None);
+            NonDefaultParamSignature::new(raw, vi, None)
+        };
+        let params = Params::new(
+            vec![],
+            Some(Box::new(param("args"))),
+            vec![],
+            Some(Box::new(param("kwargs"))),
+            vec![],
+            None,
+        );
+        let sup_new = Expr::Accessor(Accessor::Attr(Attribute::new(
+            sup,
+            Identifier::public_with_line(DOT, Str::ever("new"), line),
+        )));
+        let forwarded = Args::new(
+            vec![],
+            Some(PosArg::new(Expr::Accessor(Accessor::public_with_line(
+                Str::ever("args"),
+                line,
+            )))),
+            vec![],
+            Some(PosArg::new(Expr::Accessor(Accessor::public_with_line(
+                Str::ever("kwargs"),
+                line,
+            )))),
+            None,
+        );
+        let built = sup_new.call_expr(forwarded);
+        let call = class.call_expr(Args::single(PosArg::new(built)));
+        let sig = SubrSignature::new(
+            set! {},
+            ident,
+            TypeBoundSpecs::empty(),
+            params,
+            sig.t_spec_with_op().cloned(),
+            vec![],
+        );
+        let body = DefBody::new(EQUAL, Block::new(vec![call]), DefId(0));
+        self.emit_subr_def(Some(class_ident.inspect()), sig, body);
     }
 
     /// ```python

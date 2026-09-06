@@ -34,7 +34,7 @@ use lsp_types::{
 
 use crate::_log;
 use crate::server::{DefaultFeatures, ELSResult, Flags, RedirectableStdout, Server};
-use crate::util::{self, loc_to_pos, loc_to_range, NormalizedUrl};
+use crate::util::{self, NormalizedUrl};
 
 fn comp_item_kind(t: &Type, muty: Mutability) -> CompletionItemKind {
     match t {
@@ -720,7 +720,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let prev_token = self.file_cache.get_token_relatively(&uri, pos, offset);
                 match prev_token {
                     Some(prev) if matches!(prev.kind, Dot | DblColon) => {
-                        if let Some(p) = loc_to_pos(prev.loc()) {
+                        if let Some(p) = self.loc_to_pos(&uri, prev.loc()) {
                             pos = p;
                         }
                         CompletionKind::RetriggerMethod
@@ -901,7 +901,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     ) -> ELSResult<()> {
         if comp_kind.should_be_method() && item.label.starts_with("Function::") {
             let receiver = self.get_receiver(uri, pos)?;
-            if let Some(mut range) = receiver.as_ref().and_then(|expr| loc_to_range(expr.loc())) {
+            if let Some(mut range) = receiver
+                .as_ref()
+                .and_then(|expr| self.loc_to_range(uri, expr.loc()))
+            {
                 // FIXME:
                 let s_receiver = self.file_cache.get_ranged(uri, range)?.unwrap_or_default();
                 range.end.character += 1;
@@ -952,7 +955,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let Some(receiver) = self.get_receiver(uri, pos)? else {
                 return Ok(items);
             };
-            let mut range = loc_to_range(receiver.loc()).unwrap();
+            let Some(mut range) = self.loc_to_range(uri, receiver.loc()) else {
+                return Ok(items);
+            };
             let s_receiver = self.file_cache.get_ranged(uri, range)?.unwrap_or_default();
             // receiver + `.`
             range.end.character += 1;

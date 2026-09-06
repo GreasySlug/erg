@@ -72,11 +72,11 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     self.send_stdout(&json!({ "jsonrpc": "2.0", "id": id, "result": edit }))?;
                     return self.send_error_info(error_reason);
                 }
-                Self::commit_change(&mut changes, &vi.def_loc, params.new_name.clone());
+                self.commit_change(&mut changes, &vi.def_loc, params.new_name.clone());
                 if let Some(value) = self.shared.index.get_refs(&vi.def_loc) {
                     // self.send_log(format!("referrers: {referrers:?}"))?;
                     for referrer in value.referrers.iter() {
-                        Self::commit_change(&mut changes, referrer, params.new_name.clone());
+                        self.commit_change(&mut changes, referrer, params.new_name.clone());
                     }
                 }
                 let dependencies = self.dependencies_of(&uri);
@@ -135,7 +135,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     && !is_std
                     && !matches!(vi.kind, VarKind::Builtin | VarKind::FixedAuto);
                 if renameable {
-                    if let Some(range) = util::loc_to_range(tok.loc()) {
+                    if let Some(range) = self.loc_to_range(&uri, tok.loc()) {
                         let result = PrepareRenameResponse::RangeWithPlaceholder {
                             range,
                             placeholder: tok.content.to_string(),
@@ -151,6 +151,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     }
 
     fn commit_change(
+        &self,
         changes: &mut HashMap<Url, Vec<TextEdit>>,
         abs_loc: &AbsLocation,
         new_name: String,
@@ -159,7 +160,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let Ok(def_uri) = Url::from_file_path(path) else {
                 return;
             };
-            let Some(range) = util::loc_to_range(abs_loc.loc) else {
+            let Some(range) = self.abs_loc_to_range(abs_loc) else {
                 return;
             };
             let edit = TextEdit::new(range, new_name);
@@ -257,13 +258,16 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 continue;
             }
             let imports = self.search_imports(&dep, &old_import);
-            let edits = imports.iter().filter_map(|lit| {
-                Some(TextEdit::new(
-                    util::loc_to_range(lit.loc())?,
-                    rewrite_import_literal(&lit.token.content, &new_import),
-                ))
-            });
-            changes.insert(dep.raw(), edits.collect());
+            let edits = imports
+                .iter()
+                .filter_map(|lit| {
+                    Some(TextEdit::new(
+                        self.loc_to_range(&dep, lit.loc())?,
+                        rewrite_import_literal(&lit.token.content, &new_import),
+                    ))
+                })
+                .collect();
+            changes.insert(dep.raw(), edits);
         }
         changes
     }

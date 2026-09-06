@@ -5,7 +5,7 @@ use erg_compiler::hir::Expr;
 use lsp_types::{CodeLens, CodeLensParams};
 
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{self, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_code_lens(
@@ -30,7 +30,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 match chunk {
                     Expr::Def(def) if def.def_kind().is_trait() => {
                         let trait_loc = &def.sig.ident().vi.def_loc;
-                        let Some(range) = util::loc_to_range(trait_loc.loc) else {
+                        let Some(range) = self.loc_to_range(uri, trait_loc.loc) else {
                             continue;
                         };
                         let command = self.gen_show_trait_impls_command(trait_loc.clone())?;
@@ -54,7 +54,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             for chunk in hir.module.iter() {
                 if let Expr::ClassDef(class_def) = chunk {
                     let class_loc = &class_def.sig.ident().vi.def_loc;
-                    let Some(range) = util::loc_to_range(class_loc.loc) else {
+                    let Some(range) = self.loc_to_range(uri, class_loc.loc) else {
                         continue;
                     };
                     // only show the lens when the class actually has subclasses

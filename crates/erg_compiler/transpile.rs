@@ -23,9 +23,9 @@ use crate::context::{Context, ContextProvider, ModuleContext};
 use crate::desugar_hir::HIRDesugarer;
 use crate::error::{CompileError, CompileErrors, CompileResult};
 use crate::hir::{
-    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, Identifier, Lambda, List,
-    Literal, NonDefaultParamSignature, Params, PatchDef, ReDef, Record, Set, Signature, Tuple,
-    UnaryOp, HIR,
+    Accessor, Args, BinOp, Block, Call, ClassDef, Def, Dict, Expr, GenNew, Identifier, Lambda,
+    List, Literal, NonDefaultParamSignature, Params, PatchDef, ReDef, Record, Set, Signature,
+    Tuple, UnaryOp, HIR,
 };
 use crate::link_hir::HIRLinker;
 use crate::module::SharedCompilerResource;
@@ -1535,25 +1535,32 @@ impl PyScriptGenerator {
         }
     }
 
+    /// The expression the superclass of a `Subclass` is referred to by: the `Super`
+    /// argument of `Inherit` when it is a name, else the class's own name.
+    fn sup_class_expr(obj: &GenTypeObj, require_or_sup: Option<Box<Expr>>) -> Option<Expr> {
+        let GenTypeObj::Subclass(sub) = obj else {
+            return None;
+        };
+        require_or_sup
+            .map(|expr| *expr)
+            .filter(|expr| expr.is_acc())
+            .or_else(|| Expr::try_from_type(sub.sup.typ().derefine()).ok())
+    }
+
     /// `class C(Base):` with the `__init__` and `new` the bytecode backend
     /// generates (`PyCodeGenerator::emit_class_block`).
-    fn write_classdef(&mut self, classdef: ClassDef, out: &mut String) {
+    fn write_classdef(&mut self, mut classdef: ClassDef, out: &mut String) {
         let class_name = Self::transpile_ident(classdef.sig.ident().clone());
         let is_subclass = matches!(classdef.obj.as_ref(), GenTypeObj::Subclass(_));
-        // `Y = Inherit X` => `class Y(X)`; `N = Inherit 1..10` => `class N(Nat)`
-        let base = match (classdef.obj.as_ref(), classdef.require_or_sup.clone()) {
-            (GenTypeObj::Subclass(sub), Some(sup)) => {
-                let sup = *sup;
-                let expr = if sup.is_acc() {
-                    sup
-                } else {
-                    Expr::try_from_type(sub.sup.typ().derefine()).unwrap_or(sup)
-                };
-                self.expr_to_string(expr)
-            }
-            _ => String::new(),
-        };
-        writeln!(out, "class {class_name}({base}):").unwrap();
+        // `Y = Inherit X` => `class Y(X)`; `N = Inherit 1..10` => `class N(Nat)`.
+        // A subclass is one at run time too: it has the superclass's methods, and
+        // `isinstance` agrees with the type checker.
+        let sup = Self::sup_class_expr(classdef.obj.as_ref(), classdef.require_or_sup.take());
+        let sup_name = sup
+            .clone()
+            .map(|sup| self.expr_to_string(sup))
+            .unwrap_or_default();
+        writeln!(out, "class {class_name}({sup_name}):").unwrap();
         if !classdef.obj.typ().is_monomorphic() {
             // `Box[Int]` at run time forwards to `Box`; `_erg_type`'s
             // `GenericAlias` is the standard one, or a stand-in before 3.9
@@ -1567,8 +1574,25 @@ impl PyScriptGenerator {
             .or_else(|| methods.get_def("__init__!"))
             .cloned();
         self.write_init_method(&classdef.constructor, user_init, is_subclass, out);
-        if classdef.need_to_gen_new {
-            self.write_new_func(&class_name, &classdef.constructor, out);
+        match classdef.gen_new {
+            GenNew::Defined => {}
+            GenNew::FromCall => self.write_new_func(&class_name, &classdef.constructor, out),
+            // the type checker gave this `new` the superclass's signature, so the
+            // arguments go on as they are and the subclass is made from the object the
+            // superclass's `new` built
+            GenNew::FromSuper => {
+                let sup = if sup.is_some() {
+                    &sup_name
+                } else {
+                    &class_name
+                };
+                push_indent(out, self.level + 1);
+                writeln!(
+                    out,
+                    "def new(*args, **kwargs): return {class_name}({sup}.new(*args, **kwargs))"
+                )
+                .unwrap();
+            }
         }
         // `__del__!` runs as Python's `__del__`
         if let Some(mut del) = methods

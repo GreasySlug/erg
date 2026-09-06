@@ -5,7 +5,7 @@ use lsp_types::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightParam
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{loc_to_range, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_document_highlight(
@@ -28,7 +28,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         };
         if let Some(tok) = self.file_cache.get_symbol(uri, pos) {
             if let Some(vi) = visitor.get_info(&tok) {
-                if let Some(range) = loc_to_range(vi.def_loc.loc) {
+                if let Some(range) = self.loc_to_range(uri, vi.def_loc.loc) {
                     res.push(DocumentHighlight {
                         range,
                         kind: Some(DocumentHighlightKind::WRITE),

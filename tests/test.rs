@@ -1079,7 +1079,7 @@ fn exec_method_err() -> Result<(), ()> {
 
 #[test]
 fn exec_move_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/move.er", 1, 2)
+    expect_compile_failure("tests/should_err/move.er", 1, 3)
 }
 
 #[test]
@@ -1109,7 +1109,7 @@ fn exec_mut_class_err() -> Result<(), ()> {
 
 #[test]
 fn exec_cycle_ref_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/cycle_ref.er", 0, 2)
+    expect_compile_failure("tests/should_err/cycle_ref.er", 0, 3)
 }
 
 #[test]

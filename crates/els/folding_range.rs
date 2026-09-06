@@ -4,7 +4,7 @@ use erg_compiler::artifact::BuildRunnable;
 use erg_compiler::erg_parser::ast::{Expr, Module};
 use erg_compiler::erg_parser::parse::Parsable;
 
-use lsp_types::{FoldingRange, FoldingRangeKind, FoldingRangeParams};
+use lsp_types::{FoldingRange, FoldingRangeKind, FoldingRangeParams, Position};
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
@@ -77,6 +77,17 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 fold_expr(chunk, &mut res);
             }
             dedup_by_lines(&mut res);
+            // the columns came from the AST, in chars; the client wants UTF-16 units
+            for range in res.iter_mut() {
+                if let Some(col) = range.start_character {
+                    let pos = Position::new(range.start_line, col);
+                    range.start_character = Some(self.file_cache.to_lsp_pos(&uri, pos).character);
+                }
+                if let Some(col) = range.end_character {
+                    let pos = Position::new(range.end_line, col);
+                    range.end_character = Some(self.file_cache.to_lsp_pos(&uri, pos).character);
+                }
+            }
         }
         Ok(Some(res))
     }

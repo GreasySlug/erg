@@ -283,6 +283,30 @@ jobs on the pool, whose queue orders jobs by `RequestKind::priority`.
 - **`WaitableFlag`** (server.rs): `client_initialized` / `workspace_checked` / `builtin_modules_loaded`, waited on with a `Condvar` instead of polled
 - **`Shared<T>`**: Thread-safe wrapper using `Arc<RwLock<T>>`
 
+### Column units
+
+Three units meet in ELS and only the text can tell them apart:
+
+| Unit | Where |
+|------|-------|
+| `char` | the lexer's `Token::col_begin`/`col_end`, every `Location` and HIR node |
+| UTF-16 code unit | every LSP `Position`/`Range` (what the client sends and gets) |
+| byte | `FileCache::code` slicing |
+
+They agree on ASCII and differ after a character outside the BMP (`𝒳`, emoji)
+for char/UTF-16, or after any non-ASCII character for bytes. The rule: a
+`Position`/`Range` in handler code is always LSP. Convert at the two boundaries
+only: `Server::loc_to_range` / `loc_to_pos` / `abs_loc_to_range` /
+`abs_loc_to_lsp_loc` turn a `Location` into what goes to the client, and
+`FileCache::get_token*` / `HIRVisitor::get_min_expr` (and the other public
+lookups) take an LSP position and convert it once (`FileCache::to_erg_pos`).
+`util::char_range_of` and friends keep char columns and are only for those
+lookups. Never build a `Position` from `col_begin()` in a handler; never index
+`code` by a `character`. Only `.er` sources are converted: the declarations
+of a `.py`/`.pyi` module carry the columns of the declaration text generated
+from it, so their positions are passed through as they are. Regression tests:
+`test_astral_char_*` in `crates/els/tests/test.rs`.
+
 ### Thread Termination
 
 There are no kill channels or join handles. `Server::restart` closes the request

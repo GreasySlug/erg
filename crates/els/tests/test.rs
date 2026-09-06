@@ -40,6 +40,8 @@ const FILE_SUB_MOD: &str = "tests/sub/mod.er";
 const FILE_IME: &str = "tests/ime.er";
 const FILE_INLINE_VAR: &str = "tests/inline_var.er";
 const FILE_EXTRACT: &str = "tests/extract.er";
+const FILE_ASTRAL: &str = "tests/astral.er";
+const FILE_ASTRAL_ERR: &str = "tests/astral_err.er";
 
 use els::{
     DocumentDiagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, NormalizedUrl, Server,
@@ -1628,5 +1630,111 @@ fn test_on_type_formatting() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
     assert_eq!(edits.len(), 1, "{edits:?}");
     assert_eq!(edits[0].new_text, "x = 1\n");
+    Ok(())
+}
+
+// `tests/astral.er` line 1 is `pair = ("𝒳", y)`: the `𝒳` is one char but two
+// UTF-16 units, so the `y` is char column 13 and LSP column 14. Every request
+// below goes through an LSP column and every answer must come back in one.
+
+#[test]
+fn test_astral_char_definition_and_references() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_ASTRAL).canonicalize()?)?;
+    client.notify_open(FILE_ASTRAL)?;
+    // the cursor on `y` after the `𝒳`
+    let resp = client.request_goto_definition(uri.clone().raw(), 1, 14)?;
+    let Some(GotoDefinitionResponse::Scalar(location)) = resp else {
+        return Err(format!("not a location: {resp:?}").into());
+    };
+    assert_eq!(location.range, oneline_range(0, 0, 1));
+    // the references of `y`, one of them after the `𝒳`
+    let locations = client.request_references(uri.raw(), 0, 0)?.unwrap();
+    let ranges = locations.iter().map(|loc| loc.range).collect::<Vec<_>>();
+    assert!(ranges.contains(&oneline_range(1, 14, 15)), "{ranges:?}");
+    assert!(ranges.contains(&oneline_range(2, 4, 5)), "{ranges:?}");
+    assert!(!ranges.contains(&oneline_range(1, 13, 14)), "{ranges:?}");
+    Ok(())
+}
+
+#[test]
+fn test_astral_char_hover_and_rename() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_ASTRAL).canonicalize()?)?;
+    client.notify_open(FILE_ASTRAL)?;
+    let hover = client.request_hover(uri.clone().raw(), 1, 14)?.unwrap();
+    let HoverContents::Array(contents) = hover.contents else {
+        return Err("not an array".into());
+    };
+    let MarkedString::LanguageString(content) = &contents[1] else {
+        return Err("not a language string".into());
+    };
+    assert_eq!(content.value, "y: {1}");
+    let edit = client
+        .request_rename(uri.clone().raw(), 1, 14, "yy")?
+        .unwrap();
+    let changes = edit.changes.unwrap();
+    let edits = changes.get(&uri.raw()).unwrap();
+    let ranges = edits.iter().map(|edit| edit.range).collect::<Vec<_>>();
+    for expected in [
+        oneline_range(0, 0, 1),
+        oneline_range(1, 14, 15),
+        oneline_range(2, 4, 5),
+    ] {
+        assert!(ranges.contains(&expected), "{expected:?} not in {ranges:?}");
+    }
+    assert_eq!(ranges.len(), 3, "{ranges:?}");
+    Ok(())
+}
+
+#[test]
+fn test_astral_char_completion_and_symbols() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_ASTRAL).canonicalize()?)?;
+    client.notify_open(FILE_ASTRAL)?;
+    let resp = client.request_document_symbols(uri.clone().raw())?;
+    let Some(DocumentSymbolResponse::Nested(symbols)) = resp else {
+        return Err(format!("not nested symbols: {resp:?}").into());
+    };
+    let pair = symbols
+        .iter()
+        .find(|sym| sym.name == "pair")
+        .ok_or("`pair` not found")?;
+    assert_eq!(pair.selection_range, oneline_range(1, 0, 4));
+    assert_eq!(pair.range, oneline_range(1, 0, 16));
+    // `pair = ("𝒳", y.)`: the receiver is found from an LSP column
+    client.notify_change(uri.clone().raw(), add_char(1, 15, "."))?;
+    let resp = client.request_completion(uri.raw(), 1, 16, ".")?;
+    let Some(CompletionResponse::Array(items)) = resp else {
+        return Err(format!("not items: {resp:?}").into());
+    };
+    assert!(items.iter().any(|item| item.label == "abs"));
+    Ok(())
+}
+
+#[test]
+fn test_astral_char_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Server::bind_fake_client();
+    client.request_initialize()?;
+    client.notify_initialized()?;
+    let uri = NormalizedUrl::from_file_path(Path::new(FILE_ASTRAL_ERR).canonicalize()?)?;
+    client.notify_open(FILE_ASTRAL_ERR)?;
+    // `w = ("𝒳", undefined_name)`: the name is char 10-24, LSP 11-25
+    let diags = wait_diagnostics_for(&mut client, &uri)?;
+    let ranges = diags
+        .diagnostics
+        .iter()
+        .map(|diag| diag.range)
+        .collect::<Vec<_>>();
+    assert!(
+        ranges.contains(&oneline_range(0, 11, 25)),
+        "no diagnostic on `undefined_name`: {ranges:?}"
+    );
     Ok(())
 }

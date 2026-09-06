@@ -22,7 +22,7 @@ use serde_json::Value;
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
 use crate::symbol::symbol_kind;
-use crate::util::{abs_loc_to_lsp_loc, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,7 +168,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             if let Ok(loc) = AbsLocation::from_str(data) {
                 if let Some(path) = loc.module.as_ref() {
                     if let Ok(uri) = NormalizedUrl::from_file_path(path) {
-                        if let Some(pos) = crate::util::loc_to_pos(loc.loc) {
+                        if let Some(pos) = self.loc_to_pos(&uri, loc.loc) {
                             if let Some(typ) = self
                                 .class_type_at(&uri, pos)
                                 .or_else(|| self.type_at(&uri, pos))
@@ -228,7 +228,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     fn item_from_type(&self, uri: &NormalizedUrl, typ: &Type) -> Option<TypeHierarchyItem> {
         let module = self.module_for(uri, typ)?;
         let (_, vi) = module.context.get_type_info(typ)?;
-        let loc = abs_loc_to_lsp_loc(&vi.def_loc)?;
+        let loc = self.abs_loc_to_lsp_loc(&vi.def_loc)?;
         let kind = match vi.t {
             Type::TraitType => SymbolKind::INTERFACE,
             Type::ClassType => SymbolKind::CLASS,

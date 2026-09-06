@@ -8,7 +8,7 @@ use lsp_types::{
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{self, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_references(
@@ -41,7 +41,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             }
             for referrer in value.referrers.iter() {
                 if let (Some(path), Some(range)) =
-                    (&referrer.module, util::loc_to_range(referrer.loc))
+                    (&referrer.module, self.abs_loc_to_range(referrer))
                 {
                     let Ok(ref_uri) = Url::from_file_path(path) else {
                         continue;
@@ -75,7 +75,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         if let Some(path) = &vi.def_loc.module {
             if let Ok(def_uri) = Url::from_file_path(path) {
                 if NormalizedUrl::new(def_uri) == *uri {
-                    if let Some(range) = util::loc_to_range(vi.def_loc.loc) {
+                    if let Some(range) = self.loc_to_range(uri, vi.def_loc.loc) {
                         ranges.push(range);
                     }
                 }
@@ -98,7 +98,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 u32::MAX
             }
         };
-        let expected = util::loc_to_range(tok.loc())
+        let expected = self
+            .loc_to_range(uri, tok.loc())
             .map(|r| width(&r))
             .unwrap_or_else(|| width(&ranges[0]));
         ranges.retain(|r| width(r) == expected);

@@ -21,12 +21,12 @@ use lsp_types::{
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::abs_loc_to_lsp_loc;
-use crate::util::{self, loc_to_range, NormalizedUrl};
+use crate::util::{self, NormalizedUrl};
 
 pub struct InlayHintGenerator<'s, C: BuildRunnable, P: Parsable> {
-    _server: &'s Server<C, P>,
+    server: &'s Server<C, P>,
     uri: Value,
+    nuri: NormalizedUrl,
 }
 
 /// Strip singleton refinements (`{1}` → `Nat`, `{["a", "b"]}` → `List(Str, 2)`)
@@ -43,8 +43,16 @@ fn hint_t(t: &Type) -> Type {
 }
 
 impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
+    /// The LSP position of line `ln` (1-based), column `col` (in chars, as the
+    /// HIR counts them).
+    fn lsp_pos(&self, ln: u32, col: u32) -> Position {
+        self.server
+            .file_cache
+            .to_lsp_pos(&self.nuri, Position::new(ln - 1, col))
+    }
+
     fn anot(&self, ln: u32, col: u32, cont: String) -> InlayHint {
-        let position = Position::new(ln - 1, col);
+        let position = self.lsp_pos(ln, col);
         let label = InlayHintLabel::String(cont);
         let kind = Some(InlayHintKind::TYPE);
         InlayHint {
@@ -66,7 +74,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
         ty: D,
         return_t: bool,
     ) -> InlayHint {
-        let position = Position::new(ln_end - 1, col_end);
+        let position = self.lsp_pos(ln_end, col_end);
         let string = if return_t {
             format!("): {ty}")
         } else {
@@ -87,7 +95,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
     }
 
     fn type_bounds_anot(&self, ln_end: u32, col_end: u32, ty_bounds: String) -> InlayHint {
-        let position = Position::new(ln_end - 1, col_end);
+        let position = self.lsp_pos(ln_end, col_end);
         let label = InlayHintLabel::String(ty_bounds);
         let kind = Some(InlayHintKind::TYPE);
         InlayHint {
@@ -108,7 +116,7 @@ impl<C: BuildRunnable, P: Parsable> InlayHintGenerator<'_, C, P> {
         col_begin: u32,
         name: D,
     ) -> InlayHint {
-        let position = Position::new(ln_begin - 1, col_begin);
+        let position = self.lsp_pos(ln_begin, col_begin);
         let label = InlayHintLabel::String(format!("{name}:= "));
         let kind = Some(InlayHintKind::PARAMETER);
         InlayHint {
@@ -317,8 +325,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let uri = NormalizedUrl::new(params.text_document.uri);
         let mut result = vec![];
         let gen = InlayHintGenerator {
-            _server: self,
+            server: self,
             uri: uri.clone().raw().to_string().into(),
+            nuri: uri.clone(),
         };
         if let Some(hir) = self.get_hir(&uri) {
             for chunk in hir.module.iter() {
@@ -343,7 +352,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 };
                 let name = label.trim_start_matches("): ").trim_start_matches(": ");
                 if let Some((_, vi)) = module.context.get_type_info_by_str(name) {
-                    let location = abs_loc_to_lsp_loc(&vi.def_loc);
+                    let location = self.abs_loc_to_lsp_loc(&vi.def_loc);
                     let parts = InlayHintLabelPart {
                         value: label.clone(),
                         tooltip: None,

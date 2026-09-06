@@ -17,7 +17,7 @@ use lsp_types::{
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{abs_loc_to_lsp_loc, loc_to_range, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 pub(crate) fn symbol_kind(vi: &VarInfo) -> SymbolKind {
     match &vi.t {
@@ -57,7 +57,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()));
             if let Some(hir) = self.get_hir(&nurl) {
                 for chunk in hir.module.iter() {
-                    if let Some(symbol) = self.symbol(chunk) {
+                    if let Some(symbol) = self.symbol(&nurl, chunk) {
                         flatten_workspace_symbol(
                             symbol,
                             &uri,
@@ -73,6 +73,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             // Failed checks may still have a context with toplevel names.
             if let Some(mod_ctx) = self.get_mod_ctx(&nurl) {
                 collect_context_workspace_symbols(
+                    self,
                     &mod_ctx.context,
                     &uri,
                     module_name.as_deref(),
@@ -94,7 +95,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         if let Some(hir) = self.get_hir(&uri) {
             let mut res = vec![];
             for chunk in hir.module.iter() {
-                let symbol = self.symbol(chunk);
+                let symbol = self.symbol(&uri, chunk);
                 res.extend(symbol);
             }
             return Ok(Some(DocumentSymbolResponse::Nested(res)));
@@ -102,14 +103,14 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         Ok(None)
     }
 
-    fn symbol(&self, chunk: &Expr) -> Option<DocumentSymbol> {
+    fn symbol(&self, uri: &NormalizedUrl, chunk: &Expr) -> Option<DocumentSymbol> {
         match chunk {
             Expr::Def(def) => {
                 if def.sig.is_glob() || def.sig.inspect().starts_with(['%']) {
                     return None;
                 }
-                let range = loc_to_range(def.loc())?;
-                let selection_range = loc_to_range(def.sig.loc())?;
+                let range = self.loc_to_range(uri, def.loc())?;
+                let selection_range = self.loc_to_range(uri, def.sig.loc())?;
                 #[allow(deprecated)]
                 Some(DocumentSymbol {
                     name: def.sig.name().to_string(),
@@ -119,12 +120,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     deprecated: None,
                     range,
                     selection_range,
-                    children: Some(self.child_symbols(chunk)),
+                    children: Some(self.child_symbols(uri, chunk)),
                 })
             }
             Expr::ClassDef(def) => {
-                let range = loc_to_range(def.loc())?;
-                let selection_range = loc_to_range(def.sig.loc())?;
+                let range = self.loc_to_range(uri, def.loc())?;
+                let selection_range = self.loc_to_range(uri, def.sig.loc())?;
                 #[allow(deprecated)]
                 Some(DocumentSymbol {
                     name: def.sig.name().to_string(),
@@ -134,12 +135,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     deprecated: None,
                     range,
                     selection_range,
-                    children: Some(self.child_symbols(chunk)),
+                    children: Some(self.child_symbols(uri, chunk)),
                 })
             }
             Expr::PatchDef(def) => {
-                let range = loc_to_range(def.loc())?;
-                let selection_range = loc_to_range(def.sig.loc())?;
+                let range = self.loc_to_range(uri, def.loc())?;
+                let selection_range = self.loc_to_range(uri, def.sig.loc())?;
                 #[allow(deprecated)]
                 Some(DocumentSymbol {
                     name: def.sig.name().to_string(),
@@ -149,21 +150,21 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     deprecated: None,
                     range,
                     selection_range,
-                    children: Some(self.child_symbols(chunk)),
+                    children: Some(self.child_symbols(uri, chunk)),
                 })
             }
             _ => None,
         }
     }
 
-    fn child_symbols(&self, chunk: &Expr) -> Vec<DocumentSymbol> {
+    fn child_symbols(&self, uri: &NormalizedUrl, chunk: &Expr) -> Vec<DocumentSymbol> {
         match chunk {
             Expr::Def(def) => match def.def_kind() {
                 DefKind::Class | DefKind::Trait => {
                     if let Some(base) = def.get_base() {
                         let mut res = vec![];
                         for member in base.attrs.iter() {
-                            let symbol = self.symbol(&Expr::Def(member.clone()));
+                            let symbol = self.symbol(uri, &Expr::Def(member.clone()));
                             res.extend(symbol);
                         }
                         res
@@ -177,12 +178,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 let mut res = vec![];
                 if let Some(Expr::Record(rec)) = def.require_or_sup.as_deref() {
                     for member in rec.attrs.iter() {
-                        let symbol = self.symbol(&Expr::Def(member.clone()));
+                        let symbol = self.symbol(uri, &Expr::Def(member.clone()));
                         res.extend(symbol);
                     }
                 }
                 for method in def.all_methods() {
-                    let symbol = self.symbol(method);
+                    let symbol = self.symbol(uri, method);
                     res.extend(symbol);
                 }
                 res
@@ -190,7 +191,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             Expr::PatchDef(def) => {
                 let mut res = vec![];
                 for method in def.methods.iter() {
-                    let symbol = self.symbol(method);
+                    let symbol = self.symbol(uri, method);
                     res.extend(symbol);
                 }
                 res
@@ -200,7 +201,8 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     }
 }
 
-fn collect_context_workspace_symbols(
+fn collect_context_workspace_symbols<C: BuildRunnable, P: Parsable>(
+    server: &Server<C, P>,
     ctx: &Context,
     uri: &Url,
     module_name: Option<&str>,
@@ -227,7 +229,7 @@ fn collect_context_workspace_symbols(
         {
             continue;
         }
-        let Some(location) = abs_loc_to_lsp_loc(&vi.def_loc) else {
+        let Some(location) = server.abs_loc_to_lsp_loc(&vi.def_loc) else {
             continue;
         };
         if &location.uri != uri {

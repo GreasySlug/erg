@@ -17,7 +17,7 @@ use crate::context::Context;
 use crate::feature_error;
 use crate::ty::constructors::{and, dict_mut, list_mut, mono, poly, tuple_t, v_enum};
 use crate::ty::value::{EvalValueError, EvalValueResult, GenTypeObj, TypeObj, ValueObj};
-use crate::ty::{ConstSubr, Field, TyParam, Type, ValueArgs};
+use crate::ty::{ConstSubr, Field, IntervalOp, TyParam, Type, ValueArgs};
 use erg_common::error::{ErrorCore, ErrorKind, Location, SubMessage};
 use erg_common::style::{Color, StyledStr, StyledString, THEME};
 
@@ -1097,8 +1097,15 @@ pub(crate) fn __range_getitem__(mut args: ValueArgs, _ctx: &Context) -> EvalValu
     let slf = args
         .remove_left_or_key("Self")
         .ok_or_else(|| not_passed("Self"))?;
-    let ValueObj::DataClass { name: _, fields } = slf else {
+    let ValueObj::DataClass { name, fields } = slf else {
         return Err(type_mismatch("Range", slf, "Self"));
+    };
+    let Some(op) = ValueObj::as_interval_op(&name) else {
+        return Err(type_mismatch(
+            "Range",
+            ValueObj::DataClass { name, fields },
+            "Self",
+        ));
     };
     let index = args
         .remove_left_or_key("Index")
@@ -1116,9 +1123,20 @@ pub(crate) fn __range_getitem__(mut args: ValueArgs, _ctx: &Context) -> EvalValu
     let Ok(end) = usize::try_from(end) else {
         return Err(type_mismatch("Nat", end, "end"));
     };
-    // FIXME <= if inclusive
-    if start + index < end {
-        Ok(ValueObj::Nat((start + index) as u64).into())
+    // The same rule as `Range.__getitem__` in `lib/core/_erg_range.py`: the element is
+    // `start + index` if the range contains it, whichever ends are open. A closed
+    // range `1..3` therefore has the element 3 at index 2, and it used to be an
+    // IndexError here (the end was always treated as exclusive) while the program
+    // ran fine.
+    let res = start + index;
+    let contained = match op {
+        IntervalOp::Closed => start <= res && res <= end,
+        IntervalOp::RightOpen => start <= res && res < end,
+        IntervalOp::LeftOpen => start < res && res <= end,
+        IntervalOp::Open => start < res && res < end,
+    };
+    if contained {
+        Ok(ValueObj::Nat(res as u64).into())
     } else {
         Err(ErrorCore::new(
             vec![SubMessage::only_loc(Location::Unknown)],

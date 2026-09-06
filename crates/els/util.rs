@@ -9,7 +9,6 @@ use erg_common::traits::{DequeStream, Immutable, Locational};
 
 use erg_compiler::erg_parser::token::{Token, TokenStream};
 
-use erg_compiler::varinfo::AbsLocation;
 use lsp_types::{Position, Range, Url};
 
 use crate::server::ELSResult;
@@ -85,23 +84,25 @@ impl NormalizedUrl {
     }
 }
 
-pub(crate) fn loc_to_range(loc: erg_common::error::Location) -> Option<Range> {
+// Two column units meet in this crate. The lexer, and so every `Location`,
+// counts columns in `char`s; LSP positions count UTF-16 code units. They agree
+// until a line holds a character outside the BMP (`𝒳`, emoji), which is one
+// `char` but two units. The functions below only re-shape a `Location` into
+// the `Position`/`Range` types and keep the `char` columns -- "char positions".
+// They are for comparing with tokens and HIR nodes. Anything that comes from
+// or goes to the client must be converted with `FileCache::to_erg_pos` /
+// `to_lsp_pos` (or `Server::loc_to_range` and friends), which know the text.
+
+/// `loc` as a range in `char` columns. Not an LSP range: see the note above.
+pub(crate) fn char_range_of(loc: erg_common::error::Location) -> Option<Range> {
     let start = Position::new(loc.ln_begin()?.saturating_sub(1), loc.col_begin()?);
     let end = Position::new(loc.ln_end()?.saturating_sub(1), loc.col_end()?);
     Some(Range::new(start, end))
 }
 
-pub(crate) fn _range_to_loc(range: Range) -> erg_common::error::Location {
-    erg_common::error::Location::range(
-        range.start.line + 1,
-        range.start.character,
-        range.end.line + 1,
-        range.end.character,
-    )
-}
-
-pub(crate) fn loc_to_pos(loc: erg_common::error::Location) -> Option<Position> {
-    // Same origin as `loc_to_range.start`: Erg columns are 0-based like LSP.
+/// The start of `loc` in `char` columns. Not an LSP position: see the note above.
+pub(crate) fn char_pos_of(loc: erg_common::error::Location) -> Option<Position> {
+    // Same origin as `char_range_of(loc).start`: Erg columns are 0-based like LSP.
     // HIR lookup uses `pos_in_loc`, which compares `pos.character` with
     // `col_begin..col_end` directly — do not add a column offset here.
     Some(Position::new(
@@ -110,13 +111,15 @@ pub(crate) fn loc_to_pos(loc: erg_common::error::Location) -> Option<Position> {
     ))
 }
 
-pub fn pos_to_loc(pos: Position) -> erg_common::error::Location {
-    // LSP `character` is already 0-based, same as Erg `col_begin`.
+/// A zero-width `Location` at the char position `pos`.
+pub(crate) fn char_pos_to_loc(pos: Position) -> erg_common::error::Location {
     // A zero-width range at the cursor compares with token spans via
     // `Location`'s overlap order (`col_end <= col_begin` ⇒ less).
     erg_common::error::Location::range(pos.line + 1, pos.character, pos.line + 1, pos.character)
 }
 
+/// Whether the char position `pos` lies in `loc`. `pos` must count `char`s
+/// (`FileCache::to_erg_pos`), as `loc` does.
 pub(crate) fn pos_in_loc<L: Locational>(loc: &L, pos: Position) -> bool {
     let ln_begin = loc.ln_begin().unwrap_or(0);
     let ln_end = loc.ln_end().unwrap_or(0);
@@ -199,40 +202,34 @@ pub(crate) fn denormalize(uri: Url) -> Url {
     Url::parse(&uri.as_str().replace("c:", "file:///c%3A")).unwrap()
 }
 
-pub(crate) fn abs_loc_to_lsp_loc(loc: &AbsLocation) -> Option<lsp_types::Location> {
-    let uri = Url::from_file_path(loc.module.as_ref()?).ok()?;
-    let range = loc_to_range(loc.loc)?;
-    Some(lsp_types::Location::new(uri, range))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use erg_common::error::Location;
 
     #[test]
-    fn loc_to_pos_uses_col_begin() {
+    fn char_pos_of_uses_col_begin() {
         let loc = Location::range(2, 0, 2, 1);
-        assert_eq!(loc_to_pos(loc), Some(Position::new(1, 0)));
+        assert_eq!(char_pos_of(loc), Some(Position::new(1, 0)));
         let loc = Location::range(1, 5, 1, 8);
-        assert_eq!(loc_to_pos(loc), Some(Position::new(0, 5)));
+        assert_eq!(char_pos_of(loc), Some(Position::new(0, 5)));
     }
 
     #[test]
-    fn loc_to_pos_matches_range_start() {
+    fn char_pos_of_matches_range_start() {
         let loc = Location::range(3, 4, 3, 10);
-        let pos = loc_to_pos(loc).unwrap();
-        let range = loc_to_range(loc).unwrap();
+        let pos = char_pos_of(loc).unwrap();
+        let range = char_range_of(loc).unwrap();
         assert_eq!(pos, range.start);
     }
 
     #[test]
-    fn pos_to_loc_uses_the_lsp_column() {
+    fn char_pos_to_loc_keeps_the_column() {
         let pos = Position::new(1, 7);
-        let loc = pos_to_loc(pos);
+        let loc = char_pos_to_loc(pos);
         assert_eq!(loc.ln_begin(), Some(2));
         assert_eq!(loc.col_begin(), Some(7));
-        assert_eq!(loc_to_pos(loc), Some(pos));
+        assert_eq!(char_pos_of(loc), Some(pos));
     }
 
     /// Every index this returns is spliced with `replace_range`, which panics

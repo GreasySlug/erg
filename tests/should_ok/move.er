@@ -3,3 +3,30 @@
     i
 
 .ok2(x: Int!): Int = x
+
+C! = Class {.x = Int}
+
+# reading an attribute reads the object, it does not take it
+.ok3(): Int =
+    c = C!.new {.x = 1}
+    _: Int = c.x
+    c.x
+
+# a method call reads its receiver, it does not take it
+.ok4!(): Nat =
+    l = ![1, 2]
+    l.push! 3
+    _ = l.pop!()
+    l.pop!()
+
+# a closure reads a mutable outer variable every time it runs; it does not take it
+.ok5!(): Bool =
+    flg = !True
+    while! do! flg, do!:
+        flg.invert!()
+    flg
+
+assert .ok() == 1
+assert .ok3() == 1
+assert .ok4!() == 2
+assert not .ok5!()

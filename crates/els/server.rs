@@ -77,7 +77,7 @@ use crate::pull_diagnostic::{DocumentDiagnostic, WorkspaceDiagnostic};
 use crate::scheduler::{Scheduler, MAX_WORKERS};
 use crate::thread_pool::ThreadPool;
 use crate::type_hierarchy::{TypeHierarchyPrepare, TypeHierarchySubtypes, TypeHierarchySupertypes};
-use crate::util::{self, loc_to_pos, NormalizedUrl};
+use crate::util::{self, NormalizedUrl};
 
 pub const HEALTH_CHECKER_ID: i64 = 10000;
 pub const ASK_AUTO_SAVE_ID: i64 = 10001;
@@ -1516,6 +1516,60 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         self.restore_entry(uri, entry);
     }
 
+    /// `loc` as an LSP range in `uri`.
+    ///
+    /// A `Location` counts columns in `char`s (the lexer's unit) and LSP in
+    /// UTF-16 code units; `FileCache::to_lsp_pos` tells them apart with the
+    /// line's text. Every location that is sent to the client goes through
+    /// this (or the siblings below), never through `util::char_range_of`.
+    pub(crate) fn loc_to_range(
+        &self,
+        uri: &NormalizedUrl,
+        loc: impl erg_common::traits::Locational,
+    ) -> Option<lsp_types::Range> {
+        let range = util::char_range_of(loc.loc())?;
+        Some(self.file_cache.to_lsp_range(uri, range))
+    }
+
+    /// The start of `loc` as an LSP position in `uri`.
+    pub(crate) fn loc_to_pos(
+        &self,
+        uri: &NormalizedUrl,
+        loc: impl erg_common::traits::Locational,
+    ) -> Option<Position> {
+        let pos = util::char_pos_of(loc.loc())?;
+        Some(self.file_cache.to_lsp_pos(uri, pos))
+    }
+
+    /// A zero-width `Location` at the LSP position `pos` in `uri`, for
+    /// comparing with tokens and HIR nodes.
+    pub(crate) fn pos_to_loc(
+        &self,
+        uri: &NormalizedUrl,
+        pos: Position,
+    ) -> erg_common::error::Location {
+        util::char_pos_to_loc(self.file_cache.to_erg_pos(uri, pos))
+    }
+
+    /// `abs` as an LSP range, converted with the text of the module it names.
+    pub(crate) fn abs_loc_to_range(
+        &self,
+        abs: &erg_compiler::varinfo::AbsLocation,
+    ) -> Option<lsp_types::Range> {
+        let uri = NormalizedUrl::from_file_path(abs.module.as_ref()?).ok()?;
+        self.loc_to_range(&uri, abs.loc)
+    }
+
+    /// `abs` as an LSP location (its module's uri and the converted range).
+    pub(crate) fn abs_loc_to_lsp_loc(
+        &self,
+        abs: &erg_compiler::varinfo::AbsLocation,
+    ) -> Option<lsp_types::Location> {
+        let uri = NormalizedUrl::from_file_path(abs.module.as_ref()?).ok()?;
+        let range = self.loc_to_range(&uri, abs.loc)?;
+        Some(lsp_types::Location::new(uri.raw(), range))
+    }
+
     pub(crate) fn get_visitor(&self, uri: &NormalizedUrl) -> Option<HIRVisitor<'_>> {
         let path = uri.to_file_path().ok()?;
         let Some(ent) = self.shared.get_module(&path) else {
@@ -1606,8 +1660,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let maybe_token = self.file_cache.get_receiver(uri, attr_marker_pos);
         if let Some(token) = maybe_token {
             let expr = if let Some(visitor) = self.get_visitor(uri) {
-                if let Some(expr) =
-                    loc_to_pos(token.loc()).and_then(|pos| visitor.get_min_expr(pos).cloned())
+                if let Some(expr) = self
+                    .loc_to_pos(uri, token.loc())
+                    .and_then(|pos| visitor.get_min_expr(pos).cloned())
                 {
                     Some(expr)
                 } else {
@@ -1637,8 +1692,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             // _log!(self, "token: {token}");
             let mut ctxs = vec![];
             let expr = if let Some(visitor) = self.get_visitor(uri) {
-                if let Some(expr) =
-                    loc_to_pos(token.loc()).and_then(|pos| visitor.get_min_expr(pos))
+                if let Some(expr) = self
+                    .loc_to_pos(uri, token.loc())
+                    .and_then(|pos| visitor.get_min_expr(pos))
                 {
                     let type_ctxs = module
                         .context

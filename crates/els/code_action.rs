@@ -16,7 +16,7 @@ use lsp_types::{
 };
 
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{self, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     /// Workspace edits that drop unused bindings and rename unused parameters to `_`.
@@ -47,12 +47,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let Ok(uri) = NormalizedUrl::from_file_path(warn.input.full_path()) else {
                 continue;
             };
-            let Some(pos) = util::loc_to_pos(warn.core.loc) else {
+            let Some(pos) = self.loc_to_pos(&uri, warn.core.loc) else {
                 continue;
             };
             match visitor.get_min_expr(pos) {
                 Some(Expr::Def(def)) => {
-                    let Some(mut range) = util::loc_to_range(def.loc()) else {
+                    let Some(mut range) = self.loc_to_range(&uri, def.loc()) else {
                         self.send_log("range not found")?;
                         continue;
                     };
@@ -82,7 +82,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     map.entry(uri.clone().raw()).or_insert(vec![]).push(edit);
                 }
                 _ => {
-                    let Some(range) = util::loc_to_range(warn.core.loc) else {
+                    let Some(range) = self.loc_to_range(&uri, warn.core.loc) else {
                         continue;
                     };
                     let Some(token) = self
@@ -138,12 +138,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let mut map = HashMap::new();
         let visitor = self.get_visitor(uri)?;
         let def_loc = visitor.get_info(&token)?.def_loc;
-        let edit = TextEdit::new(util::loc_to_range(def_loc.loc)?, new_text.clone());
+        let edit = TextEdit::new(self.loc_to_range(uri, def_loc.loc)?, new_text.clone());
         map.insert(uri.clone().raw(), vec![edit]);
         if let Some(value) = self.shared.index.get_refs(&def_loc) {
             for refer in value.referrers.iter() {
                 let url = Url::from_file_path(refer.module.as_ref()?).ok()?;
-                let range = util::loc_to_range(refer.loc)?;
+                let range = self.abs_loc_to_range(refer)?;
                 let edit = TextEdit::new(range, new_text.clone());
                 map.entry(url).or_insert(vec![]).push(edit);
             }
@@ -383,7 +383,9 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     .map_err(|_| "from_file_path")?,
                 );
                 let visitor = self.get_visitor(&uri).ok_or(format!("{uri} not found"))?;
-                let range = util::loc_to_range(acc.var_info().def_loc.loc).ok_or("loc_to_range")?;
+                let range = self
+                    .loc_to_range(&uri, acc.var_info().def_loc.loc)
+                    .ok_or("loc_to_range")?;
                 if let Some(Expr::Def(def)) = visitor.get_min_expr(range.start) {
                     let changes = self.inline_var_def(def).ok_or("inline_var_def")?;
                     action.edit = Some(WorkspaceEdit::new(changes));
@@ -403,12 +405,12 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     /// answering for the rest of the session.
     fn inline_var_def(&self, def: &erg_compiler::hir::Def) -> Option<HashMap<Url, Vec<TextEdit>>> {
         let mut changes = HashMap::new();
-        let mut range = util::loc_to_range(def.loc())?;
-        range.end.character = u32::MAX;
-        let delete = TextEdit::new(range, "".to_string());
         let def_loc = &def.sig.ident().vi.def_loc;
         let uri = NormalizedUrl::from_file_path(def_loc.module.as_ref()?).ok()?;
-        let range = util::loc_to_range(def.body.block.loc())?;
+        let mut range = self.loc_to_range(&uri, def.loc())?;
+        range.end.character = u32::MAX;
+        let delete = TextEdit::new(range, "".to_string());
+        let range = self.loc_to_range(&uri, def.body.block.loc())?;
         let code = self.file_cache.get_ranged(&uri, range).ok()??;
         let expr = def.body.block.first()?;
         let code = if expr.need_to_be_closed() {
@@ -423,7 +425,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                     continue;
                 };
                 let (Some(range), Ok(uri)) = (
-                    util::loc_to_range(ref_.loc),
+                    self.abs_loc_to_range(ref_),
                     NormalizedUrl::from_file_path(path),
                 ) else {
                     continue;

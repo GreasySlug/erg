@@ -152,19 +152,17 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             let words = li.split_with(&[" ", "'", "\"", "`", "(", ")", "[", "]", "{", "}"]);
             for word in words {
                 if word.trim().is_empty() || is_usual_word(word) || is_not_symbol(word) {
-                    col += word.len() as u32 + 1;
+                    col += word.chars().count() as u32 + 1;
                     continue;
                 }
-                let range = Range {
-                    start: Position {
-                        line,
-                        character: col,
-                    },
-                    end: Position {
-                        line,
-                        character: col + word.len() as u32,
-                    },
-                };
+                // `col` counts chars, like the token; the client wants UTF-16 units
+                let range = self.file_cache.to_lsp_range(
+                    uri,
+                    Range::new(
+                        Position::new(line, col),
+                        Position::new(line, col + word.chars().count() as u32),
+                    ),
+                );
                 let typ = Type::Mono(Str::rc(word));
                 if let Some(path) = self.cfg.input.resolve_path(Path::new(word), &self.cfg) {
                     let target = Url::from_file_path(path).ok();
@@ -179,7 +177,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                         res.push(doc);
                     }
                 }
-                col += word.len() as u32 + 1;
+                col += word.chars().count() as u32 + 1;
             }
             line += 1;
             col = 0;

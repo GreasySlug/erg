@@ -2724,13 +2724,29 @@ impl Methods {
     }
 }
 
+/// How a class that does not define `new` itself gets one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenNew {
+    /// The class (or the user) defines `new`: nothing to generate.
+    Defined,
+    /// `new` takes what `__call__` takes, the record of the fields:
+    /// `def new(x): return C.__call__(x)`
+    FromCall,
+    /// The superclass has a `new` of its own (user-defined, or generated this way from
+    /// one further up) and the type checker gave the subclass's `new` its signature,
+    /// which is not the record. The generated `new` forwards to it and makes the
+    /// subclass from what it built:
+    /// `def new(*args, **kwargs): return D.__call__(Sup.new(*args, **kwargs))`
+    FromSuper,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClassDef {
     pub obj: Box<GenTypeObj>,
     pub sig: Signature,
     pub require_or_sup: Option<Box<Expr>>,
-    /// The type of `new` that is automatically defined if not defined
-    pub need_to_gen_new: bool,
+    /// How `new` is generated if the class does not define it
+    pub gen_new: GenNew,
     pub constructor: Type,
     pub methods_list: Vec<Methods>,
 }
@@ -2783,7 +2799,7 @@ impl ClassDef {
         obj: GenTypeObj,
         sig: Signature,
         require_or_sup: Option<Expr>,
-        need_to_gen_new: bool,
+        gen_new: GenNew,
         constructor: Type,
         methods_list: Vec<Methods>,
     ) -> Self {
@@ -2791,7 +2807,7 @@ impl ClassDef {
             obj: Box::new(obj),
             sig,
             require_or_sup: require_or_sup.map(Box::new),
-            need_to_gen_new,
+            gen_new,
             constructor,
             methods_list,
         }

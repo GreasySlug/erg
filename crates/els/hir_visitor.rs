@@ -98,7 +98,9 @@ impl<'a> HIRVisitor<'a> {
         }
     }
 
+    /// The namespace path at the LSP position `pos`.
     pub fn get_namespace(&self, pos: Position) -> Vec<Str> {
+        let pos = self.file_cache.to_erg_pos(&self.uri, pos);
         let name = self
             .uri
             .path()
@@ -228,8 +230,13 @@ impl<'a> HIRVisitor<'a> {
         self.get_exprs_ns(cur_ns, dummy.iter(), pos)
     }
 
-    /// Returns the smallest expression containing `token`. Literals, accessors, containers, etc. are returned.
+    /// The innermost expression at the LSP position `pos`: literals,
+    /// accessors, containers and so on are all candidates.
+    ///
+    /// The positions handed down from here count `char`s, as the HIR's
+    /// locations do; the conversion happens once, at this boundary.
     pub fn get_min_expr(&self, pos: Position) -> Option<&Expr> {
+        let pos = self.file_cache.to_erg_pos(&self.uri, pos);
         for chunk in self.hir.module.iter() {
             if let Some(expr) = self.get_expr(chunk, pos) {
                 return Some(expr);
@@ -243,6 +250,7 @@ impl<'a> HIRVisitor<'a> {
     /// `D = Inherit C` is an accessor; the enclosing class is `D`). Nested
     /// class definitions are preferred over the outer class that contains them.
     pub fn get_class_def_at(&self, pos: Position) -> Option<&ClassDef> {
+        let pos = self.file_cache.to_erg_pos(&self.uri, pos);
         let mut found = None;
         for chunk in self.hir.module.iter() {
             self.walk_class_def(chunk, pos, &mut found);

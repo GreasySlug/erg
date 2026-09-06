@@ -4,7 +4,7 @@ use lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
 
 use crate::_log;
 use crate::server::{ELSResult, RedirectableStdout, Server};
-use crate::util::{loc_to_pos, NormalizedUrl};
+use crate::util::NormalizedUrl;
 
 impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
     pub(crate) fn handle_goto_implementation(
@@ -34,7 +34,7 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
             else {
                 return Ok(None);
             };
-            let Some(pos) = loc_to_pos(vi.def_loc.loc) else {
+            let Some(pos) = self.loc_to_pos(&def_uri, vi.def_loc.loc) else {
                 return Ok(None);
             };
             if let Some(location) = self.get_definition_location(&def_uri, pos)? {

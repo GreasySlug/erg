@@ -63,6 +63,68 @@ r = R.new 3, 4
 print! q.x, q.y, q.sum(), r.sum(), isinstance(r, P)
 ",
     ),
+    // A generated `__init__` that forwards to the superclass has to name the class it
+    // belongs to. `super(type(self), self)` is the *instance's* class, so a third class
+    // down the chain inherited the frame and called it again until the stack ran out.
+    (
+        "inherit_chain",
+        "\
+@Inheritable
+P = Class()
+@Inheritable
+Q = Inherit P
+R = Inherit Q
+r = R.new()
+print! r in R, r in Q, r in P
+",
+    ),
+    // The same chain with a body to run in the middle class: the forwarding `__init__`
+    // is generated there, so this is the case the guard cannot skip.
+    (
+        "inherit_chain_init",
+        "\
+@Inheritable
+P = Class()
+@Inheritable
+Q = Inherit P
+Q.
+    __init__! self =
+        print! \"q\"
+R = Inherit Q
+_ = R.new()
+",
+    ),
+    // The user's `__init__!` body goes into the generated `__init__`; it used to be
+    // left in the method list and written a second time under its mangled name.
+    (
+        "user_init",
+        "\
+C = Class {.x = Int}
+C.
+    __init__! self =
+        print! \"init\"
+c = C.new {.x = 1}
+print! c.x
+",
+    ),
+    // `*args` comes before the defaults: written the other way round, `f(1, 2, 3)`
+    // bound `b = 2` and the sum came out 6 instead of 16.
+    (
+        "var_args_with_default",
+        "\
+f(a: Int, *args: Int, b := 10) = a + b + args.sum()
+print! f(1, 2, 3)
+",
+    ),
+    // A raw identifier sidesteps the compiler's name checks, so a private one has to be
+    // mangled like any other private name: spelled exactly, it overwrote the prelude.
+    (
+        "raw_ident_shadows_prelude",
+        "\
+'Int' = 1
+print! 'Int' + 1
+",
+    ),
     // A block local is a local of the call, not of the module. Every
     // definition inside a block used to be written as a module global, so a
     // recursive call overwrote its caller's copy.

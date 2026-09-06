@@ -52,11 +52,6 @@ pub struct OwnershipChecker {
     /// One frame per entry of `path_stack` but the module's: the mutable outer
     /// variables the scope being checked has accessed so far.
     capture_frames: Vec<Vec<(Str, Identifier)>>,
-    /// The `path_stack` depth of each function-like scope being checked (a subroutine
-    /// definition or a lambda). A variable owned outside the innermost of them is
-    /// captured by it, not moved into it: the closure runs as many times as it is
-    /// called, and the scope that owns the variable goes on using it afterwards.
-    fn_scopes: Vec<usize>,
     errs: OwnershipErrors,
 }
 
@@ -70,7 +65,6 @@ impl OwnershipChecker {
             store_names: Dict::new(),
             captures: Dict::new(),
             capture_frames: vec![],
-            fn_scopes: vec![],
             errs: OwnershipErrors::empty(),
         }
     }
@@ -118,6 +112,18 @@ impl OwnershipChecker {
         }
     }
 
+    /// A subroutine's body. Its value goes back to the caller, so a lone accessor there
+    /// reads the variable rather than taking it: the subroutine runs again every time it
+    /// is called, and the scope that owns the variable goes on using it
+    /// (`while! do! flg, ...` reads `flg` on every iteration). Anything else in the body
+    /// -- a definition (`y = x`), an argument moved into a call -- takes it as it always did.
+    fn check_body(&mut self, block: &Block) {
+        if let (1, Some(Expr::Accessor(acc))) = (block.len(), block.first()) {
+            return self.check_acc(acc, Ownership::Ref, false);
+        }
+        self.check_block(block)
+    }
+
     fn check_expr(&mut self, expr: &Expr, ownership: Ownership, chunk: bool) {
         match expr {
             Expr::Def(def) => {
@@ -133,9 +139,6 @@ impl OwnershipChecker {
                 // a variable definition's body runs here and once; a subroutine's runs
                 // where it is called, as many times as it is called
                 let is_subr = def.sig.is_subr();
-                if is_subr {
-                    self.fn_scopes.push(self.path_stack.len());
-                }
                 self.dict
                     .insert(Str::from(self.full_path()), LocalVars::default());
                 if let Signature::Subr(subr) = &def.sig {
@@ -162,9 +165,10 @@ impl OwnershipChecker {
                         }
                     }
                 }
-                self.check_block(&def.body.block);
                 if is_subr {
-                    self.fn_scopes.pop();
+                    self.check_body(&def.body.block);
+                } else {
+                    self.check_block(&def.body.block);
                 }
                 let captured = self.capture_frames.pop().unwrap_or_default();
                 self.path_stack.pop();
@@ -321,11 +325,9 @@ impl OwnershipChecker {
                     Visibility::private(Str::from(format!("<lambda_{}>", lambda.id)));
                 self.path_stack.push(name_and_vis);
                 self.capture_frames.push(vec![]);
-                self.fn_scopes.push(self.path_stack.len());
                 self.dict
                     .insert(Str::from(self.full_path()), LocalVars::default());
-                self.check_block(&lambda.body);
-                self.fn_scopes.pop();
+                self.check_body(&lambda.body);
                 // what an anonymous lambda captures is recorded on the closures around it
                 self.capture_frames.pop();
                 self.path_stack.pop();
@@ -417,25 +419,13 @@ impl OwnershipChecker {
 
     fn drop(&mut self, ident: &Identifier) {
         log!("drop: {ident} (in {})", ident.ln_begin().unwrap_or(0));
-        let innermost_fn = self.fn_scopes.last().copied().unwrap_or(0);
-        let len = self.path_stack.len();
-        for n in 0..len {
-            if !self.nth_outer_scope(n).alive_vars.contains(ident.inspect()) {
-                continue;
+        for n in 0..self.path_stack.len() {
+            if self.nth_outer_scope(n).alive_vars.remove(ident.inspect()) {
+                self.nth_outer_scope(n)
+                    .dropped_vars
+                    .insert(ident.inspect().clone(), ident.loc());
+                return;
             }
-            // A closure cannot take a variable of a scope outside it: it may run more
-            // than once, and that scope goes on using the variable. `while! do! flg, ...`
-            // reads `flg` on every iteration, and `flg.invert!()` follows the loop.
-            // Only the closure's own body reads it that way, though: a definition
-            // inside it (`y = x`) does take the variable, and that is still a move.
-            if len == innermost_fn && len - n < innermost_fn {
-                return self.note_capture(ident);
-            }
-            self.nth_outer_scope(n).alive_vars.remove(ident.inspect());
-            self.nth_outer_scope(n)
-                .dropped_vars
-                .insert(ident.inspect().clone(), ident.loc());
-            return;
         }
         panic!("variable not found: {ident}");
     }

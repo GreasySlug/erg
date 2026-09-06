@@ -102,7 +102,9 @@ pub(crate) fn utf16_col(line: &str, char_col: u32) -> u32 {
         seen += c.len_utf16() as u32;
         chars += 1;
     }
-    seen + char_col.saturating_sub(chars)
+    // a column past the end keeps its excess, and `u32::MAX` is used as an
+    // end-of-line sentinel, so the sum has to saturate too
+    seen.saturating_add(char_col.saturating_sub(chars))
 }
 
 /// The `char` column of UTF-16 column `utf16_col` in `line`: the inverse of

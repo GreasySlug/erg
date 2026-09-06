@@ -2,12 +2,18 @@
 
 Works on a scratch copy of tests/should_ok and examples so no .py/.pyc litter
 lands in the worktree. Output: summary.tsv (one row per file) + details/<name>.txt
+
+    python3 tests/transpile_survey.py <worktree> <outdir> [python]
 """
 import os, shutil, subprocess, sys, re
 from pathlib import Path
 
 MARKER = "<<<erg_transpile_survey>>>"
 WT = Path(sys.argv[1]); OUT = Path(sys.argv[2]); ERG = WT / "target/debug/erg"
+# The generated .py has to run under the interpreter `erg` compiled the bytecode
+# with, or the two backends are not being compared. Defaults to the one running
+# this script (inside a venv that is the venv's, which is what erg picks too).
+PY = sys.argv[3] if len(sys.argv) > 3 else sys.executable
 OUT.mkdir(parents=True, exist_ok=True); (OUT / "details").mkdir(exist_ok=True)
 SCRATCH = OUT / "src"
 if SCRATCH.exists(): shutil.rmtree(SCRATCH)
@@ -67,7 +73,7 @@ for f in files:
         cls, info = "TRANSPILE_FAIL", transpile_error_kind(tr_out + tr_err)
         (OUT / "details" / (name.replace("/", "_") + ".txt")).write_text(tr_out + tr_err)
         rows.append((name, cls, info)); continue
-    py_rc, py_out, py_err = run(["python3", str(py.relative_to(SCRATCH))], SCRATCH)
+    py_rc, py_out, py_err = run([PY, str(py.relative_to(SCRATCH))], SCRATCH)
     if py_rc != 0:
         cls, info = "PY_ERROR", py_error_kind(py_err)
         (OUT / "details" / (name.replace("/", "_") + ".txt")).write_text(py_out + "\n--- stderr ---\n" + py_err + "\n--- py ---\n" + py.read_text())

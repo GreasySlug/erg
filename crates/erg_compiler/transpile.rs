@@ -1315,9 +1315,13 @@ impl PyScriptGenerator {
         // own name checks, so `'Int' = 1` used to overwrite the prelude's `Int` class.
         if vis.is_public() {
             if let Some(inner) = name.strip_prefix('\'') {
-                let inner = inner.trim_end_matches('!').trim_end_matches('\'');
-                if is_py_identifier(inner) {
-                    return inner.to_string();
+                // `'name'!` is a procedure: the marker sits outside the closing quote.
+                // Trimming instead of stripping ate every trailing `!` and `'`.
+                let inner = inner.strip_suffix('!').unwrap_or(inner);
+                if let Some(inner) = inner.strip_suffix('\'') {
+                    if is_py_identifier(inner) {
+                        return inner.to_string();
+                    }
                 }
             }
         }
@@ -1509,10 +1513,13 @@ impl PyScriptGenerator {
                     .filter(|deco| {
                         !matches!(deco.show_acc().as_deref(), Some("Override" | "Inheritable"))
                     })
-                    .map(|deco| self.expr_to_string(deco))
+                    .map(|deco| (deco.loc(), self.expr_to_string(deco)))
                     .collect::<Vec<_>>();
-                decos.sort();
-                for deco in decos {
+                // `decorators` is a set; the order they compose in is the order they were
+                // written in, which is what their locations say. Sorting the *text* put
+                // `@staticmethod` under `@functools.cache` and changed what the two mean.
+                decos.sort_by_key(|(loc, _)| (loc.ln_begin(), loc.col_begin()));
+                for (_, deco) in decos {
                     out.push('@');
                     out.push_str(&deco);
                     out.push('\n');
@@ -1566,11 +1573,18 @@ impl PyScriptGenerator {
             out.push_str("__class_getitem__ = classmethod(GenericAlias)\n");
         }
         let mut methods = ClassDef::take_all_methods(classdef.methods_list);
+        // taken out, not copied: `write_init_method` writes the body into the generated
+        // `__init__`, and leaving it in `methods` wrote it a second time below
         let user_init = methods
-            .get_def("__init__")
-            .or_else(|| methods.get_def("__init__!"))
-            .cloned();
-        self.write_init_method(&classdef.constructor, user_init, is_subclass, out);
+            .remove_def("__init__")
+            .or_else(|| methods.remove_def("__init__!"));
+        self.write_init_method(
+            &class_name,
+            &classdef.constructor,
+            user_init,
+            is_subclass,
+            out,
+        );
         match classdef.gen_new {
             GenNew::Defined => {}
             GenNew::FromCall => self.write_new_func(&class_name, &classdef.constructor, out),
@@ -1624,6 +1638,7 @@ impl PyScriptGenerator {
     /// after that.
     fn write_init_method(
         &mut self,
+        class_name: &str,
         constructor: &Type,
         user_init: Option<Def>,
         is_subclass: bool,
@@ -1661,9 +1676,12 @@ impl PyScriptGenerator {
         if is_subclass && first.is_none() {
             writeln!(out, "def __init__({self_name}, *args, **kwargs):").unwrap();
             push_indent(&mut body, body_level);
+            // the class being defined, not `type(self)`: the latter is the *instance's*
+            // class, so a third class down the chain inherits this frame and calls it
+            // again forever
             writeln!(
                 body,
-                "super(type({self_name}), {self_name}).__init__(*args, **kwargs)"
+                "super({class_name}, {self_name}).__init__(*args, **kwargs)"
             )
             .unwrap();
         } else if let Some(param) = first {

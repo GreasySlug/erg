@@ -21,3 +21,10 @@ x = ![]
 add_one!() = x.push! 1
 _ = x
 add_one!() # ERR
+
+# a closure cannot take a variable of the scope around it: it runs once per element
+ms = ![1]
+ns = ![]
+for! [1, 2], _ =>
+    ns.push! ms
+ms.push! 2 # ERR

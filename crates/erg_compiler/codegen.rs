@@ -4407,7 +4407,7 @@ impl PyCodeGenerator {
             attrs.push(Expr::Literal(Literal::new(ValueObj::None, none)));
             let block = Block::new(attrs);
             let body = DefBody::new(EQUAL, block, DefId(0));
-            self.emit_subclass_init_def(Some(class_name), subr_sig, body);
+            self.emit_subclass_init_def(Some(class_name), sig.ident().clone(), subr_sig, body);
         } else {
             let self_param = VarName::from_str_and_line(Str::ever("self"), line);
             let vi = VarInfo::nd_parameter(
@@ -4509,6 +4509,7 @@ impl PyCodeGenerator {
     fn emit_subclass_init_def(
         &mut self,
         class_name: Option<&str>,
+        class_ident: Identifier,
         sig: SubrSignature,
         body: DefBody,
     ) {
@@ -4528,6 +4529,7 @@ impl PyCodeGenerator {
         let code = self.emit_init_block_with_super(
             body.block,
             Some(name.clone()),
+            class_ident,
             params,
             cell_names,
             flags,
@@ -4553,6 +4555,7 @@ impl PyCodeGenerator {
         &mut self,
         block: Block,
         opt_name: Option<Str>,
+        class_ident: Identifier,
         params: Vec<Str>,
         cell_names: Vec<Str>,
         flags: u32,
@@ -4594,7 +4597,7 @@ impl PyCodeGenerator {
         };
         let init_stack_len = self.stack_len();
         // Inject super().__init__(*args, **kwargs)
-        self.emit_super_init_bytecode();
+        self.emit_super_init_bytecode(class_ident);
         // Emit the rest of the block (user's __init__ body + return None)
         for chunk in block.into_iter() {
             self.emit_chunk(chunk);
@@ -4651,33 +4654,26 @@ impl PyCodeGenerator {
         unit.codeobj
     }
 
-    /// Emit raw bytecode for `super(type(self), self).__init__(*args, **kwargs)`.
-    /// Uses `type(self)` instead of zero-arg `super()` to avoid needing `__class__` cell.
+    /// Emit raw bytecode for `super(<the class being defined>, self).__init__(*args, **kwargs)`.
+    /// Naming the class avoids needing the `__class__` cell that zero-arg `super()` reads.
+    /// It used to be `type(self)`, which is the *instance's* class: a third class down an
+    /// inheritance chain inherits this frame, so `super(type(self), self)` resolved to the
+    /// frame's own class again and it called itself until the stack ran out.
     /// The function parameters must be (self, *args, **kwargs) with LOAD_FAST indices 0, 1, 2.
-    fn emit_super_init_bytecode(&mut self) {
-        // Step 1: super(type(self), self)
+    fn emit_super_init_bytecode(&mut self, class_ident: Identifier) {
+        // Step 1: super(<class>, self)
         // Outer call setup: push super callable
         self.emit_push_null(); // NULL sentinel for 3.11+
         let super_ident = Identifier::static_public("super");
         self.emit_load_name_instr(super_ident);
         self.fixup_push_null_order();
-        // Inner call: type(self) — first arg to super
-        self.emit_push_null(); // NULL sentinel for type() call
-        let type_ident = Identifier::static_public("type");
-        self.emit_load_name_instr(type_ident);
-        self.fixup_push_null_order();
+        // The class this `__init__` belongs to — first argument to super
+        self.emit_load_name_instr(class_ident);
+        // Load self as the second argument to super
         self.write_opcode(LOAD_FAST);
         self.write_arg(0); // self
         self.stack_inc();
-        // Call type(self) with argc=1
-        self.emit_call_instr(1, Name);
-        self.stack_dec_n(1); // argc=1 arg consumed
-                             // Stack: [..., super, type_of_self] (NULL consumed by CALL)
-                             // Load self again as second argument to super
-        self.write_opcode(LOAD_FAST);
-        self.write_arg(0); // self
-        self.stack_inc();
-        // Call super(type_of_self, self) with argc=2
+        // Call super(<class>, self) with argc=2
         self.emit_call_instr(2, Name);
         self.stack_dec_n(2); // argc=2 args consumed
                              // Stack: [super_instance]

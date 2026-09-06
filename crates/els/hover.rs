@@ -277,7 +277,10 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         def_loc: &AbsLocation,
     ) -> ELSResult<()> {
         if let Some(module) = def_loc.module.as_ref() {
-            let mut def_pos = match self.abs_loc_to_range(def_loc) {
+            // the token stream below is searched with `pos_in_loc`, which compares
+            // against the lexer's char columns; `abs_loc_to_range` gives the client's
+            // UTF-16 ones, which part after a character outside the BMP
+            let mut def_pos = match util::char_range_of(def_loc.loc) {
                 Some(range) => range.end,
                 None => {
                     return Ok(());

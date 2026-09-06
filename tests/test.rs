@@ -1079,7 +1079,7 @@ fn exec_method_err() -> Result<(), ()> {
 
 #[test]
 fn exec_move_err() -> Result<(), ()> {
-    expect_compile_failure("tests/should_err/move.er", 1, 3)
+    expect_compile_failure("tests/should_err/move.er", 1, 4)
 }
 
 #[test]

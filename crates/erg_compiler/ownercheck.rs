@@ -49,8 +49,10 @@ pub struct OwnershipChecker {
     /// path of the scope that owns it: a name alone would match an unrelated variable
     /// of the same name in whatever scope the closure is called from.
     captures: Dict<Str, Vec<(Str, Identifier)>>,
-    /// One frame per entry of `path_stack` but the module's: the mutable outer
-    /// variables the scope being checked has accessed so far.
+    /// One frame per entry of `path_stack`, in step with it: the mutable outer
+    /// variables that scope has accessed so far. It used to skip the module's, which
+    /// held only as long as `check` was called once -- it pushes a scope per module and
+    /// never pops one, and `HIRBuilder::clear` keeps the checker between modules.
     capture_frames: Vec<Vec<(Str, Identifier)>>,
     errs: OwnershipErrors,
 }
@@ -85,6 +87,7 @@ impl OwnershipChecker {
         log!(info "the ownership checking process has started.{RESET}");
         if self.full_path() != ("::".to_string() + &hir.name[..]) {
             self.path_stack.push(Visibility::private(hir.name.clone()));
+            self.capture_frames.push(vec![]);
             self.dict
                 .insert(Str::from(self.full_path()), LocalVars::default());
         }
@@ -435,23 +438,35 @@ impl OwnershipChecker {
     /// between that scope and here captures it.
     fn note_capture(&mut self, ident: &Identifier) {
         let name = ident.inspect();
-        if self.current_scope().alive_vars.contains(name) {
+        if self.path_stack.len() < 2 || self.current_scope().alive_vars.contains(name) {
             return;
         }
-        // the depth (index into `path_stack`) of the scope owning the variable
-        let len = self.path_stack.len();
-        let Some(owner_depth) = (1..len).map(|n| len - 1 - n).find(|&depth| {
-            self.nth_outer_scope(len - 1 - depth)
-                .alive_vars
-                .contains(name)
+        // every scope's path, outermost first, built in one pass: the search used to
+        // fold a fresh path for every ancestor of every read, which is quadratic in the
+        // nesting depth
+        let mut path = String::new();
+        let paths = self
+            .path_stack
+            .iter()
+            .map(|vis| {
+                path += if vis.is_public() { "." } else { "::" };
+                path += &vis.def_namespace[..];
+                Str::from(path.clone())
+            })
+            .collect::<Vec<_>>();
+        // the innermost enclosing scope that owns the variable
+        let Some(owner) = (0..paths.len() - 1).rev().find(|&i| {
+            self.dict
+                .get(&paths[i][..])
+                .is_some_and(|vars| vars.alive_vars.contains(name))
         }) else {
             return;
         };
-        let owner = Str::from(self.nth_outer_path(len - 1 - owner_depth));
-        // `capture_frames[i]` is the frame of `path_stack[i + 1]`
-        for frame in self.capture_frames[owner_depth..].iter_mut() {
+        let owner_path = paths[owner].clone();
+        // the scopes between the owner and here are the ones that capture it
+        for frame in self.capture_frames[owner + 1..].iter_mut() {
             if !frame.iter().any(|(_, captured)| captured.inspect() == name) {
-                frame.push((owner.clone(), ident.clone()));
+                frame.push((owner_path.clone(), ident.clone()));
             }
         }
     }
@@ -474,7 +489,7 @@ impl OwnershipChecker {
     }
 
     /// A closure is used: every mutable variable it captured has to be alive.
-    fn check_captures_alive(&mut self, closure: &Identifier) -> Result<(), OwnershipError> {
+    fn check_captures_alive(&self, closure: &Identifier) -> Result<(), OwnershipError> {
         // `ident_key` allocates, and all but a handful of the identifiers in a program
         // are not closures
         if self.captures.is_empty() {
@@ -485,7 +500,7 @@ impl OwnershipChecker {
         };
         // the variable is looked up in the scope that owns it: a same-named variable of
         // the scope the closure is called from is a different variable
-        for (owner, ident) in captured.clone() {
+        for (owner, ident) in captured {
             let Some(moved_loc) = self
                 .dict
                 .get(&owner[..])

@@ -324,11 +324,15 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
                 message.push_str(&remove_style(hint));
             }
         }
+        // a synthetic token's line is 0, and the rest of the crate saturates here too
         let start = Position::new(
-            loc.ln_begin().unwrap_or(1) - 1,
+            loc.ln_begin().unwrap_or(1).saturating_sub(1),
             loc.col_begin().unwrap_or(0),
         );
-        let end = Position::new(loc.ln_end().unwrap_or(1) - 1, loc.col_end().unwrap_or(0));
+        let end = Position::new(
+            loc.ln_end().unwrap_or(1).saturating_sub(1),
+            loc.col_end().unwrap_or(0),
+        );
         // `loc` counts columns in chars; the client wants UTF-16 units
         let range = self.file_cache.to_lsp_range(uri, Range::new(start, end));
         let severity = if err.core.kind.is_warning() {

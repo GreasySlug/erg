@@ -443,9 +443,13 @@ impl Token {
         raw: None,
         lineno: 0,
         col_begin: 0,
-        col_end: 0,
+        col_end: "DUMMY".len() as u32,
     };
 
+    // A token with no source span still has to be as wide as its content: `loc()` is
+    // what an error underline and an ELS range are built from, and `col_end` used to be
+    // computed from the content rather than stored. `len()` counts bytes where `col_end`
+    // counts chars; the callers of the `const` constructors all pass ASCII.
     pub const fn dummy(kind: TokenKind, content: &'static str) -> Self {
         Self {
             kind,
@@ -453,7 +457,7 @@ impl Token {
             raw: None,
             lineno: 0,
             col_begin: 0,
-            col_end: 0,
+            col_end: content.len() as u32,
         }
     }
 
@@ -508,7 +512,7 @@ impl Token {
             raw: None,
             lineno: 0,
             col_begin: 0,
-            col_end: 0,
+            col_end: cont.chars().count() as u32,
         }
     }
 
@@ -547,7 +551,7 @@ impl Token {
             raw: None,
             lineno: 0,
             col_begin: 0,
-            col_end: 1,
+            col_end: s.len() as u32,
         }
     }
 

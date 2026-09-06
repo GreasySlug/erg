@@ -322,10 +322,13 @@ impl<Checker: BuildRunnable, Parser: Parsable> Server<Checker, Parser> {
         let uri = NormalizedUrl::new(params.text_document.uri);
         let path = util::uri_to_path(&uri);
         let src = self.file_cache.get_entire_code(&uri)?;
-        let mut state = ASTSemanticState::new(&src);
         let mut builder = ASTBuilder::new(self.cfg.inherit(path));
-        let result = match builder.build_without_desugaring(src) {
+        // the state copies the document a line at a time, so it is built only once the
+        // parse has succeeded: this request is re-sent on every keystroke, and while one
+        // is being typed the parse usually fails
+        let result = match builder.build_without_desugaring(src.clone()) {
             Ok(artifact) => {
+                let mut state = ASTSemanticState::new(&src);
                 let tokens = state.enumerate_tokens(artifact.ast);
                 Some(SemanticTokensResult::Tokens(tokens))
             }

@@ -18,7 +18,6 @@ for d in ("tests/should_ok", "examples"):
         if er.name.endswith(".d.er"): continue
         er.write_text(f'print! "{MARKER}"\n' + er.read_text())
 
-MARKER = "<<<erg_transpile_survey>>>"
 def after_marker(out):
     return out.split(MARKER, 1)[1].lstrip("\n") if MARKER in out else out
 

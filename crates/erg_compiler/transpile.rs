@@ -1306,14 +1306,19 @@ impl PyScriptGenerator {
         if let Some(py_name) = &vi.py_name {
             return demangle(py_name);
         }
-        // a raw identifier (`'test_one'`, `'name'!`) is spelled exactly, as in
-        // the bytecode backend: `unittest` finds the test by that name. The
-        // bytecode backend can name a variable anything; Python source cannot,
-        // so `'2t+3'` keeps the escaped spelling.
-        if let Some(inner) = name.strip_prefix('\'') {
-            let inner = inner.trim_end_matches('!').trim_end_matches('\'');
-            if is_py_identifier(inner) {
-                return inner.to_string();
+        // A public raw identifier (`'test_one'`, `'name'!`) is spelled exactly, as in
+        // the bytecode backend: `unittest` finds the test by that name. The bytecode
+        // backend can name a variable anything; Python source cannot, so `'2t+3'`
+        // keeps the escaped spelling.
+        // A private one is mangled like any other private name. Spelled exactly, it is
+        // a module global under a name the programmer picked to sidestep the compiler's
+        // own name checks, so `'Int' = 1` used to overwrite the prelude's `Int` class.
+        if vis.is_public() {
+            if let Some(inner) = name.strip_prefix('\'') {
+                let inner = inner.trim_end_matches('!').trim_end_matches('\'');
+                if is_py_identifier(inner) {
+                    return inner.to_string();
+                }
             }
         }
         let name = replace_non_symbolic(name);
@@ -1336,35 +1341,24 @@ impl PyScriptGenerator {
         }
     }
 
+    /// The parameters in Erg's order: `non_defaults, *var_params, defaults,
+    /// **kw_var_params`. Python reads the same order the same way -- a default after
+    /// `*args` is keyword-only, which is what a call can pass it as -- so writing the
+    /// defaults first would bind `f(1, 2, 3)` of `f(a, *args, b := 10)` to `b = 2`.
     fn write_params(&mut self, params: Params, out: &mut String) {
         for non_default in params.non_defaults {
             self.write_param_name(non_default, out);
             out.push(',');
         }
-        for default in params.defaults {
-            match default.sig.raw.pat {
-                ParamPattern::VarName(param) => {
-                    out.push_str(&Self::transpile_name(
-                        &VisibilityModifier::Private,
-                        param.inspect(),
-                        &default.sig.vi,
-                    ));
-                    out.push_str(" = ");
-                    self.write_expr(default.default_val, out);
-                    out.push(',');
-                }
-                ParamPattern::Discard(_) => {
-                    write!(out, "_{} = ", self.fresh_var_n).unwrap();
-                    self.fresh_var_n += 1;
-                    self.write_expr(default.default_val, out);
-                    out.push(',');
-                }
-                _ => unreachable!(),
-            }
-        }
         if let Some(var_params) = params.var_params {
             out.push('*');
             self.write_param_name(*var_params, out);
+            out.push(',');
+        }
+        for default in params.defaults {
+            self.write_param_name(default.sig, out);
+            out.push_str(" = ");
+            self.write_expr(default.default_val, out);
             out.push(',');
         }
         if let Some(kw_var_params) = params.kw_var_params {
@@ -1549,7 +1543,7 @@ impl PyScriptGenerator {
 
     /// `class C(Base):` with the `__init__` and `new` the bytecode backend
     /// generates (`PyCodeGenerator::emit_class_block`).
-    fn write_classdef(&mut self, mut classdef: ClassDef, out: &mut String) {
+    fn write_classdef(&mut self, mut classdef: ClassDef, body: &mut String) {
         let class_name = Self::transpile_ident(classdef.sig.ident().clone());
         let is_subclass = matches!(classdef.obj.as_ref(), GenTypeObj::Subclass(_));
         // `Y = Inherit X` => `class Y(X)`; `N = Inherit 1..10` => `class N(Nat)`.
@@ -1560,7 +1554,10 @@ impl PyScriptGenerator {
             .clone()
             .map(|sup| self.expr_to_string(sup))
             .unwrap_or_default();
-        writeln!(out, "class {class_name}({sup_name}):").unwrap();
+        writeln!(body, "class {class_name}({sup_name}):").unwrap();
+        // the class body is written aside: a class that inherits its `__init__` and
+        // defines nothing of its own leaves it empty, which Python does not accept
+        let out = &mut String::new();
         if !classdef.obj.typ().is_monomorphic() {
             // `Box[Int]` at run time forwards to `Box`; `_erg_type`'s
             // `GenericAlias` is the standard one, or a stand-in before 3.9
@@ -1613,6 +1610,11 @@ impl PyScriptGenerator {
             }
         }
         self.write_block(methods, Discard, out);
+        if out.trim().is_empty() {
+            push_indent(out, self.level + 1);
+            out.push_str("pass\n");
+        }
+        body.push_str(out);
     }
 
     /// `__init__` as the bytecode backend generates it: the constructor's one
@@ -1631,6 +1633,14 @@ impl PyScriptGenerator {
             .non_default_params()
             .and_then(|params| params.first())
             .cloned();
+        // A subclass that adds no field of its own and has no `__init__!` body needs no
+        // `__init__` at all: Python's inheritance already forwards to the superclass's.
+        // The forwarder that used to be written could not name the class it belongs to
+        // -- `super(type(self), self)` is the *instance's* class, so a third class down
+        // the chain called the same frame again and recursed until the stack ran out.
+        if is_subclass && first.is_none() && user_init.is_none() {
+            return;
+        }
         // the user's body refers to `self` by the name its parameter got
         let self_name = user_init
             .as_ref()

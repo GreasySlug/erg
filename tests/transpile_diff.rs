@@ -11,6 +11,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+
+use erg_common::python_util::_opt_which_python;
+
+/// The interpreter the compiler itself resolves (a `.venv`, conda, pyenv, ...).
+/// A fixed `python3` is a different version from the build-time one wherever a
+/// virtualenv is active, and does not exist at all on Windows.
+fn python_command() -> &'static str {
+    static PYTHON: OnceLock<String> = OnceLock::new();
+    PYTHON.get_or_init(|| _opt_which_python().expect("no Python interpreter found"))
+}
 
 /// Printed before the program's own output: the compiler writes its warnings
 /// to stdout too, and only what the program prints is being compared.
@@ -403,6 +414,8 @@ fn bytecode_output(path: &PathBuf) -> Result<String, String> {
         .arg(path)
         .output()
         .expect("failed to run the compiler");
+    // the run leaves the compiled module next to the source
+    let _ = fs::remove_file(path.with_extension("pyc"));
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if out.status.success() {
         Ok(after_marker(&stdout))
@@ -437,10 +450,11 @@ fn transpiled_output(path: &PathBuf) -> Result<String, String> {
         ));
     }
     let py = path.with_extension("py");
-    let run = Command::new("python3").arg(&py).output();
+    let py_command = python_command();
+    let run = Command::new(py_command).arg(&py).output();
     let run = match run {
         Ok(run) => run,
-        Err(e) => return Err(format!("failed to run python3: {e}")),
+        Err(e) => return Err(format!("failed to run {py_command}: {e}")),
     };
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     let res = if run.status.success() {

@@ -4342,6 +4342,14 @@ impl PyCodeGenerator {
         let mut ident = Identifier::public_with_line(DOT, Str::ever("__init__"), line);
         ident.vi.t = constructor.clone();
         let new_first_param = constructor.non_default_params().unwrap().first();
+        // A subclass that adds no field of its own and has no `__init__!` body needs no
+        // `__init__` at all: Python's inheritance already forwards to the superclass's.
+        // The forwarder that used to be generated could not name the class it belongs to
+        // -- `super(type(self), self)` is the *instance's* class, so a third class down
+        // the chain called the same frame again and recursed until the stack ran out.
+        if is_subclass && new_first_param.is_none() && __init__.is_none() {
+            return;
+        }
         // For Inherit classes where the parent has no non-default params (e.g., Python classes
         // like TestCase whose __init__ only has default params), use *args/**kwargs + super().
         // For Inherit classes with explicit params (Erg native), keep field-assignment approach.

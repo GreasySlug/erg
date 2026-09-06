@@ -45,11 +45,13 @@ pub struct OwnershipChecker {
     store_names: Dict<Str, Str>,
     /// The mutable variables each named closure captures (key: `ident_key` of the
     /// closure). A closure reads its captures when it is called, so using the closure
-    /// after one of them was moved is using the moved variable.
-    captures: Dict<Str, Vec<Identifier>>,
+    /// after one of them was moved is using the moved variable. Each is paired with the
+    /// path of the scope that owns it: a name alone would match an unrelated variable
+    /// of the same name in whatever scope the closure is called from.
+    captures: Dict<Str, Vec<(Str, Identifier)>>,
     /// One frame per entry of `path_stack` but the module's: the mutable outer
     /// variables the scope being checked has accessed so far.
-    capture_frames: Vec<Vec<Identifier>>,
+    capture_frames: Vec<Vec<(Str, Identifier)>>,
     /// The `path_stack` depth of each function-like scope being checked (a subroutine
     /// definition or a lambda). A variable owned outside the innermost of them is
     /// captured by it, not moved into it: the closure runs as many times as it is
@@ -369,18 +371,23 @@ impl OwnershipChecker {
         self.dict.get_mut(&self.full_path()[..]).unwrap()
     }
 
-    #[inline]
-    fn nth_outer_scope(&mut self, n: usize) -> &mut LocalVars {
-        let path = self.path_stack.iter().take(self.path_stack.len() - n).fold(
-            String::new(),
-            |acc, vis| {
+    /// The path of the scope `n` entries above the one being checked (`0` is it).
+    fn nth_outer_path(&self, n: usize) -> String {
+        self.path_stack
+            .iter()
+            .take(self.path_stack.len() - n)
+            .fold(String::new(), |acc, vis| {
                 if vis.is_public() {
                     acc + "." + &vis.def_namespace[..]
                 } else {
                     acc + "::" + &vis.def_namespace[..]
                 }
-            },
-        );
+            })
+    }
+
+    #[inline]
+    fn nth_outer_scope(&mut self, n: usize) -> &mut LocalVars {
+        let path = self.nth_outer_path(n);
         self.dict.get_mut(&path[..]).unwrap()
     }
 
@@ -419,7 +426,9 @@ impl OwnershipChecker {
             // A closure cannot take a variable of a scope outside it: it may run more
             // than once, and that scope goes on using the variable. `while! do! flg, ...`
             // reads `flg` on every iteration, and `flg.invert!()` follows the loop.
-            if len - n < innermost_fn {
+            // Only the closure's own body reads it that way, though: a definition
+            // inside it (`y = x`) does take the variable, and that is still a move.
+            if len == innermost_fn && len - n < innermost_fn {
                 return self.note_capture(ident);
             }
             self.nth_outer_scope(n).alive_vars.remove(ident.inspect());
@@ -448,10 +457,11 @@ impl OwnershipChecker {
         }) else {
             return;
         };
+        let owner = Str::from(self.nth_outer_path(len - 1 - owner_depth));
         // `capture_frames[i]` is the frame of `path_stack[i + 1]`
         for frame in self.capture_frames[owner_depth..].iter_mut() {
-            if !frame.iter().any(|captured| captured.inspect() == name) {
-                frame.push(ident.clone());
+            if !frame.iter().any(|(_, captured)| captured.inspect() == name) {
+                frame.push((owner.clone(), ident.clone()));
             }
         }
     }
@@ -459,7 +469,7 @@ impl OwnershipChecker {
     /// Remember the mutable outer variables a closure captures (`f! = () => x.push! 1`,
     /// `f!() = x.push! 1`), so that using `f!` after `x` was moved is reported.
     /// A variable definition (`y = x`) is not a closure: it takes `x`, it does not read it later.
-    fn record_captures(&mut self, def: &Def, captured: Vec<Identifier>) {
+    fn record_captures(&mut self, def: &Def, captured: Vec<(Str, Identifier)>) {
         let is_closure = match &def.sig {
             Signature::Subr(_) => true,
             Signature::Var(_) => {
@@ -475,12 +485,33 @@ impl OwnershipChecker {
 
     /// A closure is used: every mutable variable it captured has to be alive.
     fn check_captures_alive(&mut self, closure: &Identifier) -> Result<(), OwnershipError> {
+        // `ident_key` allocates, and all but a handful of the identifiers in a program
+        // are not closures
+        if self.captures.is_empty() {
+            return Ok(());
+        }
         let Some(captured) = self.captures.get(&Self::ident_key(closure)) else {
             return Ok(());
         };
-        let captured = captured.clone();
-        for ident in captured.iter() {
-            self.check_if_dropped(ident.inspect(), closure)?;
+        // the variable is looked up in the scope that owns it: a same-named variable of
+        // the scope the closure is called from is a different variable
+        for (owner, ident) in captured.clone() {
+            let Some(moved_loc) = self
+                .dict
+                .get(&owner[..])
+                .and_then(|vars| vars.dropped_vars.get(ident.inspect()))
+                .copied()
+            else {
+                continue;
+            };
+            return Err(OwnershipError::move_error(
+                self.cfg.input.clone(),
+                line!() as usize,
+                ident.inspect(),
+                closure.loc(),
+                moved_loc,
+                self.full_path(),
+            ));
         }
         Ok(())
     }
